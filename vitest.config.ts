@@ -10,6 +10,9 @@ export default defineConfig({
       reporter: ['text', 'html'],
     },
     environment: 'jsdom',
+    environmentOptions: {
+      jsdom: { url: 'https://zoneskein.test/' },
+    },
     restoreMocks: true,
     setupFiles: ['./src/test/setup.ts'],
   },

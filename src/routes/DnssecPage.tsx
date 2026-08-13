@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 
 import { CopyButton } from '../components/CopyButton';
+import { SnapshotButton } from '../components/SnapshotButton';
 import { StatusBadge } from '../components/StatusBadge';
 import { ToolIntro } from '../components/ToolIntro';
 import { validateDnsName } from '../core/dns/names';
@@ -375,7 +376,14 @@ export function DnssecPage() {
               <p className="eyebrow">Conservative conclusion</p>
               <h2 id="dnssec-result-title">{report.zone}</h2>
             </div>
-            <CopyButton label="Copy evidence JSON" text={reportJson(report)} />
+            <div className="export-actions">
+              <CopyButton label="Copy evidence JSON" text={reportJson(report)} />
+              <SnapshotButton
+                content={reportJson(report)}
+                title={`DNSSEC evidence — ${report.zone}`}
+                tool="dnssec"
+              />
+            </div>
           </div>
           <article className="conclusion-panel">
             <StatusBadge tone={report.conclusion.tone}>{report.conclusion.label}</StatusBadge>

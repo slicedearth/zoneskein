@@ -1,6 +1,7 @@
 import { useState } from 'react';
 
 import { CopyButton } from '../components/CopyButton';
+import { SnapshotButton } from '../components/SnapshotButton';
 import { StatusBadge } from '../components/StatusBadge';
 import { ToolIntro } from '../components/ToolIntro';
 import { lintZoneSnippet } from '../core/zone/lint';
@@ -146,19 +147,30 @@ export function ZoneLintPage() {
               <p className="eyebrow">Local analysis</p>
               <h2 id="lint-results-title">Lint results</h2>
             </div>
-            <StatusBadge
-              tone={
-                diagnostics.some((item) => item.severity === 'error')
-                  ? 'error'
-                  : diagnostics.some((item) => item.severity === 'warning')
-                    ? 'warning'
-                    : 'pass'
-              }
-            >
-              {diagnostics.length === 0
-                ? 'No diagnostics'
-                : `${String(diagnostics.length)} diagnostics`}
-            </StatusBadge>
+            <div className="export-actions">
+              <StatusBadge
+                tone={
+                  diagnostics.some((item) => item.severity === 'error')
+                    ? 'error'
+                    : diagnostics.some((item) => item.severity === 'warning')
+                      ? 'warning'
+                      : 'pass'
+                }
+              >
+                {diagnostics.length === 0
+                  ? 'No diagnostics'
+                  : `${String(diagnostics.length)} diagnostics`}
+              </StatusBadge>
+              <SnapshotButton
+                content={JSON.stringify(
+                  { diagnostics, records: document.records, source: document.source },
+                  null,
+                  2,
+                )}
+                title="Zone lint report"
+                tool="zone-lint"
+              />
+            </div>
           </div>
           <article className="result-panel">
             <h3>Diagnostics</h3>

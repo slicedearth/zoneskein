@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 
 import { CopyButton } from '../components/CopyButton';
 import { RecordTable } from '../components/RecordTable';
+import { SnapshotButton } from '../components/SnapshotButton';
 import { StatusBadge } from '../components/StatusBadge';
 import { ToolIntro } from '../components/ToolIntro';
 import { validateDnsName } from '../core/dns/names';
@@ -378,6 +379,11 @@ export function LookupPage() {
               <CopyButton label="Copy BIND" text={exportText(results, 'bind')} />
               <CopyButton label="Copy JSON" text={exportText(results, 'json')} />
               <CopyButton label="Copy Markdown" text={exportText(results, 'markdown')} />
+              <SnapshotButton
+                content={exportText(results, 'json')}
+                title={`DNS lookup — ${input.trim()}`}
+                tool="lookup"
+              />
             </div>
           </div>
           {results.map((result, index) => (

@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 
 import { CopyButton } from '../components/CopyButton';
+import { SnapshotButton } from '../components/SnapshotButton';
 import { StatusBadge } from '../components/StatusBadge';
 import { ToolIntro } from '../components/ToolIntro';
 import { compareZoneDocuments } from '../core/diff/compare';
@@ -331,7 +332,14 @@ export function DiffPage() {
               <p className="eyebrow">Normalized comparison</p>
               <h2 id="diff-results-title">Change set</h2>
             </div>
-            <CopyButton label="Copy Markdown report" text={markdown(display)} />
+            <div className="export-actions">
+              <CopyButton label="Copy Markdown report" text={markdown(display)} />
+              <SnapshotButton
+                content={markdown(display)}
+                title="DNS change comparison"
+                tool="diff"
+              />
+            </div>
           </div>
           {display.partialErrors.length > 0 ? (
             <article className="conclusion-panel partial-panel">

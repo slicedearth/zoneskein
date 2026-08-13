@@ -161,6 +161,21 @@ nav a:hover,
   color: var(--text);
 }
 
+.danger-button {
+  padding: 0.52rem 0.75rem;
+  border: 1px solid #c85d51;
+  border-radius: 0.45rem;
+  background: transparent;
+  color: #ff9f93;
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+:root[data-theme='light'] .danger-button {
+  color: #9b261c;
+}
+
 .primary-button {
   padding: 0.72rem 1rem;
   border: 1px solid var(--accent);
@@ -1059,6 +1074,68 @@ summary {
   gap: 1rem;
 }
 
+.storage-control {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  max-width: 980px;
+  padding: 1.2rem;
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+  background: var(--surface);
+  gap: 1.5rem;
+}
+
+.storage-control p {
+  max-width: 700px;
+  margin: 0.75rem 0 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.snapshot-form .zone-source {
+  grid-column: 1 / -1;
+}
+
+.snapshot-form textarea {
+  min-height: 16rem;
+  resize: vertical;
+  font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace;
+  font-size: 0.8rem;
+  line-height: 1.55;
+}
+
+.share-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace;
+  font-size: 0.78rem;
+}
+
+.snapshot-list {
+  display: grid;
+  gap: 1rem;
+}
+
+.snapshot-preview {
+  max-height: 12rem;
+  margin: 0;
+  padding: 0.9rem;
+  overflow: auto;
+  border-radius: 0.4rem;
+  background: var(--bg);
+  color: var(--muted);
+  font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace;
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.snapshot-list time {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
 @media (max-width: 820px) {
   .site-header {
     grid-template-columns: 1fr auto;
@@ -1177,6 +1254,15 @@ summary {
   .authoring-grid {
     align-items: stretch;
     grid-template-columns: 1fr;
+  }
+
+  .storage-control {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .snapshot-form .zone-source {
+    grid-column: auto;
   }
 }
 

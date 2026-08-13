@@ -21,6 +21,9 @@ const LookupPage = lazy(() =>
 const SpfPage = lazy(() =>
   import('./routes/SpfPage').then((module) => ({ default: module.SpfPage })),
 );
+const SnapshotsPage = lazy(() =>
+  import('./routes/SnapshotsPage').then((module) => ({ default: module.SnapshotsPage })),
+);
 const ZoneLintPage = lazy(() =>
   import('./routes/ZoneLintPage').then((module) => ({ default: module.ZoneLintPage })),
 );
@@ -87,6 +90,7 @@ export function App() {
           <a href={href('dmarc/')}>DMARC</a>
           <a href={href('dkim/')}>DKIM</a>
           <a href={href('caa/')}>CAA</a>
+          <a href={href('snapshots/')}>Snapshots</a>
           <a href={href('about/')}>About</a>
         </nav>
         <button
@@ -108,7 +112,9 @@ export function App() {
             </section>
           }
         >
-          {route === 'caa' ? (
+          {route === 'snapshots' ? (
+            <SnapshotsPage />
+          ) : route === 'caa' ? (
             <CaaPage />
           ) : route === 'dkim' ? (
             <DkimPage />

@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 
 import { CopyButton } from '../components/CopyButton';
+import { SnapshotButton } from '../components/SnapshotButton';
 import { StatusBadge } from '../components/StatusBadge';
 import { ToolIntro } from '../components/ToolIntro';
 import { validateDnsName } from '../core/dns/names';
@@ -160,6 +161,9 @@ function SnapshotPanel({ snapshot }: { readonly snapshot: SpfSnapshot }) {
 
 function AnalysisPanel({ report }: { readonly report: SpfRunReport }) {
   const { analysis } = report;
+  const snapshotContent =
+    report.snapshot?.markdown ??
+    JSON.stringify({ ...analysis, dnsQuestions: report.dnsQuestions }, null, 2);
   return (
     <section className="results" aria-labelledby="spf-results-title">
       <div className="section-heading">
@@ -167,6 +171,11 @@ function AnalysisPanel({ report }: { readonly report: SpfRunReport }) {
           <p className="eyebrow">Ordered policy evaluation</p>
           <h2 id="spf-results-title">{analysis.rootDomain}</h2>
         </div>
+        <SnapshotButton
+          content={snapshotContent}
+          title={`SPF ${report.snapshot === undefined ? 'analysis' : 'snapshot'} — ${analysis.rootDomain}`}
+          tool="spf"
+        />
       </div>
       <div className="metric-strip">
         <div>
