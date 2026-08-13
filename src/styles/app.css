@@ -15,6 +15,7 @@
   --muted: #9cb0ad;
   --line: #284047;
   --accent: #79dfc2;
+  --accent-contrast: #071512;
   --accent-strong: #a5f4dc;
   --warm: #f2b66d;
   --focus: #fbd085;
@@ -32,6 +33,7 @@
   --muted: #536b68;
   --line: #c9d9d4;
   --accent: #087c65;
+  --accent-contrast: #ffffff;
   --accent-strong: #045846;
   --warm: #9e5b0e;
   --focus: #8a4b00;
@@ -181,7 +183,7 @@ nav a:hover,
   border: 1px solid var(--accent);
   border-radius: 0.45rem;
   background: var(--accent);
-  color: #071512;
+  color: var(--accent-contrast);
   cursor: pointer;
   font-weight: 780;
 }
@@ -847,10 +849,12 @@ summary {
 .mode-switch {
   display: inline-flex;
   width: fit-content;
+  max-width: 100%;
   padding: 0.28rem;
   border: 1px solid var(--line);
   border-radius: 0.55rem;
   background: var(--surface);
+  flex-wrap: wrap;
   gap: 0.25rem;
 }
 
@@ -864,9 +868,9 @@ summary {
   font-weight: 720;
 }
 
-.mode-switch button[aria-selected='true'] {
+.mode-switch button[aria-pressed='true'] {
   background: var(--accent);
-  color: #071512;
+  color: var(--accent-contrast);
 }
 
 .metric-strip {
@@ -1006,7 +1010,7 @@ summary {
   height: 1.55rem;
   border-radius: 50%;
   background: var(--accent);
-  color: #071512;
+  color: var(--accent-contrast);
   content: counter(rollout);
   font-size: 0.75rem;
   font-weight: 850;
@@ -1498,6 +1502,14 @@ summary {
 
   .workbench-form {
     grid-template-columns: 1fr;
+  }
+
+  .mode-switch {
+    width: 100%;
+  }
+
+  .mode-switch button {
+    flex: 1 1 9rem;
   }
 
   .record-picker,

@@ -53,7 +53,7 @@ const tools = [
   {
     path: 'spf/',
     label: 'Analyse SPF',
-    description: 'Map lookup dependencies and safe snapshots.',
+    description: 'Map dependencies, test sender context, and build safe snapshots.',
   },
   {
     path: 'zone-lint/',
@@ -62,8 +62,8 @@ const tools = [
   },
   {
     path: 'diff/',
-    label: 'Compare a change',
-    description: 'Separate semantic changes from formatting.',
+    label: 'Open Change Lab',
+    description: 'Compare semantic changes and plan a bounded rollout.',
   },
 ] as const;
 
@@ -92,8 +92,8 @@ export function App() {
           <a href={href('dnssec/')}>DNSSEC</a>
           <a href={href('spf/')}>SPF</a>
           <a href={href('zone-lint/')}>Zone lint</a>
-          <a href={href('studio/')}>Record studio</a>
-          <a href={href('diff/')}>Diff</a>
+          <a href={href('studio/')}>Record Studio</a>
+          <a href={href('diff/')}>Change Lab</a>
           <a href={href('dmarc/')}>DMARC</a>
           <a href={href('dkim/')}>DKIM</a>
           <a href={href('caa/')}>CAA</a>
@@ -161,7 +161,7 @@ export function App() {
               <div className="secondary-tools" aria-label="Additional tools">
                 <span>Also included</span>
                 <a href={href('lookup/')}>Record explorer</a>
-                <a href={href('studio/')}>Record studio</a>
+                <a href={href('studio/')}>Record Studio</a>
                 <a href={href('dmarc/')}>DMARC</a>
                 <a href={href('dkim/')}>DKIM</a>
                 <a href={href('caa/')}>CAA</a>
