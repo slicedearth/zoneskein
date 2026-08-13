@@ -12,10 +12,31 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
   projects: [
-    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
-    { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
-    { name: 'webkit', use: { ...devices['Desktop Safari'] } },
-    { name: 'mobile-chromium', use: { ...devices['Pixel 7'] } },
+    {
+      name: 'chromium',
+      testIgnore: /accessibility\.spec\.ts/u,
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      name: 'firefox',
+      testIgnore: /accessibility\.spec\.ts/u,
+      use: { ...devices['Desktop Firefox'] },
+    },
+    {
+      name: 'webkit',
+      testIgnore: /accessibility\.spec\.ts/u,
+      use: { ...devices['Desktop Safari'] },
+    },
+    {
+      name: 'mobile-chromium',
+      testIgnore: /accessibility\.spec\.ts/u,
+      use: { ...devices['Pixel 7'] },
+    },
+    {
+      name: 'accessibility-chromium',
+      testMatch: /accessibility\.spec\.ts/u,
+      use: { ...devices['Desktop Chrome'] },
+    },
   ],
   webServer: {
     command: 'npm run build && npm run preview -- --host 127.0.0.1',

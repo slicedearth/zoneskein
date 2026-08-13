@@ -78,11 +78,12 @@ npm run check:dnssec-anchors
 npm test
 npm run build
 npm run check:build
+npm run test:a11y
 npm run test:e2e
 npm run test:live
 ```
 
-`npm run build` also verifies the bounded static output, legal assets, CSP resolver allowlist, SPA rewrite, and entry-asset hashes. `npm run check:build` repeats that verification for an existing `dist` directory. Production source maps are not emitted. Browser tests exercise deterministic, mocked workflows in Chromium, Firefox, WebKit, and a mobile Chromium viewport.
+`npm run build` also verifies the bounded static output, legal assets, CSP resolver allowlist, SPA rewrite, and entry-asset hashes. `npm run check:build` repeats that verification for an existing `dist` directory. Production source maps are not emitted. Browser tests exercise deterministic, mocked workflows in Chromium, Firefox, WebKit, and a mobile Chromium viewport. The dedicated accessibility project checks every static route with axe, 320-CSS-pixel reflow, keyboard skip-link focus, forced colours, and reduced motion. Property tests use fixed seeds and bounded generated inputs so failures remain locally reproducible.
 
 `npm run test:live` is an optional manual check against current public resolvers. It is excluded from normal tests and continuous integration. Unit and browser tests otherwise use deterministic fixtures and mocked network responses.
 

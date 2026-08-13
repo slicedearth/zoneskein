@@ -21,10 +21,11 @@ npm run lint
 npm run check
 npm test
 npm run build
+npm run test:a11y
 npm run test:e2e
 ```
 
-Add focused unit tests for parsers, protocol transformations, bounds, and negative cases. Browser tests should mock DNS-over-HTTPS and cover only critical workflows. The browser gate runs those workflows in Chromium, Firefox, WebKit, and a mobile Chromium viewport.
+Add focused unit tests for parsers, protocol transformations, bounds, and negative cases. Use fixed seeds and bounded run counts for property tests so failures are reproducible. Browser tests should mock DNS-over-HTTPS and cover only critical workflows. The browser gate runs those workflows in Chromium, Firefox, WebKit, and a mobile Chromium viewport, plus a dedicated Chromium accessibility audit across every static route.
 
 ## Protocol changes
 

@@ -110,7 +110,7 @@ export function App() {
         </button>
       </header>
 
-      <main id="main-content">
+      <main id="main-content" tabIndex={-1}>
         <Suspense
           fallback={
             <section className="page-intro" aria-live="polite">
