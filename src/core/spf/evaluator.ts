@@ -13,7 +13,7 @@ import type {
 
 const MAX_DEPTH = 20;
 const LOOKUP_LIMIT = 10;
-const MAX_MX_TARGETS = 10;
+const MAX_MX_RECORDS = 10;
 const encoder = new TextEncoder();
 
 interface WalkResult {
@@ -46,7 +46,22 @@ function withDomain(diagnostic: SpfDiagnostic, sourceDomain: string): SpfDiagnos
 }
 
 function policyRecords(result: SpfLookupResult): readonly string[] {
-  return result.values.filter((value) => value.trimStart().toLowerCase().startsWith('v=spf1'));
+  return result.values.filter((value) => /^v=spf1(?: |$)/iu.test(value));
+}
+
+function isVoidLookup(result: SpfLookupResult): boolean {
+  return (
+    result.status === 'nodata' ||
+    result.status === 'nxdomain' ||
+    (result.status === 'answer' && result.values.length === 0)
+  );
+}
+
+function anyVoidLookup(results: readonly SpfLookupResult[]): boolean {
+  if (results.some((result) => result.status === 'error' || result.status === 'servfail')) {
+    return false;
+  }
+  return results.some((result) => isVoidLookup(result));
 }
 
 async function lookup(
@@ -57,9 +72,10 @@ async function lookup(
   const result = await state.dns.lookup(domain, type);
   state.totalResponseBytes += result.messageBytes;
   if (result.status === 'error' || result.status === 'servfail') {
+    const detail = result.error === undefined ? '' : `: ${result.error}`;
     addDiagnostic(state, {
       code: 'lookup-failed',
-      message: `${type} lookup for ${domain} failed${result.error === undefined ? '.' : `: ${result.error}`}`,
+      message: `${type} lookup for ${domain} failed${detail}. Concrete evaluation returns temperror.`,
       severity: 'error',
       sourceDomain: domain,
     });
@@ -77,6 +93,16 @@ function targetDomain(mechanism: SpfMechanism, sourceDomain: string): string | n
 function minimumTtl(results: readonly SpfLookupResult[]): number | undefined {
   const values = results.flatMap((result) => (result.ttl === undefined ? [] : [result.ttl]));
   return values.length === 0 ? undefined : Math.min(...values);
+}
+
+function distinctMxRecords(result: SpfLookupResult): readonly { exchange: string }[] | null {
+  if (result.mxRecords === undefined) return null;
+  const records = new Map<string, { exchange: string }>();
+  for (const record of result.mxRecords) {
+    const key = `${String(record.preference)}\u0000${record.exchange}`;
+    if (!records.has(key)) records.set(key, { exchange: record.exchange });
+  }
+  return [...records.values()];
 }
 
 async function resolveMechanism(
@@ -118,7 +144,7 @@ async function resolveMechanism(
       targets: [],
       termIndex,
       ...(answer.ttl === undefined ? {} : { ttl: answer.ttl }),
-      void: answer.values.length === 0 && answer.status !== 'error',
+      void: isVoidLookup(answer),
     };
   }
   if (mechanism.name === 'a') {
@@ -135,17 +161,24 @@ async function resolveMechanism(
       targets: [domain],
       termIndex,
       ...(ttl === undefined ? {} : { ttl }),
-      void: networks.length === 0 && ipv4.status !== 'error' && ipv6.status !== 'error',
+      void: anyVoidLookup([ipv4, ipv6]),
     };
   }
 
   const mx = await lookup(state, domain, 'MX');
-  const targets = mx.values.slice(0, MAX_MX_TARGETS);
-  if (mx.values.length > MAX_MX_TARGETS) {
+  const mxRecords = distinctMxRecords(mx);
+  const recordsOrValues = mxRecords?.map((record) => record.exchange) ?? [
+    ...new Set(mx.values),
+  ];
+  const targets = [
+    ...new Set(recordsOrValues.slice(0, MAX_MX_RECORDS).filter((target) => target !== '.')),
+  ];
+  const recordCount = mxRecords?.length ?? recordsOrValues.length;
+  if (recordCount > MAX_MX_RECORDS) {
     addDiagnostic(state, {
       code: 'mx-target-limit',
       location: mechanism.location,
-      message: `MX expansion for ${domain} returned more than ${String(MAX_MX_TARGETS)} targets.`,
+      message: `MX expansion for ${domain} returned more than ${String(MAX_MX_RECORDS)} records.`,
       severity: 'error',
       sourceDomain,
     });
@@ -162,7 +195,7 @@ async function resolveMechanism(
     targets,
     termIndex,
     ...(ttl === undefined ? {} : { ttl }),
-    void: targets.length === 0 || networks.length === 0,
+    void: anyVoidLookup([mx, ...addressAnswers]),
   };
 }
 
@@ -273,7 +306,14 @@ async function walk(
     return { lookups: startingLookups, voids: startingVoids };
   }
   const node = await loadNode(state, domain);
-  if (node.policy === undefined) return { lookups: startingLookups, voids: startingVoids + 1 };
+  if (node.policy === undefined) {
+    const voids =
+      depth > 1 && (node.status === 'nodata' || node.status === 'nxdomain')
+        ? startingVoids + 1
+        : startingVoids;
+    state.maximumVoids = Math.max(state.maximumVoids, voids);
+    return { lookups: startingLookups, voids };
+  }
 
   let lookups = startingLookups;
   let voids = startingVoids;

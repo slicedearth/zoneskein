@@ -126,6 +126,7 @@ export async function flattenSpf(
         blockers.add(`${domain}: unsupported term ${term.original}.`);
         continue;
       }
+      if (term.kind === 'unknown-modifier') continue;
       if (term.kind === 'modifier') {
         if (term.name === 'redirect') {
           if (term.macro) blockers.add(`${domain}: redirect uses sender-dependent macros.`);
@@ -267,7 +268,9 @@ export async function flattenSpf(
     minimumTtl === null
       ? undefined
       : new Date(
-          now.getTime() + Math.max(60, Math.min(3600, Math.floor(minimumTtl / 2))) * 1000,
+          now.getTime() +
+            Math.min(minimumTtl, Math.max(1, Math.min(3600, Math.floor(minimumTtl / 2)))) *
+              1000,
         ).toISOString();
   const bindRecord = `${analysis.rootDomain}. IN TXT (${chunks.map((chunk) => `"${chunk}"`).join(' ')})`;
   const markdown = [

@@ -11,6 +11,7 @@ import type {
   SpfPolicy,
   SpfQualifier,
   SpfTerm,
+  SpfUnknownModifier,
 } from './types';
 
 const MECHANISMS = new Set<SpfMechanismName>([
@@ -39,44 +40,96 @@ function diagnostic(
   };
 }
 
-function splitCidr(value: string): { base: string; cidr?: SpfCidr; error?: string } {
-  const slash = value.indexOf('/');
+function topLevelSlash(value: string): number {
+  let inMacro = false;
+  for (let index = 0; index < value.length; index += 1) {
+    if (!inMacro && value[index] === '%' && value[index + 1] === '{') {
+      inMacro = true;
+      index += 1;
+      continue;
+    }
+    if (inMacro && value[index] === '}') {
+      inMacro = false;
+      continue;
+    }
+    if (!inMacro && value[index] === '/') return index;
+  }
+  return -1;
+}
+
+function cidrLength(value: string, maximum: number, family: string): number | string {
+  if (!/^(?:0|[1-9][0-9]{0,2})$/u.test(value)) {
+    return `${family} CIDR length must be a decimal integer.`;
+  }
+  const parsed = Number(value);
+  return parsed <= maximum
+    ? parsed
+    : `${family} CIDR length must be between 0 and ${String(maximum)}.`;
+}
+
+function splitDualCidr(value: string): { base: string; cidr?: SpfCidr; error?: string } {
+  const slash = topLevelSlash(value);
   if (slash < 0) return { base: value };
   const base = value.slice(0, slash);
-  const suffix = value.slice(slash + 1);
-  const parts = suffix.split('/');
-  if (parts.length > 2) return { base, error: 'CIDR suffix has too many separators.' };
-  const first = parts[0] ?? '';
-  const second = parts[1];
-  let ipv4: number | undefined;
-  let ipv6: number | undefined;
-  if (first === '' && second === undefined) return { base, error: 'CIDR length is empty.' };
-  if (first !== '') {
-    const parsed = Number(first);
-    if (!Number.isInteger(parsed) || parsed < 0 || parsed > 32) {
-      return { base, error: 'IPv4 CIDR length must be between 0 and 32.' };
-    }
-    ipv4 = parsed;
+  const suffix = value.slice(slash);
+  const dual = /^\/([0-9]+)\/\/([0-9]+)$/u.exec(suffix);
+  const ipv6Only = /^\/\/([0-9]+)$/u.exec(suffix);
+  const ipv4Only = /^\/([0-9]+)$/u.exec(suffix);
+  const ipv4Text = dual?.[1] ?? ipv4Only?.[1];
+  const ipv6Text = dual?.[2] ?? ipv6Only?.[1];
+  if (ipv4Text === undefined && ipv6Text === undefined) {
+    return {
+      base,
+      error: 'Dual CIDR syntax must use /IPv4, //IPv6, or /IPv4//IPv6.',
+    };
   }
-  if (second !== undefined) {
-    const parsed = Number(second);
-    if (!Number.isInteger(parsed) || parsed < 0 || parsed > 128) {
-      return { base, error: 'IPv6 CIDR length must be between 0 and 128.' };
-    }
-    ipv6 = parsed;
-  }
+  const ipv4 = ipv4Text === undefined ? undefined : cidrLength(ipv4Text, 32, 'IPv4');
+  if (typeof ipv4 === 'string') return { base, error: ipv4 };
+  const ipv6 = ipv6Text === undefined ? undefined : cidrLength(ipv6Text, 128, 'IPv6');
+  if (typeof ipv6 === 'string') return { base, error: ipv6 };
   return {
     base,
     cidr: { ...(ipv4 === undefined ? {} : { ipv4 }), ...(ipv6 === undefined ? {} : { ipv6 }) },
   };
 }
 
-function modifier(token: SpfToken): SpfModifier | null {
+function splitAddressCidr(
+  value: string,
+  family: 'ipv4' | 'ipv6',
+): { base: string; cidr?: SpfCidr; error?: string } {
+  const slash = topLevelSlash(value);
+  if (slash < 0) return { base: value };
+  const base = value.slice(0, slash);
+  const suffix = value.slice(slash);
+  const match = /^\/([0-9]+)$/u.exec(suffix);
+  if (match?.[1] === undefined) {
+    return { base, error: `${family.toUpperCase()} mechanisms accept one CIDR length only.` };
+  }
+  const maximum = family === 'ipv4' ? 32 : 128;
+  const parsed = cidrLength(match[1], maximum, family === 'ipv4' ? 'IPv4' : 'IPv6');
+  if (typeof parsed === 'string') return { base, error: parsed };
+  return {
+    base,
+    cidr: family === 'ipv4' ? { ipv4: parsed } : { ipv6: parsed },
+  };
+}
+
+function modifier(token: SpfToken): SpfModifier | SpfUnknownModifier | null {
   const equals = token.text.indexOf('=');
   if (equals < 1) return null;
   const name = token.text.slice(0, equals).toLowerCase();
-  if (!MODIFIERS.has(name as SpfModifierName)) return null;
+  if (!/^[a-z][a-z0-9._-]*$/u.test(name)) return null;
   const value = token.text.slice(equals + 1);
+  if (!MODIFIERS.has(name as SpfModifierName)) {
+    return {
+      kind: 'unknown-modifier',
+      location: token.location,
+      macro: value.includes('%'),
+      name,
+      original: token.text,
+      value,
+    };
+  }
   return {
     kind: 'modifier',
     location: token.location,
@@ -102,12 +155,30 @@ function mechanism(token: SpfToken, diagnostics: SpfDiagnostic[]): SpfMechanism 
   if (!MECHANISMS.has(rawName as SpfMechanismName)) return null;
   const name = rawName as SpfMechanismName;
   const valueAfterName = value.slice(rawName.length);
-  const split = splitCidr(
-    valueAfterName.startsWith(':') ? valueAfterName.slice(1) : valueAfterName,
-  );
+  const source = valueAfterName.startsWith(':') ? valueAfterName.slice(1) : valueAfterName;
+  const split =
+    name === 'a' || name === 'mx'
+      ? splitDualCidr(source)
+      : name === 'ip4'
+        ? splitAddressCidr(source, 'ipv4')
+        : name === 'ip6'
+          ? splitAddressCidr(source, 'ipv6')
+          : { base: source };
   if (split.error !== undefined)
     diagnostics.push(diagnostic('invalid-cidr', split.error, token));
   const argument = split.base === '' ? undefined : split.base;
+
+  if (
+    name !== 'a' &&
+    name !== 'mx' &&
+    name !== 'ip4' &&
+    name !== 'ip6' &&
+    topLevelSlash(source) >= 0
+  ) {
+    diagnostics.push(
+      diagnostic('cidr-not-allowed', `${name} does not accept a CIDR length.`, token),
+    );
+  }
 
   if ((name === 'include' || name === 'exists') && argument === undefined) {
     diagnostics.push(
@@ -126,9 +197,7 @@ function mechanism(token: SpfToken, diagnostics: SpfDiagnostic[]): SpfMechanism 
   }
   if ((name === 'ip4' || name === 'ip6') && argument !== undefined) {
     try {
-      const parsed = argument.includes('/')
-        ? ipaddr.parseCIDR(argument)[0]
-        : ipaddr.parse(argument);
+      const parsed = ipaddr.parse(argument);
       const expected = name === 'ip4' ? 'ipv4' : 'ipv6';
       if (parsed.kind() !== expected) throw new Error('Address family does not match.');
     } catch {
@@ -173,6 +242,7 @@ export function parseSpfRecord(record: string, sourceDomain: string): SpfPolicy 
     );
   const terms: SpfTerm[] = [];
   const seen = new Set<string>();
+  const seenModifiers = new Set<SpfModifierName>();
   let allSeen = false;
   let redirectSeen = false;
 
@@ -192,6 +262,27 @@ export function parseSpfRecord(record: string, sourceDomain: string): SpfPolicy 
       diagnostics.push(
         diagnostic('unknown-term', `Unsupported or malformed SPF term: ${token.text}.`, token),
       );
+    if (term.kind === 'unknown-modifier')
+      diagnostics.push(
+        diagnostic(
+          'unknown-modifier',
+          `Unrecognised SPF modifier ${term.name} is preserved and ignored.`,
+          token,
+          'warning',
+        ),
+      );
+    if (term.kind === 'modifier') {
+      if (seenModifiers.has(term.name)) {
+        diagnostics.push(
+          diagnostic(
+            'duplicate-modifier',
+            `The ${term.name} modifier appears more than once.`,
+            token,
+          ),
+        );
+      }
+      seenModifiers.add(term.name);
+    }
     if (allSeen && term.kind === 'mechanism')
       diagnostics.push(
         diagnostic('after-all', 'Mechanisms after all are unreachable.', token, 'warning'),
@@ -206,7 +297,7 @@ export function parseSpfRecord(record: string, sourceDomain: string): SpfPolicy 
           'warning',
         ),
       );
-    if (term.kind !== 'unknown' && term.macro)
+    if ((term.kind === 'mechanism' || term.kind === 'modifier') && term.macro)
       diagnostics.push(
         diagnostic(
           'macro-present',

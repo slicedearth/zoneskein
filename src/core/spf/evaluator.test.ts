@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { analyseSpf } from './evaluator';
 import { flattenSpf } from './flatten';
-import type { SpfDnsClient, SpfLookupResult, SpfLookupType } from './types';
+import type { SpfDnsClient, SpfLookupResult, SpfLookupType, SpfMxRecord } from './types';
 
 function answer(values: readonly string[], ttl = 300, messageBytes = 100): SpfLookupResult {
   return {
@@ -13,7 +13,22 @@ function answer(values: readonly string[], ttl = 300, messageBytes = 100): SpfLo
   };
 }
 
+function lookupFailure(status: 'error' | 'servfail', message: string): SpfLookupResult {
+  return { error: message, messageBytes: 80, status, values: [] };
+}
+
+function mxAnswer(records: readonly SpfMxRecord[]): SpfLookupResult {
+  return {
+    messageBytes: 100,
+    mxRecords: records,
+    status: records.length === 0 ? 'nodata' : 'answer',
+    ttl: 300,
+    values: [...new Set(records.map((record) => record.exchange))],
+  };
+}
+
 class FixtureDns implements SpfDnsClient {
+  readonly calls: string[] = [];
   readonly #answers: Readonly<Record<string, SpfLookupResult>>;
 
   constructor(answers: Readonly<Record<string, SpfLookupResult>>) {
@@ -21,6 +36,7 @@ class FixtureDns implements SpfDnsClient {
   }
 
   lookup(domain: string, type: SpfLookupType): Promise<SpfLookupResult> {
+    this.calls.push(`${domain}|${type}`);
     return Promise.resolve(this.#answers[`${domain}|${type}`] ?? answer([]));
   }
 }
@@ -76,6 +92,59 @@ describe('SPF dependency analysis', () => {
     expect(two.diagnostics.map((item) => item.code)).toContain('void-warning');
     expect(three.maximumVoidLookups).toBe(3);
     expect(three.diagnostics.map((item) => item.code)).toContain('void-limit');
+  });
+
+  it('does not count DNS failures, multiple policies, or unrelated TXT answers as void', async () => {
+    const dns = new FixtureDns({
+      'error.test|TXT': lookupFailure('servfail', 'fixture server failure'),
+      'multiple.test|TXT': answer(['v=spf1 -all', 'v=spf1 +all']),
+      'root.test|TXT': answer([
+        'v=spf1 include:error.test include:multiple.test include:unrelated.test -all',
+      ]),
+      'unrelated.test|TXT': answer(['site-verification=fixture']),
+    });
+
+    const report = await analyseSpf('root.test', dns);
+
+    expect(report.maximumVoidLookups).toBe(0);
+    expect(report.diagnostics.map((item) => item.code)).toEqual(
+      expect.arrayContaining(['lookup-failed', 'multiple-spf-policies', 'no-spf-policy']),
+    );
+  });
+
+  it('reports mechanism DNS failure as temperror evidence without treating it as void', async () => {
+    const dns = new FixtureDns({
+      'broken.test|A': lookupFailure('servfail', 'fixture server failure'),
+      'broken.test|AAAA': answer([]),
+      'root.test|TXT': answer(['v=spf1 a:broken.test -all']),
+    });
+
+    const report = await analyseSpf('root.test', dns);
+    const failure = report.diagnostics.find((item) => item.code === 'lookup-failed');
+
+    expect(report.maximumVoidLookups).toBe(0);
+    expect(failure?.message).toMatch(/temperror/iu);
+  });
+
+  it('counts full MX records while resolving a shared exchange only once', async () => {
+    const mxRecords = Array.from({ length: 11 }, (_, preference) => ({
+      exchange: 'mail.root.test',
+      preference,
+    }));
+    const dns = new FixtureDns({
+      'mail.root.test|A': answer(['192.0.2.1']),
+      'mail.root.test|AAAA': answer(['2001:db8::1']),
+      'root.test|MX': mxAnswer(mxRecords),
+      'root.test|TXT': answer(['v=spf1 mx -all']),
+    });
+
+    const report = await analyseSpf('root.test', dns);
+
+    expect(report.diagnostics).toContainEqual(
+      expect.objectContaining({ code: 'mx-target-limit', severity: 'error' }),
+    );
+    expect(dns.calls.filter((call) => call === 'mail.root.test|A')).toHaveLength(1);
+    expect(dns.calls.filter((call) => call === 'mail.root.test|AAAA')).toHaveLength(1);
   });
 });
 
@@ -184,5 +253,39 @@ describe('conservative SPF snapshots', () => {
 
     expect(snapshot.safe).toBe(true);
     expect(snapshot.networks).toEqual(['192.0.2.0/25', '192.0.2.192/26']);
+  });
+
+  it('preserves an IPv6 policy prefix and schedules recheck before a short TTL expires', async () => {
+    const now = new Date('2026-08-13T00:00:00.000Z');
+    const { snapshot } = await flattenSpf(
+      'root.test',
+      new FixtureDns({
+        'root.test|TXT': answer(['v=spf1 ip6:2001:db8::/32 -all'], 30),
+      }),
+      now,
+    );
+
+    expect(snapshot.safe).toBe(true);
+    expect(snapshot.networks).toEqual(['2001:db8::/32']);
+    expect(snapshot.earliestSourceExpiry).toBe('2026-08-13T00:00:30.000Z');
+    expect(snapshot.recommendedRecheck).toBe('2026-08-13T00:00:15.000Z');
+    expect(new Date(snapshot.recommendedRecheck ?? 0).getTime()).toBeLessThanOrEqual(
+      new Date(snapshot.earliestSourceExpiry ?? 0).getTime(),
+    );
+  });
+
+  it('ignores an unknown modifier without blocking a finite snapshot', async () => {
+    const { analysis, snapshot } = await flattenSpf(
+      'root.test',
+      new FixtureDns({
+        'root.test|TXT': answer(['v=spf1 vendor=future-semantics ip4:192.0.2.0/24 -all']),
+      }),
+    );
+
+    expect(snapshot.safe).toBe(true);
+    expect(snapshot.networks).toEqual(['192.0.2.0/24']);
+    expect(analysis.diagnostics).toContainEqual(
+      expect.objectContaining({ code: 'unknown-modifier', severity: 'warning' }),
+    );
   });
 });

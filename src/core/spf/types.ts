@@ -35,13 +35,22 @@ export interface SpfModifier {
   readonly value: string;
 }
 
+export interface SpfUnknownModifier {
+  readonly kind: 'unknown-modifier';
+  readonly location: SourceLocation;
+  readonly macro: boolean;
+  readonly name: string;
+  readonly original: string;
+  readonly value: string;
+}
+
 export interface SpfUnknownTerm {
   readonly kind: 'unknown';
   readonly location: SourceLocation;
   readonly original: string;
 }
 
-export type SpfTerm = SpfMechanism | SpfModifier | SpfUnknownTerm;
+export type SpfTerm = SpfMechanism | SpfModifier | SpfUnknownModifier | SpfUnknownTerm;
 
 export type SpfDiagnosticSeverity = 'information' | 'warning' | 'error';
 
@@ -64,9 +73,16 @@ export interface SpfPolicy {
 export type SpfLookupType = 'TXT' | 'A' | 'AAAA' | 'MX';
 export type SpfLookupStatus = 'answer' | 'nodata' | 'nxdomain' | 'servfail' | 'error';
 
+export interface SpfMxRecord {
+  readonly exchange: string;
+  readonly preference: number;
+}
+
 export interface SpfLookupResult {
   readonly error?: string;
   readonly messageBytes: number;
+  /** Distinct MX RDATA, with canonical exchange names, for an MX answer. */
+  readonly mxRecords?: readonly SpfMxRecord[];
   readonly status: SpfLookupStatus;
   readonly ttl?: number;
   readonly values: readonly string[];

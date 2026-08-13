@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { CopyButton } from '../components/CopyButton';
 import { SnapshotButton } from '../components/SnapshotButton';
@@ -9,12 +9,18 @@ import type { ResolverId } from '../core/dns/types';
 import { WireSpfDnsClient } from '../core/spf/dns-client';
 import { analyseSpf } from '../core/spf/evaluator';
 import { flattenSpf } from '../core/spf/flatten';
+import {
+  parseMailFromIdentity,
+  parseSenderClientIp,
+  parseSenderDomain,
+} from '../core/spf/sender-input';
+import { evaluateSpfSender, type SpfSenderEvaluation } from '../core/spf/sender-evaluator';
 import type { SpfAnalysis, SpfSnapshot } from '../core/spf/types';
 import { DnsQueryRun } from '../core/doh/query-run';
 import { RESOLVERS } from '../core/doh/resolvers';
 import { WireDnsResolver } from '../core/doh/wire-resolver';
 
-type Mode = 'analysis' | 'flatten';
+type Mode = 'analysis' | 'flatten' | 'sender';
 const RESOLVER_IDS = Object.keys(RESOLVERS) as ResolverId[];
 
 interface SpfRunReport {
@@ -23,8 +29,68 @@ interface SpfRunReport {
   readonly snapshot?: SpfSnapshot;
 }
 
+interface SpfSenderReport {
+  readonly evaluation: SpfSenderEvaluation;
+  readonly resolverId: ResolverId;
+}
+
 function diagnosticTone(severity: string) {
   return severity === 'error' ? 'error' : severity === 'warning' ? 'warning' : 'information';
+}
+
+function senderTone(result: SpfSenderEvaluation['result']) {
+  if (result === 'pass') return 'pass';
+  if (result === 'fail' || result === 'permerror') return 'error';
+  if (result === 'softfail' || result === 'temperror') return 'warning';
+  return 'unknown';
+}
+
+function senderMarkdown(evaluation: SpfSenderEvaluation, resolverId: ResolverId): string {
+  const escaped = (value: string) => value.replaceAll('|', '\\|').replaceAll('\n', ' ');
+  return [
+    '# ZoneSkein sender-context SPF evaluation',
+    '',
+    `- Result: ${evaluation.result}`,
+    `- Identity: ${evaluation.identity}`,
+    `- Client IP: ${evaluation.ip}`,
+    `- Policy domain: ${evaluation.domain}`,
+    `- Resolver: ${RESOLVERS[resolverId].label} (${resolverId})`,
+    ...(evaluation.capturedAt === undefined
+      ? []
+      : [`- Evaluated at: ${evaluation.capturedAt}`]),
+    `- DNS terms: ${String(evaluation.dnsTerms)} of 10`,
+    `- Void lookups: ${String(evaluation.voidLookups)} of 2`,
+    `- DNS questions: ${String(evaluation.dnsQueries)}`,
+    `- DNS response bytes: ${String(evaluation.responseBytes)}`,
+    `- Reason: ${evaluation.reason}`,
+    ...(evaluation.explanation === undefined
+      ? []
+      : [`- Publisher explanation: ${evaluation.explanation}`]),
+    '',
+    '## Trace',
+    '',
+    '| # | Depth | Stage | Domain | Term | Outcome | Evidence |',
+    '| --- | --- | --- | --- | --- | --- | --- |',
+    ...evaluation.trace
+      .map((entry) =>
+        [
+          String(entry.sequence),
+          String(entry.depth),
+          entry.stage,
+          entry.domain ?? '',
+          entry.term ?? '',
+          entry.outcome ?? '',
+          entry.query === undefined
+            ? entry.message
+            : `${entry.message} ${entry.query.type} ${entry.query.name}: ${entry.query.status}, ${String(entry.query.valueCount)} values, ${String(entry.query.messageBytes)} bytes.`,
+        ]
+          .map(escaped)
+          .join(' | '),
+      )
+      .map((row) => `| ${row} |`),
+    '',
+    'This is a point-in-time simulation for the supplied SMTP identity and client address. It is not a delivery guarantee.',
+  ].join('\n');
 }
 
 function SnapshotPanel({ snapshot }: { readonly snapshot: SpfSnapshot }) {
@@ -297,37 +363,279 @@ function AnalysisPanel({ report }: { readonly report: SpfRunReport }) {
   );
 }
 
+function SenderPanel({ report }: { readonly report: SpfSenderReport }) {
+  const { evaluation, resolverId } = report;
+  const markdown = senderMarkdown(evaluation, resolverId);
+  const json = JSON.stringify(
+    {
+      ...evaluation,
+      evidenceSchema: 'zoneskein-spf-sender-v1',
+      resolver: { id: resolverId, label: RESOLVERS[resolverId].label },
+    },
+    null,
+    2,
+  );
+  return (
+    <section className="results" aria-labelledby="spf-sender-results-title">
+      <div className="section-heading">
+        <div>
+          <p className="eyebrow">Sender-context evaluation</p>
+          <h2 id="spf-sender-results-title">{evaluation.identity}</h2>
+        </div>
+        <StatusBadge tone={senderTone(evaluation.result)}>{evaluation.result}</StatusBadge>
+      </div>
+      <article className="conclusion-panel">
+        <StatusBadge tone={senderTone(evaluation.result)}>{evaluation.result}</StatusBadge>
+        <p>{evaluation.reason}</p>
+        {evaluation.explanation === undefined ? null : (
+          <p>Publisher explanation: {evaluation.explanation}</p>
+        )}
+      </article>
+      <div className="metric-strip">
+        <div>
+          <strong>{evaluation.dnsTerms}/10</strong>
+          <span>DNS terms entered</span>
+        </div>
+        <div>
+          <strong>{evaluation.voidLookups}/2</strong>
+          <span>Void lookups</span>
+        </div>
+        <div>
+          <strong>{evaluation.dnsQueries}</strong>
+          <span>DNS questions</span>
+        </div>
+        <div>
+          <strong>{evaluation.responseBytes}</strong>
+          <span>Response bytes</span>
+        </div>
+        <div>
+          <strong>{evaluation.trace.length}</strong>
+          <span>Trace entries</span>
+        </div>
+      </div>
+      <article className="result-panel">
+        <div className="result-heading">
+          <h3>Evaluation identity</h3>
+          <div className="export-actions">
+            <CopyButton label="Copy evaluation JSON" text={json} />
+            <CopyButton label="Copy evaluation Markdown" text={markdown} />
+          </div>
+        </div>
+        <dl className="metadata-grid">
+          <div>
+            <dt>MAIL FROM identity</dt>
+            <dd>{evaluation.identity}</dd>
+          </div>
+          <div>
+            <dt>Client IP</dt>
+            <dd>{evaluation.ip}</dd>
+          </div>
+          <div>
+            <dt>Policy domain</dt>
+            <dd>{evaluation.domain}</dd>
+          </div>
+          <div>
+            <dt>Resolver</dt>
+            <dd>{RESOLVERS[resolverId].label}</dd>
+          </div>
+          <div>
+            <dt>Matched mechanism</dt>
+            <dd>{evaluation.match?.term ?? 'None'}</dd>
+          </div>
+          <div>
+            <dt>Evaluated at</dt>
+            <dd>
+              {evaluation.capturedAt === undefined
+                ? 'Unknown'
+                : new Date(evaluation.capturedAt).toLocaleString()}
+            </dd>
+          </div>
+        </dl>
+      </article>
+      <article className="result-panel">
+        <h3>Ordered evaluation trace</h3>
+        <div className="table-scroll">
+          <table>
+            <caption>SPF mechanisms, limits, macros, and DNS evidence</caption>
+            <thead>
+              <tr>
+                <th>Step</th>
+                <th>Stage</th>
+                <th>Domain / term</th>
+                <th>Outcome</th>
+                <th>Evidence</th>
+              </tr>
+            </thead>
+            <tbody>
+              {evaluation.trace.map((entry) => (
+                <tr key={entry.sequence}>
+                  <td>{entry.sequence}</td>
+                  <td>
+                    {entry.stage}
+                    <br />
+                    <small>depth {entry.depth}</small>
+                  </td>
+                  <td>
+                    {entry.domain ?? '—'}
+                    <br />
+                    <code>{entry.term ?? '—'}</code>
+                  </td>
+                  <td>{entry.outcome ?? '—'}</td>
+                  <td>
+                    {entry.message}
+                    {entry.query === undefined ? null : (
+                      <details className="inline-details">
+                        <summary>
+                          {entry.query.type} {entry.query.name} · {entry.query.status}
+                        </summary>
+                        <p>
+                          {String(entry.query.valueCount)} values ·{' '}
+                          {String(entry.query.messageBytes)} bytes
+                          {entry.query.error === undefined ? '' : ` · ${entry.query.error}`}
+                        </p>
+                        {entry.query.values.length === 0 ? null : (
+                          <pre className="spf-output">{entry.query.values.join('\n')}</pre>
+                        )}
+                      </details>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </article>
+      <p className="detail-note">
+        This is a local, point-in-time simulation for one supplied SMTP identity and client
+        address. ZoneSkein does not transmit the mailbox or IP anywhere except in the DNS names
+        that the SPF policy itself requires, and it does not save this evaluation automatically.
+        Copying either export places the supplied mailbox, client IP, and derived evidence on
+        your clipboard.
+      </p>
+    </section>
+  );
+}
+
 export function SpfPage() {
   const [input, setInput] = useState('');
+  const [clientIp, setClientIp] = useState('');
+  const [mailFrom, setMailFrom] = useState('');
+  const [heloDomain, setHeloDomain] = useState('');
+  const [receiver, setReceiver] = useState('');
   const [resolverId, setResolverId] = useState<ResolverId>('google');
   const [mode, setMode] = useState<Mode>('analysis');
   const [state, setState] = useState<'idle' | 'loading' | 'complete' | 'cancelled'>('idle');
   const [error, setError] = useState('');
   const [report, setReport] = useState<SpfRunReport | null>(null);
+  const [senderReport, setSenderReport] = useState<SpfSenderReport | null>(null);
   const activeRun = useRef<DnsQueryRun | null>(null);
+
+  useEffect(
+    () => () => {
+      activeRun.current?.cancel();
+      activeRun.current = null;
+    },
+    [],
+  );
+
+  function invalidateResult() {
+    activeRun.current?.cancel();
+    activeRun.current = null;
+    setError('');
+    setReport(null);
+    setSenderReport(null);
+    setState('idle');
+  }
 
   async function submit(event: React.SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
-    const parsed = validateDnsName(input);
-    if (!parsed.ok) {
-      setError(parsed.error.message);
-      return;
+    let policyDomain = '';
+    let mailFromDomain = '';
+    let localPart = '';
+    let evaluationIp = clientIp;
+    let evaluationHelo = heloDomain;
+    let evaluationReceiver = receiver;
+    if (mode === 'sender') {
+      const identity = parseMailFromIdentity(mailFrom);
+      if (!identity.ok) {
+        setError(identity.error);
+        return;
+      }
+      mailFromDomain = identity.value.domain;
+      localPart = identity.value.localPart;
+      const parsedIp = parseSenderClientIp(clientIp);
+      if (!parsedIp.ok) {
+        setError(parsedIp.error);
+        return;
+      }
+      evaluationIp = parsedIp.value;
+      if (identity.value.nullReversePath) {
+        const parsedHelo = parseSenderDomain(heloDomain, 'HELO/EHLO');
+        if (!parsedHelo.ok) {
+          setError(parsedHelo.error);
+          return;
+        }
+        evaluationHelo = parsedHelo.value;
+      } else evaluationHelo = heloDomain.trim();
+      if (receiver.trim() !== '') {
+        const parsedReceiver = parseSenderDomain(receiver, 'receiver');
+        if (!parsedReceiver.ok) {
+          setError(parsedReceiver.error);
+          return;
+        }
+        evaluationReceiver = parsedReceiver.value;
+      } else evaluationReceiver = '';
+    } else {
+      const parsed = validateDnsName(input);
+      if (!parsed.ok) {
+        setError(parsed.error.message);
+        return;
+      }
+      policyDomain = parsed.value.ascii;
     }
     activeRun.current?.cancel();
     const run = new DnsQueryRun();
     activeRun.current = run;
     setError('');
     setReport(null);
+    setSenderReport(null);
     setState('loading');
     const dns = new WireSpfDnsClient(new WireDnsResolver(RESOLVERS[resolverId]), run);
     try {
-      if (mode === 'analysis') {
-        const analysis = await analyseSpf(parsed.value.ascii, dns);
+      if (mode === 'sender') {
+        const evaluation = await evaluateSpfSender(
+          {
+            heloDomain: evaluationHelo,
+            ip: evaluationIp,
+            localPart,
+            mailFromDomain,
+            receiver: evaluationReceiver,
+            signal: run.signal,
+            timestamp: new Date(),
+          },
+          dns,
+        );
         if (activeRun.current !== run) return;
+        if (run.cancelled) {
+          setState('cancelled');
+          return;
+        }
+        setSenderReport({ evaluation, resolverId });
+      } else if (mode === 'analysis') {
+        const analysis = await analyseSpf(policyDomain, dns);
+        if (activeRun.current !== run) return;
+        if (run.cancelled) {
+          setState('cancelled');
+          return;
+        }
         setReport({ analysis, dnsQuestions: run.questionsUsed });
       } else {
-        const result = await flattenSpf(parsed.value.ascii, dns);
+        const result = await flattenSpf(policyDomain, dns);
         if (activeRun.current !== run) return;
+        if (run.cancelled) {
+          setState('cancelled');
+          return;
+        }
         setReport({
           analysis: result.analysis,
           dnsQuestions: run.questionsUsed,
@@ -336,6 +644,7 @@ export function SpfPage() {
       }
       setState('complete');
     } catch (cause) {
+      if (activeRun.current !== run) return;
       if (run.cancelled) setState('cancelled');
       else {
         setError(cause instanceof Error ? cause.message : 'SPF analysis failed.');
@@ -345,59 +654,157 @@ export function SpfPage() {
   }
 
   function clear() {
-    activeRun.current?.cancel();
-    activeRun.current = null;
+    invalidateResult();
     setInput('');
-    setError('');
-    setReport(null);
-    setState('idle');
+    setClientIp('');
+    setMailFrom('');
+    setHeloDomain('');
+    setReceiver('');
+  }
+
+  function selectMode(next: Mode) {
+    invalidateResult();
+    setMode(next);
   }
 
   return (
     <div className="tool-page">
       <ToolIntro eyebrow="SPF policy workbench" title="Count policy paths before receivers do.">
         Parse ordered SPF terms, follow include and redirect dependencies, separate protocol
-        limits from browser requests, and create a guarded point-in-time snapshot only when it
-        is safe.
+        limits from browser requests, simulate one sender context, and create a guarded
+        point-in-time snapshot only when it is safe.
       </ToolIntro>
-      <div className="mode-switch" role="tablist" aria-label="SPF mode">
+      <div className="mode-switch" aria-label="SPF mode">
         <button
-          role="tab"
-          aria-selected={mode === 'analysis'}
+          aria-pressed={mode === 'analysis'}
           type="button"
-          onClick={() => setMode('analysis')}
+          disabled={state === 'loading'}
+          onClick={() => selectMode('analysis')}
         >
           Analysis
         </button>
         <button
-          role="tab"
-          aria-selected={mode === 'flatten'}
+          aria-pressed={mode === 'flatten'}
           type="button"
-          onClick={() => setMode('flatten')}
+          disabled={state === 'loading'}
+          onClick={() => selectMode('flatten')}
         >
           Snapshot flattener
         </button>
+        <button
+          aria-pressed={mode === 'sender'}
+          type="button"
+          disabled={state === 'loading'}
+          onClick={() => selectMode('sender')}
+        >
+          Sender evaluation
+        </button>
       </div>
       <form className="workbench-form" onSubmit={(event) => void submit(event)}>
-        <div className="field-group field-wide">
-          <label htmlFor="spf-domain">Domain</label>
-          <input
-            id="spf-domain"
-            value={input}
-            onChange={(event) => setInput(event.currentTarget.value)}
-            placeholder="example.com"
-            maxLength={2048}
-            autoCapitalize="none"
-            autoCorrect="off"
-            spellCheck={false}
-          />
-        </div>
+        {mode === 'sender' ? (
+          <>
+            <div className="field-group">
+              <label htmlFor="spf-client-ip">SMTP client IP</label>
+              <input
+                id="spf-client-ip"
+                value={clientIp}
+                disabled={state === 'loading'}
+                onChange={(event) => {
+                  invalidateResult();
+                  setClientIp(event.currentTarget.value);
+                }}
+                placeholder="192.0.2.10 or 2001:db8::10"
+                maxLength={64}
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                required
+              />
+            </div>
+            <div className="field-group">
+              <label htmlFor="spf-mail-from">MAIL FROM address</label>
+              <input
+                id="spf-mail-from"
+                value={mailFrom}
+                disabled={state === 'loading'}
+                onChange={(event) => {
+                  invalidateResult();
+                  setMailFrom(event.currentTarget.value);
+                }}
+                placeholder="sender@example.com or <>"
+                maxLength={512}
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+              />
+              <small>Leave empty or enter &lt;&gt; for the null reverse path.</small>
+            </div>
+            <div className="field-group">
+              <label htmlFor="spf-helo-domain">HELO/EHLO domain</label>
+              <input
+                id="spf-helo-domain"
+                value={heloDomain}
+                disabled={state === 'loading'}
+                onChange={(event) => {
+                  invalidateResult();
+                  setHeloDomain(event.currentTarget.value);
+                }}
+                placeholder="mail.sender.example"
+                maxLength={253}
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                required
+              />
+            </div>
+            <div className="field-group">
+              <label htmlFor="spf-receiver">Receiver hostname (optional)</label>
+              <input
+                id="spf-receiver"
+                value={receiver}
+                disabled={state === 'loading'}
+                onChange={(event) => {
+                  invalidateResult();
+                  setReceiver(event.currentTarget.value);
+                }}
+                placeholder="mx.receiver.example"
+                maxLength={253}
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+              />
+              <small>Used only when a policy expands the receiver macro.</small>
+            </div>
+          </>
+        ) : (
+          <div className="field-group field-wide">
+            <label htmlFor="spf-domain">Domain</label>
+            <input
+              id="spf-domain"
+              value={input}
+              disabled={state === 'loading'}
+              onChange={(event) => {
+                invalidateResult();
+                setInput(event.currentTarget.value);
+              }}
+              placeholder="example.com"
+              maxLength={2048}
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+            />
+          </div>
+        )}
         <div className="field-group">
           <label htmlFor="spf-resolver">Resolver</label>
           <select
             id="spf-resolver"
             value={resolverId}
-            onChange={(event) => setResolverId(event.currentTarget.value as ResolverId)}
+            disabled={state === 'loading'}
+            onChange={(event) => {
+              invalidateResult();
+              setResolverId(event.currentTarget.value as ResolverId);
+            }}
           >
             {RESOLVER_IDS.map((id) => (
               <option key={id} value={id}>
@@ -417,7 +824,9 @@ export function SpfPage() {
               ? 'Resolving policy…'
               : mode === 'analysis'
                 ? 'Analyse SPF'
-                : 'Build guarded snapshot'}
+                : mode === 'flatten'
+                  ? 'Build guarded snapshot'
+                  : 'Evaluate sender'}
           </button>
           {state === 'loading' ? (
             <button
@@ -433,13 +842,32 @@ export function SpfPage() {
           </button>
         </div>
       </form>
-      <div className="run-status" aria-live="polite">
+      <div
+        className="run-status"
+        role="status"
+        aria-label="SPF run status"
+        aria-live="polite"
+        aria-atomic="true"
+      >
         {state === 'loading'
-          ? 'SPF dependencies are being evaluated within the DNS question budget.'
+          ? mode === 'sender'
+            ? 'The SPF sender context is being evaluated within the DNS question budget.'
+            : 'SPF dependencies are being evaluated within the DNS question budget.'
           : null}
         {state === 'cancelled' ? 'The SPF run was cancelled.' : null}
+        {state === 'complete' && senderReport !== null
+          ? `SPF sender evaluation complete: ${senderReport.evaluation.result}.`
+          : null}
+        {state === 'complete' && report !== null
+          ? report.snapshot === undefined
+            ? 'SPF analysis complete.'
+            : report.snapshot.safe
+              ? 'The guarded SPF snapshot is ready.'
+              : 'The guarded SPF snapshot was safely withheld.'
+          : null}
       </div>
       {report === null ? null : <AnalysisPanel report={report} />}
+      {senderReport === null ? null : <SenderPanel report={senderReport} />}
     </div>
   );
 }
