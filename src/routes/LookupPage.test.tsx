@@ -53,9 +53,9 @@ describe('DNS record explorer', () => {
 
     expect(await screen.findByText('192.0.2.25')).toBeVisible();
     expect(screen.getByText('Completed 1 DNS questions.')).toBeVisible();
-    expect(fetchMock).toHaveBeenCalledWith(
-      'https://dns.google/dns-query',
-      expect.objectContaining({ method: 'POST', mode: 'cors' }),
-    );
+    const [target, init] = fetchMock.mock.calls[0] ?? [];
+    if (typeof target !== 'string') throw new Error('Expected a string resolver URL.');
+    expect(target).toMatch(/^https:\/\/dns\.google\/dns-query\?dns=/u);
+    expect(init).toEqual(expect.objectContaining({ method: 'GET', mode: 'cors' }));
   });
 });

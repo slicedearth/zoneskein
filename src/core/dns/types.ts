@@ -77,6 +77,7 @@ export type ResolverId = 'google' | 'cloudflare' | 'quad9';
 
 export interface ResolverDefinition {
   readonly endpoint: string;
+  readonly httpMethod: 'GET' | 'POST';
   readonly id: ResolverId;
   readonly label: string;
   readonly privacyUrl: string;

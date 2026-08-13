@@ -41,6 +41,13 @@ interface CaaReport {
   readonly ttl?: number;
 }
 
+function cnameTarget(records: readonly DnsRecord[]): string | null {
+  const record = records.find((item) => item.type === 'CNAME');
+  return record !== undefined && typeof record.data === 'string'
+    ? record.data.toLowerCase().replace(/\.$/u, '')
+    : null;
+}
+
 export function CaaPage() {
   const [domain, setDomain] = useState('');
   const [resolverId, setResolverId] = useState<ResolverId>('google');
@@ -74,23 +81,45 @@ export function CaaPage() {
     const queried: string[] = [];
     const errors: string[] = [];
     let selected: CaaReport | undefined;
-    for (const name of caaParentNames(parsed.value.ascii)) {
-      queried.push(name);
-      const result = await queryPolicyRecords(resolver, run, name, 'CAA');
-      if (result.error !== undefined) errors.push(`${name}: ${result.error}`);
-      const records = result.records.flatMap((record) => {
-        const value = caaInput(record);
-        return value === null ? [] : [value];
-      });
-      if (records.length > 0) {
-        selected = {
-          errors,
-          queried,
-          records,
-          source: name,
-          ...(result.ttl === undefined ? {} : { ttl: result.ttl }),
-        };
-        break;
+    parentWalk: for (const name of caaParentNames(parsed.value.ascii)) {
+      let current = name;
+      const aliases = new Set<string>();
+      for (let aliasDepth = 0; aliasDepth <= 8; aliasDepth += 1) {
+        queried.push(current);
+        const result = await queryPolicyRecords(resolver, run, current, 'CAA');
+        const queryError =
+          result.error ??
+          (result.responseCode === 'NOERROR' || result.responseCode === 'NXDOMAIN'
+            ? undefined
+            : `resolver returned ${result.responseCode}`);
+        if (queryError !== undefined) {
+          errors.push(`${current}: ${queryError}`);
+          break parentWalk;
+        }
+        const records = result.records.flatMap((record) => {
+          const value = caaInput(record);
+          return value === null ? [] : [value];
+        });
+        if (records.length > 0) {
+          const source = result.records[0]?.owner.replace(/\.$/u, '') ?? current;
+          selected = {
+            errors,
+            queried,
+            records,
+            source,
+            ...(result.ttl === undefined ? {} : { ttl: result.ttl }),
+          };
+          break parentWalk;
+        }
+        const target = cnameTarget(result.answers);
+        if (target === null) break;
+        if (aliases.has(target) || target === current) {
+          errors.push(`${current}: CNAME cycle encountered during CAA discovery.`);
+          break;
+        }
+        aliases.add(current);
+        current = target;
+        if (aliasDepth === 8) errors.push(`${name}: CNAME chain exceeded eight aliases.`);
       }
       if (run.cancelled) break;
     }
@@ -119,9 +148,9 @@ export function CaaPage() {
         eyebrow="CAA inspection and authoring"
         title="See where certificate policy is inherited."
       >
-        Walk the CAA tree from the requested name toward its parents, stop at the first observed
-        RRset, explain critical properties, and author a generic issue or issuewild record
-        locally.
+        Follow a bounded CNAME chain, walk from the requested name toward its parents, stop at
+        the first observed CAA RRset, explain critical properties, and author a generic issue or
+        issuewild record locally.
       </ToolIntro>
       <form className="workbench-form" onSubmit={(event) => void inspect(event)}>
         <div className="field-group field-wide">
@@ -180,20 +209,27 @@ export function CaaPage() {
           <div className="section-heading">
             <div>
               <p className="eyebrow">Effective observed RRset</p>
-              <h2 id="caa-result-title">{report.source ?? 'No CAA record found'}</h2>
+              <h2 id="caa-result-title">
+                {report.source ??
+                  (report.errors.length > 0 ? 'CAA result incomplete' : 'No CAA record found')}
+              </h2>
             </div>
             <StatusBadge
               tone={
-                report.records.length === 0
-                  ? 'unknown'
-                  : policy.diagnostics.some((item) => item.severity === 'error')
-                    ? 'error'
-                    : 'pass'
+                report.errors.length > 0
+                  ? 'warning'
+                  : report.records.length === 0
+                    ? 'unknown'
+                    : policy.diagnostics.some((item) => item.severity === 'error')
+                      ? 'error'
+                      : 'pass'
               }
             >
-              {report.records.length === 0
-                ? 'Unconstrained here'
-                : `${String(report.records.length)} records`}
+              {report.errors.length > 0
+                ? 'Indeterminate'
+                : report.records.length === 0
+                  ? 'Unconstrained here'
+                  : `${String(report.records.length)} records`}
             </StatusBadge>
           </div>
           {report.errors.length > 0 ? (
@@ -228,8 +264,9 @@ export function CaaPage() {
             </dl>
             {report.records.length === 0 ? (
               <p className="empty-note">
-                No CAA RRset was observed on the bounded parent walk. This permits CA processing
-                to continue; it does not guarantee issuance.
+                {report.errors.length > 0
+                  ? 'No complete CAA conclusion can be reached because a required DNS question failed.'
+                  : 'No CAA RRset was observed on the bounded parent walk. This permits CA processing to continue; it does not guarantee issuance.'}
               </p>
             ) : (
               <div className="table-scroll">

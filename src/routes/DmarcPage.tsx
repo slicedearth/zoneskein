@@ -30,6 +30,10 @@ interface DmarcReport {
   readonly ttl?: number;
 }
 
+function runWasCancelled(run: DnsQueryRun): boolean {
+  return run.cancelled;
+}
+
 export function DmarcPage() {
   const [domain, setDomain] = useState('');
   const [resolverId, setResolverId] = useState<ResolverId>('google');
@@ -58,9 +62,23 @@ export function DmarcPage() {
       { name: string; policyDomain: string; record: string; ttl?: number } | undefined;
     for (const name of names) {
       const result = await queryPolicyRecords(resolver, run, name, 'TXT');
+      if (run.cancelled) {
+        setState('cancelled');
+        return;
+      }
       summaries.push(
         `${name}: ${result.error ?? `${result.responseCode}, ${String(result.values.length)} TXT values`}`,
       );
+      const queryError =
+        result.error ??
+        (result.responseCode === 'NOERROR' || result.responseCode === 'NXDOMAIN'
+          ? undefined
+          : `resolver returned ${result.responseCode}`);
+      if (queryError !== undefined) {
+        setError(`${name}: ${queryError}. DMARC fallback cannot be evaluated safely.`);
+        setState('idle');
+        return;
+      }
       const policies = result.values.filter((value) =>
         value.trimStart().toUpperCase().startsWith('V=DMARC1'),
       );
@@ -81,7 +99,7 @@ export function DmarcPage() {
       }
     }
     if (activeRun.current !== run) return;
-    if (run.cancelled) {
+    if (runWasCancelled(run)) {
       setState('cancelled');
       return;
     }
@@ -101,14 +119,25 @@ export function DmarcPage() {
     const authorizations = await Promise.all(
       authorizationNames.map(async (name): Promise<AuthorizationResult> => {
         const result = await queryPolicyRecords(resolver, run, name, 'TXT');
+        const authorizationError =
+          result.error ??
+          (result.responseCode === 'NOERROR' || result.responseCode === 'NXDOMAIN'
+            ? undefined
+            : `resolver returned ${result.responseCode}`);
         return {
-          authorized: result.values.some((value) => value.trim().toUpperCase() === 'V=DMARC1'),
-          ...(result.error === undefined ? {} : { error: result.error }),
+          authorized:
+            authorizationError === undefined &&
+            result.values.some((value) => value.trim().toUpperCase() === 'V=DMARC1'),
+          ...(authorizationError === undefined ? {} : { error: authorizationError }),
           name,
         };
       }),
     );
     if (activeRun.current !== run) return;
+    if (runWasCancelled(run)) {
+      setState('cancelled');
+      return;
+    }
     setReport({
       authorizations,
       inherited: selected.policyDomain !== parsed.value.ascii,

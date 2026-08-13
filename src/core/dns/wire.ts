@@ -96,7 +96,6 @@ export function encodeDnsQuery(question: DnsQuestion, options: DnsQueryOptions):
     ? [
         {
           class: 'IN',
-          data: [],
           name: '.',
           type: 'OPT',
           flags: DNSSEC_OK,

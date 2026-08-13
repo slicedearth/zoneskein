@@ -39,7 +39,7 @@ function testDependencies(fetchMock: typeof fetch) {
 }
 
 describe('wire DoH resolver', () => {
-  it('uses fixed POST wire requests and TTL cache', async () => {
+  it('uses fixed browser-compatible GET wire requests and TTL cache', async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(answerResponse());
     const resolver = new WireDnsResolver(resolverById('google'), testDependencies(fetchMock));
     const options = { checkingDisabled: false, dnssecOk: true };
@@ -50,10 +50,11 @@ describe('wire DoH resolver', () => {
     expect(first.cache).toBe('miss');
     expect(second.cache).toBe('hit');
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock).toHaveBeenCalledWith(
-      'https://dns.google/dns-query',
-      expect.objectContaining({ method: 'POST', credentials: 'omit' }),
-    );
+    const [target, init] = fetchMock.mock.calls[0] ?? [];
+    if (typeof target !== 'string') throw new Error('Expected a string resolver URL.');
+    expect(target).toMatch(/^https:\/\/dns\.google\/dns-query\?dns=/u);
+    expect(target).not.toContain('example.com');
+    expect(init).toEqual(expect.objectContaining({ credentials: 'omit', method: 'GET' }));
   });
 
   it('deduplicates identical in-flight requests', async () => {
@@ -77,6 +78,10 @@ describe('wire DoH resolver', () => {
     expect((await first).cache).toBe('miss');
     expect((await second).cache).toBe('shared');
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [target, init] = fetchMock.mock.calls[0] ?? [];
+    expect(target).toBe('https://cloudflare-dns.com/dns-query');
+    expect(init?.method).toBe('POST');
+    expect(init?.body).toBeInstanceOf(ArrayBuffer);
   });
 
   it('opens a cooldown circuit after HTTP 429', async () => {
@@ -93,5 +98,32 @@ describe('wire DoH resolver', () => {
       resolver.query(question(), { checkingDisabled: false, dnssecOk: false }),
     ).rejects.toMatchObject({ code: 'rate-limited', retryAfterMs: 12_000 });
     expect(imposeCooldown).toHaveBeenCalledWith('quad9', 12_000);
+  });
+
+  it('aborts a stalled request after eight seconds', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.fn<typeof fetch>(
+        (_input, init) =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener(
+              'abort',
+              () => reject(new DOMException('Aborted', 'AbortError')),
+              { once: true },
+            );
+          }),
+      );
+      const resolver = new WireDnsResolver(resolverById('google'), testDependencies(fetchMock));
+      const pending = resolver.query(question(), {
+        checkingDisabled: false,
+        dnssecOk: false,
+      });
+      const rejection = expect(pending).rejects.toMatchObject({ code: 'timeout' });
+
+      await vi.advanceTimersByTimeAsync(8_000);
+      await rejection;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

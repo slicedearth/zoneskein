@@ -87,4 +87,53 @@ describe('local DNSKEY RRset signature verification', () => {
       expect.objectContaining({ keyTag, status: 'verified' }),
     ]);
   });
+
+  it('reports expired, not-yet-valid, and unsupported signatures without calling them valid', async () => {
+    const rdata = new Uint8Array([1, 1, 3, 16, ...new Uint8Array(57).fill(7)]);
+    const keyTag = dnskeyKeyTag(rdata);
+    const dnskey: DnsRecord = {
+      class: 'IN',
+      data: {},
+      owner: 'example.test.',
+      rawRdata: rdata,
+      section: 'answer',
+      ttl: 3600,
+      type: 'DNSKEY',
+      typeCode: 48,
+    };
+    const signature = (inception: number, expiration: number): DnsRecord => ({
+      class: 'IN',
+      data: {
+        algorithm: 16,
+        expiration,
+        inception,
+        keyTag,
+        labels: 2,
+        originalTTL: 3600,
+        signature: new Uint8Array(114),
+        signersName: 'example.test.',
+        typeCovered: 'DNSKEY',
+      },
+      owner: 'example.test.',
+      rawRdata: new Uint8Array(),
+      section: 'answer',
+      ttl: 3600,
+      type: 'RRSIG',
+      typeCode: 46,
+    });
+
+    const results = await verifyDnskeyRrset(
+      [dnskey, signature(100, 200), signature(400, 500), signature(100, 500)],
+      300,
+    );
+
+    expect(results.map((result) => result.status)).toEqual([
+      'outside-validity',
+      'outside-validity',
+      'unsupported',
+    ]);
+    expect(results.map((result) => result.message).join(' ')).toMatch(
+      /expired.*not yet valid.*cannot verify/iu,
+    );
+  });
 });

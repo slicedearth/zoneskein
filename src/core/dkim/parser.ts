@@ -25,6 +25,15 @@ function asArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return buffer;
 }
 
+function rsaModulusBits(value: string): number {
+  const base64 = value.replaceAll('-', '+').replaceAll('_', '/');
+  const bytes = decodeBase64(base64.padEnd(Math.ceil(base64.length / 4) * 4, '='));
+  const first = bytes?.[0];
+  return bytes === null || first === undefined
+    ? 0
+    : (bytes.length - 1) * 8 + (32 - Math.clz32(first));
+}
+
 export function validateDkimSelector(selector: string): string | null {
   const value = selector.trim();
   if (value.length === 0 || value.length > 63) return 'Selector must contain 1–63 characters.';
@@ -125,7 +134,7 @@ export async function inspectDkimKey(key: DkimKeyRecord): Promise<DkimKeyInspect
     const jwk = await crypto.subtle.exportKey('jwk', cryptoKey);
     if (jwk.n === undefined)
       return { message: 'RSA modulus could not be inspected.', status: 'invalid' };
-    const bits = Math.max(0, Math.floor((jwk.n.replace(/=+$/u, '').length * 6) / 8) * 8);
+    const bits = rsaModulusBits(jwk.n);
     return bits < 1024
       ? {
           bits,

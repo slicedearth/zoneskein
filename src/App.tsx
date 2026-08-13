@@ -1,5 +1,8 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 
+const AboutPage = lazy(() =>
+  import('./routes/AboutPage').then((module) => ({ default: module.AboutPage })),
+);
 const CaaPage = lazy(() =>
   import('./routes/CaaPage').then((module) => ({ default: module.CaaPage })),
 );
@@ -114,6 +117,8 @@ export function App() {
         >
           {route === 'snapshots' ? (
             <SnapshotsPage />
+          ) : route === 'about' ? (
+            <AboutPage />
           ) : route === 'caa' ? (
             <CaaPage />
           ) : route === 'dkim' ? (
@@ -147,12 +152,20 @@ export function App() {
                   </a>
                 ))}
               </div>
+              <div className="secondary-tools" aria-label="Additional tools">
+                <span>Also included</span>
+                <a href={href('lookup/')}>Record explorer</a>
+                <a href={href('dmarc/')}>DMARC</a>
+                <a href={href('dkim/')}>DKIM</a>
+                <a href={href('caa/')}>CAA</a>
+                <a href={href('snapshots/')}>Local snapshots</a>
+              </div>
             </section>
           ) : (
             <section className="page-intro" aria-labelledby="route-title">
               <p className="eyebrow">ZoneSkein</p>
               <h1 id="route-title">{route.replace('/', '').replace('-', ' ')}</h1>
-              <p className="lede">This tool is being connected to the shared protocol core.</p>
+              <p className="lede">That page does not exist in this static build.</p>
               <a className="text-link" href={href('')}>
                 Return home
               </a>
@@ -162,7 +175,15 @@ export function App() {
       </main>
 
       <footer>
-        <p>Static by design. DNS questions go directly from your browser to the resolver.</p>
+        <p>
+          Static by design. DNS questions go directly from your browser to the resolver. No
+          warranty.
+        </p>
+        <div>
+          <a href={href('about/#privacy')}>Privacy</a>
+          <a href={href('about/#legal')}>AGPL-3.0-only</a>
+          <span>© 2026 slicedearth</span>
+        </div>
       </footer>
     </div>
   );

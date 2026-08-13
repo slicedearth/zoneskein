@@ -19,6 +19,7 @@ describe('DNS wire messages', () => {
 
     expect(bytes[0]).toBe(0);
     expect(bytes[1]).toBe(0);
+    expect(bytes.length).toBeGreaterThan(40);
     expect(bytes.length).toBeLessThan(512);
   });
 

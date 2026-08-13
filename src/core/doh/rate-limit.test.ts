@@ -39,4 +39,18 @@ describe('browser DNS rate limiter', () => {
     });
     limiter.close();
   });
+
+  it('enforces the rolling per-resolver request ceiling', async () => {
+    let now = 0;
+    const limiter = new BrowserRateLimiter(() => now);
+    for (let index = 0; index < 120; index += 1) {
+      if (index >= 4) now += 500;
+      await limiter.wait('cloudflare');
+    }
+
+    await expect(limiter.wait('cloudflare')).rejects.toMatchObject({
+      code: 'rate-limited',
+    });
+    limiter.close();
+  });
 });

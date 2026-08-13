@@ -137,6 +137,10 @@ function ResultPanel({ result }: { readonly result: QueryResult }) {
           <dt>Cache</dt>
           <dd>{response.cache}</dd>
         </div>
+        <div>
+          <dt>DoH transport</dt>
+          <dd>RFC 8484 {response.resolver.httpMethod}</dd>
+        </div>
       </dl>
       <div className="flag-list" aria-label="DNS response flags">
         {Object.entries({

@@ -143,4 +143,46 @@ describe('conservative SPF snapshots', () => {
     ).toBe(true);
     expect(snapshot.warnings.join(' ')).toMatch(/512 bytes/iu);
   });
+
+  it('refuses multiple policies and incomplete provider lookups', async () => {
+    const multiple = await flattenSpf(
+      'multiple.test',
+      new FixtureDns({
+        'multiple.test|TXT': answer(['v=spf1 ip4:192.0.2.1 -all', 'v=spf1 -all']),
+      }),
+    );
+    const failed = await flattenSpf(
+      'failed.test',
+      new FixtureDns({
+        'failed.test|TXT': answer(['v=spf1 include:provider.test -all']),
+        'provider.test|TXT': {
+          error: 'fixture transport failure',
+          messageBytes: 0,
+          status: 'error',
+          values: [],
+        },
+      }),
+    );
+
+    expect(multiple.snapshot.safe).toBe(false);
+    expect(multiple.snapshot.blockers.join(' ')).toMatch(/exactly one|single complete/iu);
+    expect(failed.snapshot.safe).toBe(false);
+    expect(failed.snapshot.blockers.join(' ')).toMatch(/failed|complete SPF policy/iu);
+  });
+
+  it('deduplicates exact pass ranges without broadening separated networks', async () => {
+    const { snapshot } = await flattenSpf(
+      'dedupe.test',
+      new FixtureDns({
+        'dedupe.test|TXT': answer([
+          'v=spf1 include:one.test include:two.test ip4:192.0.2.192/26 -all',
+        ]),
+        'one.test|TXT': answer(['v=spf1 ip4:192.0.2.0/25 -all']),
+        'two.test|TXT': answer(['v=spf1 ip4:192.0.2.0/25 -all']),
+      }),
+    );
+
+    expect(snapshot.safe).toBe(true);
+    expect(snapshot.networks).toEqual(['192.0.2.0/25', '192.0.2.192/26']);
+  });
 });

@@ -68,6 +68,12 @@ function asArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return buffer;
 }
 
+function base64Url(bytes: Uint8Array): string {
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/u, '');
+}
+
 export interface WireResolverDependencies {
   readonly cache?: DnsMemoryCache;
   readonly fetch?: typeof fetch;
@@ -88,7 +94,7 @@ export class WireDnsResolver implements DnsResolver {
   constructor(definition: ResolverDefinition, dependencies: WireResolverDependencies = {}) {
     this.definition = definition;
     this.#cache = dependencies.cache ?? sharedCache;
-    this.#fetch = dependencies.fetch ?? fetch;
+    this.#fetch = dependencies.fetch ?? ((input, init) => globalThis.fetch(input, init));
     this.#limiter = dependencies.limiter ?? sharedLimiter;
     this.#now = dependencies.now ?? performance.now.bind(performance);
     this.#semaphore = dependencies.semaphore ?? sharedSemaphore;
@@ -117,15 +123,21 @@ export class WireDnsResolver implements DnsResolver {
 
     try {
       const query = encodeDnsQuery(question, options);
-      const response = await this.#fetch(this.definition.endpoint, {
-        body: asArrayBuffer(query),
+      const useGet = this.definition.httpMethod === 'GET';
+      const target = useGet
+        ? `${this.definition.endpoint}?dns=${base64Url(query)}`
+        : this.definition.endpoint;
+      const response = await this.#fetch(target, {
+        ...(useGet ? {} : { body: asArrayBuffer(query) }),
         cache: 'no-store',
         credentials: 'omit',
-        headers: {
-          Accept: 'application/dns-message',
-          'Content-Type': 'application/dns-message',
-        },
-        method: 'POST',
+        headers: useGet
+          ? { Accept: 'application/dns-message' }
+          : {
+              Accept: 'application/dns-message',
+              'Content-Type': 'application/dns-message',
+            },
+        method: this.definition.httpMethod,
         mode: 'cors',
         referrerPolicy: 'no-referrer',
         signal: composed.controller.signal,

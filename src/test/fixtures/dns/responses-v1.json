@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "responses": [
+    {
+      "id": "normal-answer",
+      "wireBase64": "AACBgAABAAEAAAAAB2V4YW1wbGUDY29tAAABAAEHZXhhbXBsZQNjb20AAAEAAQAAASwABMAAAhk=",
+      "expectedResponseCode": "NOERROR",
+      "expectedAnswerCount": 1
+    },
+    {
+      "id": "nxdomain",
+      "wireBase64": "AACBgwABAAAAAAAAB2V4YW1wbGUDY29tAAABAAE=",
+      "expectedResponseCode": "NXDOMAIN",
+      "expectedAnswerCount": 0
+    },
+    {
+      "id": "nodata",
+      "wireBase64": "AACBgAABAAAAAAAAB2V4YW1wbGUDY29tAAAcAAE=",
+      "expectedResponseCode": "NOERROR",
+      "expectedAnswerCount": 0
+    },
+    {
+      "id": "servfail",
+      "wireBase64": "AACBggABAAAAAAAAB2V4YW1wbGUDY29tAAABAAE=",
+      "expectedResponseCode": "SERVFAIL",
+      "expectedAnswerCount": 0
+    },
+    {
+      "id": "multiple-txt-character-strings",
+      "wireBase64": "AACBgAABAAEAAAAAB2V4YW1wbGUDY29tAAAQAAEHZXhhbXBsZQNjb20AABAAAQAAAHgAIw92PXNwZjEgaW5jbHVkZToMbWFpbC5leGFtcGxlBSAtYWxs",
+      "expectedResponseCode": "NOERROR",
+      "expectedAnswerCount": 1,
+      "expectedTxtChunks": ["v=spf1 include:", "mail.example", " -all"]
+    }
+  ],
+  "malformed": [
+    {
+      "id": "truncated-header",
+      "wireBase64": "AAE="
+    }
+  ]
+}

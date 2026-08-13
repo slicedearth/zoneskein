@@ -13,6 +13,7 @@ export default defineConfig({
     environmentOptions: {
       jsdom: { url: 'https://zoneskein.test/' },
     },
+    include: ['src/**/*.test.{ts,tsx}'],
     restoreMocks: true,
     setupFiles: ['./src/test/setup.ts'],
   },

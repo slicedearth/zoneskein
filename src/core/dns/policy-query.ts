@@ -4,6 +4,7 @@ import { DnsQueryError, type DnsRecord, type DnsRecordType, type DnsResolver } f
 import { DnsQueryRun } from '../doh/query-run';
 
 export interface PolicyQueryResult {
+  readonly answers: readonly DnsRecord[];
   readonly error?: string;
   readonly messageBytes: number;
   readonly records: readonly DnsRecord[];
@@ -21,6 +22,7 @@ export async function queryPolicyRecords(
   const parsed = validateDnsName(name);
   if (!parsed.ok) {
     return {
+      answers: [],
       error: parsed.error.message,
       messageBytes: 0,
       records: [],
@@ -46,6 +48,7 @@ export async function queryPolicyRecords(
           })
         : [];
     return {
+      answers: response.message.answers,
       messageBytes: response.message.messageBytes,
       records,
       responseCode: response.message.responseCode,
@@ -60,6 +63,7 @@ export async function queryPolicyRecords(
           ? cause.message
           : 'DNS policy lookup failed.';
     return {
+      answers: [],
       error: message,
       messageBytes: 0,
       records: [],
