@@ -1,10 +1,29 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 
-import { DiffPage } from './routes/DiffPage';
-import { DnssecPage } from './routes/DnssecPage';
-import { LookupPage } from './routes/LookupPage';
-import { SpfPage } from './routes/SpfPage';
-import { ZoneLintPage } from './routes/ZoneLintPage';
+const CaaPage = lazy(() =>
+  import('./routes/CaaPage').then((module) => ({ default: module.CaaPage })),
+);
+const DiffPage = lazy(() =>
+  import('./routes/DiffPage').then((module) => ({ default: module.DiffPage })),
+);
+const DkimPage = lazy(() =>
+  import('./routes/DkimPage').then((module) => ({ default: module.DkimPage })),
+);
+const DmarcPage = lazy(() =>
+  import('./routes/DmarcPage').then((module) => ({ default: module.DmarcPage })),
+);
+const DnssecPage = lazy(() =>
+  import('./routes/DnssecPage').then((module) => ({ default: module.DnssecPage })),
+);
+const LookupPage = lazy(() =>
+  import('./routes/LookupPage').then((module) => ({ default: module.LookupPage })),
+);
+const SpfPage = lazy(() =>
+  import('./routes/SpfPage').then((module) => ({ default: module.SpfPage })),
+);
+const ZoneLintPage = lazy(() =>
+  import('./routes/ZoneLintPage').then((module) => ({ default: module.ZoneLintPage })),
+);
 
 type Theme = 'light' | 'dark';
 
@@ -65,6 +84,9 @@ export function App() {
           <a href={href('spf/')}>SPF</a>
           <a href={href('zone-lint/')}>Zone lint</a>
           <a href={href('diff/')}>Diff</a>
+          <a href={href('dmarc/')}>DMARC</a>
+          <a href={href('dkim/')}>DKIM</a>
+          <a href={href('caa/')}>CAA</a>
           <a href={href('about/')}>About</a>
         </nav>
         <button
@@ -78,44 +100,59 @@ export function App() {
       </header>
 
       <main id="main-content">
-        {route === 'diff' ? (
-          <DiffPage />
-        ) : route === 'zone-lint' ? (
-          <ZoneLintPage />
-        ) : route === 'spf' ? (
-          <SpfPage />
-        ) : route === 'dnssec' ? (
-          <DnssecPage />
-        ) : route === 'lookup' ? (
-          <LookupPage />
-        ) : route === '' ? (
-          <section className="hero" aria-labelledby="home-title">
-            <p className="eyebrow">Browser-based DNS workbench</p>
-            <h1 id="home-title">Untangle DNS.</h1>
-            <p className="lede">
-              Inspect evidence, understand policy dependencies, and review records before you
-              publish—without sending your work to an application backend.
-            </p>
-            <div className="tool-links" aria-label="Primary tools">
-              {tools.map((tool, index) => (
-                <a href={href(tool.path)} key={tool.path}>
-                  <span className="tool-number">0{index + 1}</span>
-                  <strong>{tool.label}</strong>
-                  <span>{tool.description}</span>
-                </a>
-              ))}
-            </div>
-          </section>
-        ) : (
-          <section className="page-intro" aria-labelledby="route-title">
-            <p className="eyebrow">ZoneSkein</p>
-            <h1 id="route-title">{route.replace('/', '').replace('-', ' ')}</h1>
-            <p className="lede">This tool is being connected to the shared protocol core.</p>
-            <a className="text-link" href={href('')}>
-              Return home
-            </a>
-          </section>
-        )}
+        <Suspense
+          fallback={
+            <section className="page-intro" aria-live="polite">
+              <p className="eyebrow">ZoneSkein</p>
+              <h1>Loading tool…</h1>
+            </section>
+          }
+        >
+          {route === 'caa' ? (
+            <CaaPage />
+          ) : route === 'dkim' ? (
+            <DkimPage />
+          ) : route === 'dmarc' ? (
+            <DmarcPage />
+          ) : route === 'diff' ? (
+            <DiffPage />
+          ) : route === 'zone-lint' ? (
+            <ZoneLintPage />
+          ) : route === 'spf' ? (
+            <SpfPage />
+          ) : route === 'dnssec' ? (
+            <DnssecPage />
+          ) : route === 'lookup' ? (
+            <LookupPage />
+          ) : route === '' ? (
+            <section className="hero" aria-labelledby="home-title">
+              <p className="eyebrow">Browser-based DNS workbench</p>
+              <h1 id="home-title">Untangle DNS.</h1>
+              <p className="lede">
+                Inspect evidence, understand policy dependencies, and review records before you
+                publish—without sending your work to an application backend.
+              </p>
+              <div className="tool-links" aria-label="Primary tools">
+                {tools.map((tool, index) => (
+                  <a href={href(tool.path)} key={tool.path}>
+                    <span className="tool-number">0{index + 1}</span>
+                    <strong>{tool.label}</strong>
+                    <span>{tool.description}</span>
+                  </a>
+                ))}
+              </div>
+            </section>
+          ) : (
+            <section className="page-intro" aria-labelledby="route-title">
+              <p className="eyebrow">ZoneSkein</p>
+              <h1 id="route-title">{route.replace('/', '').replace('-', ' ')}</h1>
+              <p className="lede">This tool is being connected to the shared protocol core.</p>
+              <a className="text-link" href={href('')}>
+                Return home
+              </a>
+            </section>
+          )}
+        </Suspense>
       </main>
 
       <footer>
