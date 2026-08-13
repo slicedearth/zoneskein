@@ -19,11 +19,26 @@ export interface DmarcDestination {
 
 export type DmarcDisposition = 'none' | 'quarantine' | 'reject';
 
+export interface DmarcPolicyAssessment {
+  readonly appliedDisposition: DmarcDisposition;
+  readonly context:
+    | 'direct-author-domain'
+    | 'existing-inherited-subdomain'
+    | 'non-existent-inherited-subdomain';
+  readonly declaredDisposition?: DmarcDisposition;
+  readonly fallbackToNone: boolean;
+  readonly reason: string;
+  readonly selectedTag: 'p' | 'sp' | 'np';
+  readonly testing: boolean;
+}
+
 export interface DmarcPolicy {
   readonly applicable: boolean;
+  readonly assessmentPolicyInvalid: boolean;
   readonly destinations: readonly DmarcDestination[];
   readonly diagnostics: readonly DmarcDiagnostic[];
   readonly effectiveDisposition?: DmarcDisposition;
+  readonly fallbackToNone: boolean;
   readonly psd?: 'n' | 'y' | 'u';
   readonly record: string;
   readonly tags: readonly DmarcTag[];

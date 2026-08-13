@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  assessDmarcPolicy,
   dmarcDiscoveryNames,
   isDmarcRecord,
   parseDmarcRecord,
@@ -20,6 +21,23 @@ describe('DMARC policy parser', () => {
         authorizationName: 'example.com._report._dmarc.reports.example.net',
         external: true,
       }),
+    ]);
+  });
+
+  it('requires independent discovery before treating a descendant report host as internal', () => {
+    const policy = parseDmarcRecord(
+      'v=DMARC1; p=none; rua=mailto:dmarc@reports.example.com,mailto:dmarc@example.com',
+      'example.com',
+      'example.com',
+    );
+
+    expect(policy.destinations).toEqual([
+      expect.objectContaining({
+        authorizationName: 'example.com._report._dmarc.reports.example.com',
+        domain: 'reports.example.com',
+        external: true,
+      }),
+      expect.objectContaining({ domain: 'example.com', external: false }),
     ]);
   });
 
@@ -58,13 +76,186 @@ describe('DMARC policy parser', () => {
     ]);
   });
 
-  it('requires the case-sensitive version marker and supports rua-only policy', () => {
+  it('requires the case-sensitive version value and supports rua-only policy', () => {
     expect(isDmarcRecord('v=DMARC1; p=none')).toBe(true);
-    expect(isDmarcRecord('V=DMARC1; p=none')).toBe(false);
+    expect(isDmarcRecord('V = DMARC1; p=none')).toBe(true);
+    expect(isDmarcRecord('v=dmarc1; p=none')).toBe(false);
     const policy = parseDmarcRecord('v=DMARC1; rua=mailto:reports@example.com', 'example.com');
     expect(policy.applicable).toBe(true);
     expect(policy.effectiveDisposition).toBe('none');
     expect(policy.diagnostics.map((item) => item.code)).toContain('policy-default-none');
+  });
+
+  it('defaults an otherwise valid record without p to none even when reporting is absent', () => {
+    const policy = parseDmarcRecord('v=DMARC1; adkim=s', 'example.com');
+
+    expect(policy.applicable).toBe(true);
+    expect(policy.effectiveDisposition).toBe('none');
+    expect(policy.fallbackToNone).toBe(false);
+    expect(policy.valid).toBe(true);
+  });
+
+  it.each(['p', 'sp', 'np'] as const)(
+    'applies the valid-rua p=none fallback when %s is invalid',
+    (tag) => {
+      const assessmentTag = tag === 'p' ? 'p=invalid' : `p=reject; ${tag}=invalid`;
+      const policy = parseDmarcRecord(
+        `v=DMARC1; ${assessmentTag}; rua=mailto:reports@example.com`,
+        'example.com',
+      );
+
+      expect(policy.applicable).toBe(true);
+      expect(policy.effectiveDisposition).toBe('none');
+      expect(policy.fallbackToNone).toBe(true);
+      expect(policy.valid).toBe(false);
+      expect(policy.diagnostics.map((item) => item.code)).toContain(
+        'assessment-policy-fallback',
+      );
+    },
+  );
+
+  it.each(['p', 'sp', 'np'] as const)(
+    'does not apply DMARC when %s is invalid and rua has no valid URI',
+    (tag) => {
+      const assessmentTag = tag === 'p' ? 'p=invalid' : `p=reject; ${tag}=invalid`;
+      for (const reporting of ['', '; rua=mailto:']) {
+        const policy = parseDmarcRecord(
+          `v=DMARC1; ${assessmentTag}${reporting}`,
+          'example.com',
+        );
+
+        expect(policy.applicable).toBe(false);
+        expect(policy.effectiveDisposition).toBeUndefined();
+        expect(policy.fallbackToNone).toBe(false);
+      }
+    },
+  );
+
+  it('selects p, sp, and np for direct, existing inherited, and non-existent inherited use', () => {
+    const policy = parseDmarcRecord(
+      'v=DMARC1; p=reject; sp=quarantine; np=none',
+      'example.com',
+    );
+
+    expect(assessDmarcPolicy(policy, 'direct-author-domain')).toEqual(
+      expect.objectContaining({
+        appliedDisposition: 'reject',
+        declaredDisposition: 'reject',
+        selectedTag: 'p',
+      }),
+    );
+    expect(assessDmarcPolicy(policy, 'existing-inherited-subdomain')).toEqual(
+      expect.objectContaining({
+        appliedDisposition: 'quarantine',
+        declaredDisposition: 'quarantine',
+        selectedTag: 'sp',
+      }),
+    );
+    expect(assessDmarcPolicy(policy, 'non-existent-inherited-subdomain')).toEqual(
+      expect.objectContaining({
+        appliedDisposition: 'none',
+        declaredDisposition: 'none',
+        selectedTag: 'np',
+      }),
+    );
+  });
+
+  it('falls back from missing np to sp and from missing subdomain tags to p', () => {
+    const withSp = parseDmarcRecord('v=DMARC1; p=reject; sp=quarantine', 'example.com');
+    const pOnly = parseDmarcRecord('v=DMARC1; p=reject', 'example.com');
+
+    expect(assessDmarcPolicy(withSp, 'non-existent-inherited-subdomain')).toEqual(
+      expect.objectContaining({ appliedDisposition: 'quarantine', selectedTag: 'sp' }),
+    );
+    expect(assessDmarcPolicy(pOnly, 'existing-inherited-subdomain')).toEqual(
+      expect.objectContaining({ appliedDisposition: 'reject', selectedTag: 'p' }),
+    );
+    expect(assessDmarcPolicy(pOnly, 'non-existent-inherited-subdomain')).toEqual(
+      expect.objectContaining({ appliedDisposition: 'reject', selectedTag: 'p' }),
+    );
+  });
+
+  it.each([
+    ['direct-author-domain', 'reject', 'quarantine', 'p'],
+    ['existing-inherited-subdomain', 'quarantine', 'none', 'sp'],
+    ['non-existent-inherited-subdomain', 'none', 'none', 'np'],
+  ] as const)(
+    'reduces %s policy by one level under t=y without changing reporting',
+    (context, declared, applied, selectedTag) => {
+      const policy = parseDmarcRecord(
+        'v=DMARC1; p=reject; sp=quarantine; np=none; t=y; rua=mailto:reports@example.com',
+        'example.com',
+      );
+      const assessment = assessDmarcPolicy(policy, context);
+
+      expect(assessment).toEqual(
+        expect.objectContaining({
+          appliedDisposition: applied,
+          declaredDisposition: declared,
+          selectedTag,
+          testing: true,
+        }),
+      );
+      expect(policy.destinations).toHaveLength(1);
+      expect(policy.destinations[0]?.uri).toBe('mailto:reports@example.com');
+    },
+  );
+
+  it('preserves a valid declared tag while applying the record-wide rua fallback', () => {
+    const policy = parseDmarcRecord(
+      'v=DMARC1; p=reject; sp=invalid; rua=mailto:reports@example.com',
+      'example.com',
+    );
+    const assessment = assessDmarcPolicy(policy, 'direct-author-domain');
+
+    expect(assessment).toEqual(
+      expect.objectContaining({
+        appliedDisposition: 'none',
+        declaredDisposition: 'reject',
+        fallbackToNone: true,
+        selectedTag: 'p',
+      }),
+    );
+  });
+
+  it('accepts only alphabetic tag names and ignores malformed trailing tags safely', () => {
+    const policy = parseDmarcRecord(
+      'V=DMARC1; p=reject; x-provider=ignored; x1=ignored; note=ok',
+      'example.com',
+    );
+
+    expect(policy.applicable).toBe(true);
+    expect(policy.valid).toBe(false);
+    expect(policy.tags.map((tag) => tag.name)).toEqual(['v', 'p', 'note']);
+    expect(policy.diagnostics.map((item) => item.code)).toEqual(
+      expect.arrayContaining(['tag-name-invalid', 'tag-unknown']),
+    );
+  });
+
+  it('bounds records and tags before parsing and catches malformed reporting escapes', () => {
+    const overlong = parseDmarcRecord(
+      `v=DMARC1; p=none; note=${'a'.repeat(8_193)}`,
+      'example.com',
+    );
+    const tooManyTags = parseDmarcRecord(
+      `v=DMARC1; p=none; ${Array.from(
+        { length: 63 },
+        (_, index) =>
+          `x${String.fromCharCode(97 + Math.floor(index / 26))}${String.fromCharCode(97 + (index % 26))}=a`,
+      ).join(';')}`,
+      'example.com',
+    );
+    const malformedUri = parseDmarcRecord(
+      'v=DMARC1; p=none; rua=mailto:dmarc@exa%mple.test',
+      'example.com',
+    );
+
+    expect(overlong.applicable).toBe(false);
+    expect(overlong.diagnostics[0]?.code).toBe('record-too-long');
+    expect(tooManyTags.applicable).toBe(false);
+    expect(tooManyTags.diagnostics[0]?.code).toBe('tag-limit');
+    expect(malformedUri.valid).toBe(false);
+    expect(malformedUri.diagnostics.map((item) => item.code)).toContain('report-uri-invalid');
   });
 
   it('selects organisational and public-suffix policies from tree-walk markers', () => {
