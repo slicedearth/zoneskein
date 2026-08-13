@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 
+import { DnssecPage } from './routes/DnssecPage';
 import { LookupPage } from './routes/LookupPage';
 
 type Theme = 'light' | 'dark';
@@ -74,7 +75,9 @@ export function App() {
       </header>
 
       <main id="main-content">
-        {route === 'lookup' ? (
+        {route === 'dnssec' ? (
+          <DnssecPage />
+        ) : route === 'lookup' ? (
           <LookupPage />
         ) : route === '' ? (
           <section className="hero" aria-labelledby="home-title">
