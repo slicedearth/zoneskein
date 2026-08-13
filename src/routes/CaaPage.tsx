@@ -55,13 +55,27 @@ export function CaaPage() {
   const [error, setError] = useState('');
   const [report, setReport] = useState<CaaReport | null>(null);
   const [issuer, setIssuer] = useState('letsencrypt.org');
-  const [tag, setTag] = useState<'issue' | 'issuewild'>('issue');
+  const [tag, setTag] = useState<'issue' | 'issuewild' | 'issuemail'>('issue');
+  const [accountUri, setAccountUri] = useState('');
+  const [validationMethods, setValidationMethods] = useState('');
   const [critical, setCritical] = useState(false);
   const activeRun = useRef<DnsQueryRun | null>(null);
 
   const builtRecord = useMemo(
-    () => buildCaaRecord('@', issuer, { critical, tag }),
-    [critical, issuer, tag],
+    () =>
+      buildCaaRecord('@', issuer, {
+        ...(tag === 'issuemail' || accountUri.trim() === '' ? {} : { accountUri }),
+        critical,
+        tag,
+        validationMethods:
+          tag === 'issuemail'
+            ? []
+            : validationMethods
+                .split(',')
+                .map((method) => method.trim())
+                .filter(Boolean),
+      }),
+    [accountUri, critical, issuer, tag, validationMethods],
   );
 
   async function inspect(event: React.SyntheticEvent<HTMLFormElement>) {
@@ -150,7 +164,8 @@ export function CaaPage() {
       >
         Follow a bounded CNAME chain, walk from the requested name toward its parents, stop at
         the first observed CAA RRset, explain critical properties, and author a generic issue or
-        issuewild record locally.
+        issue, issuewild, or issuemail record locally, including standardized CA account and
+        validation-method constraints.
       </ToolIntro>
       <form className="workbench-form" onSubmit={(event) => void inspect(event)}>
         <div className="field-group field-wide">
@@ -276,20 +291,31 @@ export function CaaPage() {
                       <th>Flags</th>
                       <th>Tag</th>
                       <th>Value</th>
+                      <th>Parsed controls</th>
                       <th>Critical</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {report.records.map((record, index) => (
-                      <tr key={`${record.tag}-${record.value}-${String(index)}`}>
-                        <td>{record.flags}</td>
-                        <td>{record.tag}</td>
-                        <td>
-                          <code>{record.value}</code>
-                        </td>
-                        <td>{(record.flags & 128) !== 0 ? 'Yes' : 'No'}</td>
-                      </tr>
-                    ))}
+                    {report.records.map((record, index) => {
+                      const property = policy.properties[index];
+                      return (
+                        <tr key={`${record.tag}-${record.value}-${String(index)}`}>
+                          <td>{record.flags}</td>
+                          <td>{record.tag}</td>
+                          <td>
+                            <code>{record.value}</code>
+                          </td>
+                          <td>
+                            {property?.parameters.length
+                              ? property.parameters
+                                  .map((parameter) => `${parameter.name}=${parameter.value}`)
+                                  .join('; ')
+                              : 'None'}
+                          </td>
+                          <td>{(record.flags & 128) !== 0 ? 'Yes' : 'No'}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -347,12 +373,39 @@ export function CaaPage() {
             <select
               id="caa-tag"
               value={tag}
-              onChange={(event) => setTag(event.currentTarget.value as 'issue' | 'issuewild')}
+              onChange={(event) =>
+                setTag(event.currentTarget.value as 'issue' | 'issuewild' | 'issuemail')
+              }
             >
               <option value="issue">issue</option>
               <option value="issuewild">issuewild</option>
+              <option value="issuemail">issuemail (S/MIME)</option>
             </select>
           </div>
+          {tag === 'issuemail' ? null : (
+            <>
+              <div className="field-group">
+                <label htmlFor="caa-account-uri">CA account URI (optional)</label>
+                <input
+                  id="caa-account-uri"
+                  value={accountUri}
+                  onChange={(event) => setAccountUri(event.currentTarget.value)}
+                  placeholder="https://ca.example/account/123"
+                  spellCheck={false}
+                />
+              </div>
+              <div className="field-group">
+                <label htmlFor="caa-validation-methods">Validation methods (optional)</label>
+                <input
+                  id="caa-validation-methods"
+                  value={validationMethods}
+                  onChange={(event) => setValidationMethods(event.currentTarget.value)}
+                  placeholder="dns-01,http-01"
+                  spellCheck={false}
+                />
+              </div>
+            </>
+          )}
           <label className="check-control">
             <input
               type="checkbox"

@@ -14,8 +14,6 @@ ZoneSkein’s original source is AGPL-3.0-only. The packages below are separate 
 | `react`                   |  19.2.8 | MIT          | <https://github.com/facebook/react>             | User interface runtime                 |
 | `react-dom`               |  19.2.8 | MIT          | <https://github.com/facebook/react>             | Browser rendering                      |
 | `scheduler`               |  0.27.0 | MIT          | <https://github.com/facebook/react>             | Transitive React scheduling runtime    |
-| `tldts`                   |  7.4.10 | MIT          | <https://github.com/remusao/tldts>              | Public-suffix-aware DMARC discovery    |
-| `tldts-core`              |  7.4.10 | MIT          | <https://github.com/remusao/tldts>              | Transitive domain parsing runtime      |
 
 ## MIT-licensed packages
 
@@ -28,8 +26,6 @@ Copyright (c) 2022 Martin Heidegger (`utf8-codec`)
 Copyright (C) 2011–2017 whitequark (`ipaddr.js`)
 
 Copyright (c) Meta Platforms, Inc. and affiliates (`react`, `react-dom`, `scheduler`)
-
-Copyright (c) 2017 Thomas Parisot, 2018 Rémi Berson (`tldts`, `tldts-core`)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the “Software”), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 

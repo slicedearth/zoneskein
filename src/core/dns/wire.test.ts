@@ -57,4 +57,64 @@ describe('DNS wire messages', () => {
     });
     expect(() => decodeDnsMessage(query)).toThrow(/query instead/);
   });
+
+  it('decodes extended DNS errors from EDNS options', () => {
+    const text = new TextEncoder().encode('validation failed');
+    const data = new Uint8Array(2 + text.length);
+    data[1] = 6;
+    data.set(text, 2);
+    const bytes = encode({
+      additionals: [
+        {
+          class: 'IN',
+          name: '.',
+          options: [{ code: 'PADDING', length: data.length }],
+          type: 'OPT',
+          udpPayloadSize: 1232,
+        } as never,
+      ],
+      flags: 0x8182,
+      id: 0,
+      questions: [{ class: 'IN', name: 'broken.example.', type: 'A' }],
+      type: 'response',
+    });
+    const optionOffset = bytes.length - data.length - 4;
+    bytes[optionOffset] = 0;
+    bytes[optionOffset + 1] = 15;
+    bytes.set(data, optionOffset + 4);
+    const result = decodeDnsMessage(bytes);
+    expect(result.edns?.extendedErrors).toEqual([
+      { code: 6, name: 'DNSSEC Bogus', text: 'validation failed' },
+    ]);
+    expect(result.additionals[0]?.data).toEqual(
+      expect.objectContaining({ udpPayloadSize: 1232 }),
+    );
+  });
+
+  it('derives the negative cache TTL from the SOA TTL and minimum', () => {
+    const bytes = encode({
+      authorities: [
+        {
+          class: 'IN',
+          data: {
+            expire: 604800,
+            minimum: 300,
+            mname: 'ns1.example.',
+            refresh: 3600,
+            retry: 600,
+            rname: 'hostmaster.example.',
+            serial: 1,
+          },
+          name: 'example.',
+          ttl: 900,
+          type: 'SOA',
+        },
+      ],
+      flags: 0x8183,
+      id: 0,
+      questions: [{ class: 'IN', name: 'missing.example.', type: 'A' }],
+      type: 'response',
+    });
+    expect(decodeDnsMessage(bytes).negativeCacheTtl).toBe(300);
+  });
 });

@@ -1,6 +1,12 @@
-import { getDomain } from 'tldts';
-
-import type { DmarcDestination, DmarcDiagnostic, DmarcPolicy, DmarcTag } from './types';
+import type {
+  DmarcDestination,
+  DmarcDiagnostic,
+  DmarcDiscoveryObservation,
+  DmarcDisposition,
+  DmarcPolicy,
+  DmarcSelection,
+  DmarcTag,
+} from './types';
 
 function diagnostic(
   code: string,
@@ -10,17 +16,34 @@ function diagnostic(
   return { code, message, severity };
 }
 
-function organizationalDomain(domain: string): string {
-  return getDomain(domain, { allowPrivateDomains: true }) ?? domain.toLowerCase();
+function withinDomain(name: string, boundary: string): boolean {
+  return name === boundary || name.endsWith(`.${boundary}`);
 }
 
 function reportDestination(
   uri: string,
   kind: DmarcDestination['kind'],
   policyDomain: string,
+  organizationalDomain: string,
   diagnostics: DmarcDiagnostic[],
-): DmarcDestination {
-  const withoutLimit = uri.replace(/!\d+[kmgt]?$/iu, '');
+): { readonly destination: DmarcDestination; readonly valid: boolean } {
+  const sizeLimit = /!\d+[kmgt]?$/iu.exec(uri);
+  const withoutLimit = sizeLimit === null ? uri : uri.slice(0, -sizeLimit[0].length);
+  if (sizeLimit !== null)
+    diagnostics.push(
+      diagnostic(
+        'report-size-limit-obsolete',
+        `${uri} uses an obsolete report-size suffix; current receivers ignore it.`,
+        'warning',
+      ),
+    );
+  let parsed: URL;
+  try {
+    parsed = new URL(withoutLimit);
+  } catch {
+    diagnostics.push(diagnostic('report-uri-invalid', `${uri} is not a valid reporting URI.`));
+    return { destination: { external: false, kind, uri }, valid: false };
+  }
   if (!withoutLimit.toLowerCase().startsWith('mailto:')) {
     diagnostics.push(
       diagnostic(
@@ -29,45 +52,124 @@ function reportDestination(
         'warning',
       ),
     );
-    return { external: false, kind, uri };
+    return { destination: { external: false, kind, uri }, valid: true };
   }
-  const address = withoutLimit.slice(7);
+  const address = decodeURIComponent(parsed.pathname);
   const at = address.lastIndexOf('@');
   if (at < 1 || at === address.length - 1) {
     diagnostics.push(
       diagnostic('report-uri-invalid', `${uri} is not a valid reporting mailbox.`),
     );
-    return { external: false, kind, uri };
+    return { destination: { external: false, kind, uri }, valid: false };
   }
   const domain = address
     .slice(at + 1)
     .toLowerCase()
     .replace(/\.$/u, '');
-  const external = organizationalDomain(domain) !== organizationalDomain(policyDomain);
+  const external = !withinDomain(domain, organizationalDomain);
   return {
-    ...(external ? { authorizationName: `${policyDomain}._report._dmarc.${domain}` } : {}),
-    domain,
-    external,
-    kind,
-    uri,
+    destination: {
+      ...(external ? { authorizationName: `${policyDomain}._report._dmarc.${domain}` } : {}),
+      domain,
+      external,
+      kind,
+      uri,
+    },
+    valid: true,
   };
-}
-
-function validInteger(value: string, minimum: number, maximum: number): boolean {
-  if (!/^\d+$/u.test(value)) return false;
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed >= minimum && parsed <= maximum;
 }
 
 export function dmarcDiscoveryNames(domain: string): readonly string[] {
   const normalized = domain.toLowerCase().replace(/\.$/u, '');
-  const organizational = organizationalDomain(normalized);
-  return organizational === normalized
-    ? [`_dmarc.${normalized}`]
-    : [`_dmarc.${normalized}`, `_dmarc.${organizational}`];
+  const labels = normalized.split('.').filter(Boolean);
+  const suffixes =
+    labels.length <= 8
+      ? Array.from({ length: labels.length }, (_, index) => labels.slice(index).join('.'))
+      : [
+          normalized,
+          ...Array.from({ length: 7 }, (_, index) => labels.slice(-7 + index).join('.')),
+        ];
+  return suffixes.map((name) => `_dmarc.${name}`);
 }
 
-export function parseDmarcRecord(record: string, policyDomain: string): DmarcPolicy {
+export function isDmarcRecord(value: string): boolean {
+  return /^v=DMARC1(?:\s*;|\s*$)/u.test(value.trimStart());
+}
+
+function disposition(value: string | undefined): DmarcDisposition | undefined {
+  const normalized = value?.toLowerCase();
+  return normalized === 'none' || normalized === 'quarantine' || normalized === 'reject'
+    ? normalized
+    : undefined;
+}
+
+export function selectDmarcPolicy(
+  authorDomain: string,
+  observations: readonly DmarcDiscoveryObservation[],
+): DmarcSelection {
+  type ApplicableObservation = DmarcDiscoveryObservation & { readonly policy: DmarcPolicy };
+  const isApplicable = (
+    observation: DmarcDiscoveryObservation | undefined,
+  ): observation is ApplicableObservation => observation?.policy?.applicable === true;
+  const applicable = observations.filter((observation): observation is ApplicableObservation =>
+    isApplicable(observation),
+  );
+  const direct = applicable.find((observation) => observation.domain === authorDomain);
+  let organizationalDomain: string | undefined;
+  let inherited: (typeof applicable)[number] | undefined;
+  let publicSuffix: (typeof applicable)[number] | undefined;
+
+  for (let index = 0; index < observations.length; index += 1) {
+    const observation = observations[index];
+    if (!isApplicable(observation)) continue;
+    if (observation.policy.psd === 'n') {
+      organizationalDomain = observation.domain;
+      inherited = observation;
+      break;
+    }
+    if (observation.policy.psd === 'y') {
+      const child = observations[index - 1];
+      organizationalDomain = child?.domain;
+      inherited = isApplicable(child) ? child : undefined;
+      publicSuffix = observation;
+      break;
+    }
+  }
+
+  if (organizationalDomain === undefined) {
+    const leastSpecific = applicable.at(-1);
+    organizationalDomain = leastSpecific?.domain;
+    inherited = leastSpecific;
+  }
+  if (direct !== undefined)
+    return {
+      ...(organizationalDomain === undefined ? {} : { organizationalDomain }),
+      selected: direct,
+      source: 'direct',
+    };
+  if (inherited !== undefined)
+    return {
+      ...(organizationalDomain === undefined ? {} : { organizationalDomain }),
+      selected: inherited,
+      source: 'organizational',
+    };
+  if (publicSuffix !== undefined)
+    return {
+      ...(organizationalDomain === undefined ? {} : { organizationalDomain }),
+      selected: publicSuffix,
+      source: 'public-suffix',
+    };
+  return {
+    ...(organizationalDomain === undefined ? {} : { organizationalDomain }),
+    source: 'none',
+  };
+}
+
+export function parseDmarcRecord(
+  record: string,
+  policyDomain: string,
+  organizationalDomain = policyDomain,
+): DmarcPolicy {
   const diagnostics: DmarcDiagnostic[] = [];
   const tags: DmarcTag[] = [];
   const seen = new Set<string>();
@@ -81,6 +183,8 @@ export function parseDmarcRecord(record: string, policyDomain: string): DmarcPol
     }
     const name = segment.slice(0, equals).trim().toLowerCase();
     const value = segment.slice(equals + 1).trim();
+    if (!/^[a-z][a-z0-9-]*$/u.test(name))
+      diagnostics.push(diagnostic('tag-name-invalid', `DMARC tag name ${name} is malformed.`));
     if (seen.has(name))
       diagnostics.push(
         diagnostic('tag-duplicate', `DMARC tag ${name} appears more than once.`),
@@ -90,52 +194,54 @@ export function parseDmarcRecord(record: string, policyDomain: string): DmarcPol
   }
   const map = new Map(tags.map((tag) => [tag.name, tag.value]));
   const firstTag = tags[0];
-  const validVersion = firstTag?.name === 'v' && firstTag.value.toUpperCase() === 'DMARC1';
+  const validVersion = firstTag?.name === 'v' && firstTag.value === 'DMARC1';
   if (!validVersion) {
     diagnostics.push(diagnostic('version-invalid', 'v=DMARC1 must be the first DMARC tag.'));
   }
-  const policy = map.get('p');
-  if (
-    policy === undefined ||
-    !['none', 'quarantine', 'reject'].includes(policy.toLowerCase())
-  ) {
-    diagnostics.push(diagnostic('policy-invalid', 'p must be none, quarantine, or reject.'));
-  }
+  const policy = disposition(map.get('p'));
   const subdomainPolicy = map.get('sp');
-  if (
-    subdomainPolicy !== undefined &&
-    !['none', 'quarantine', 'reject'].includes(subdomainPolicy.toLowerCase())
-  ) {
+  if (subdomainPolicy !== undefined && disposition(subdomainPolicy) === undefined) {
     diagnostics.push(
       diagnostic('subdomain-policy-invalid', 'sp must be none, quarantine, or reject.'),
     );
   }
+  const nonExistentPolicy = map.get('np');
+  if (nonExistentPolicy !== undefined && disposition(nonExistentPolicy) === undefined)
+    diagnostics.push(
+      diagnostic('nonexistent-policy-invalid', 'np must be none, quarantine, or reject.'),
+    );
+  const psd = map.get('psd')?.toLowerCase();
+  if (psd !== undefined && psd !== 'n' && psd !== 'y' && psd !== 'u')
+    diagnostics.push(diagnostic('psd-invalid', 'psd must be n, y, or u.'));
+  const testing = map.get('t')?.toLowerCase();
+  if (testing !== undefined && testing !== 'n' && testing !== 'y')
+    diagnostics.push(diagnostic('testing-invalid', 't must be n or y.'));
   for (const alignment of ['adkim', 'aspf']) {
     const value = map.get(alignment);
     if (value !== undefined && value !== 'r' && value !== 's')
       diagnostics.push(diagnostic('alignment-invalid', `${alignment} must be r or s.`));
   }
-  const percentage = map.get('pct');
-  if (percentage !== undefined && !validInteger(percentage, 0, 100))
-    diagnostics.push(
-      diagnostic('percentage-invalid', 'pct must be an integer from 0 through 100.'),
-    );
-  const interval = map.get('ri');
-  if (interval !== undefined && !validInteger(interval, 1, 4_294_967_295))
-    diagnostics.push(
-      diagnostic('interval-invalid', 'ri must be a positive integer number of seconds.'),
-    );
+  for (const historic of ['pct', 'rf', 'ri'])
+    if (map.has(historic))
+      diagnostics.push(
+        diagnostic(
+          'historic-tag',
+          `${historic} is from the obsolete DMARC specification and is ignored by current receivers.`,
+          'warning',
+        ),
+      );
   const failureOptions = map.get('fo');
   if (failureOptions !== undefined) {
     const values = failureOptions.split(':');
     if (
       values.some((value) => !['0', '1', 'd', 's'].includes(value)) ||
-      new Set(values).size !== values.length
+      new Set(values).size !== values.length ||
+      (values.includes('0') && values.includes('1'))
     )
       diagnostics.push(
         diagnostic(
           'failure-options-invalid',
-          'fo may contain unique 0, 1, d, and s values separated by colons.',
+          'fo may contain unique 0, 1, d, and s values, but 0 and 1 are mutually exclusive.',
         ),
       );
   }
@@ -144,6 +250,7 @@ export function parseDmarcRecord(record: string, policyDomain: string): DmarcPol
     'p',
     'sp',
     'np',
+    't',
     'pct',
     'rua',
     'ruf',
@@ -163,18 +270,57 @@ export function parseDmarcRecord(record: string, policyDomain: string): DmarcPol
       ),
     );
 
-  const destinations = [
+  const destinationResults = [
     ...(map
       .get('rua')
       ?.split(',')
-      .map((uri) => reportDestination(uri.trim(), 'aggregate', policyDomain, diagnostics)) ??
-      []),
+      .map((uri) =>
+        reportDestination(
+          uri.trim(),
+          'aggregate',
+          policyDomain,
+          organizationalDomain,
+          diagnostics,
+        ),
+      ) ?? []),
     ...(map
       .get('ruf')
       ?.split(',')
-      .map((uri) => reportDestination(uri.trim(), 'forensic', policyDomain, diagnostics)) ??
-      []),
+      .map((uri) =>
+        reportDestination(
+          uri.trim(),
+          'forensic',
+          policyDomain,
+          organizationalDomain,
+          diagnostics,
+        ),
+      ) ?? []),
   ];
+  const destinations = destinationResults.map((result) => result.destination);
+  const validAggregateDestination = destinationResults.some(
+    (result) => result.valid && result.destination.kind === 'aggregate',
+  );
+  const effectiveDisposition = policy ?? (validAggregateDestination ? 'none' : undefined);
+  if (map.get('p') !== undefined && policy === undefined)
+    diagnostics.push(
+      diagnostic(
+        'policy-invalid',
+        validAggregateDestination
+          ? 'Invalid p is ignored; a valid rua makes the effective policy none.'
+          : 'p must be none, quarantine, or reject.',
+        validAggregateDestination ? 'warning' : 'error',
+      ),
+    );
+  else if (map.get('p') === undefined)
+    diagnostics.push(
+      diagnostic(
+        validAggregateDestination ? 'policy-default-none' : 'policy-required',
+        validAggregateDestination
+          ? 'No p tag is published; a valid rua makes the effective policy none.'
+          : 'A record needs a valid p tag or at least one valid rua destination.',
+        validAggregateDestination ? 'information' : 'error',
+      ),
+    );
   if (destinations.length > 10)
     diagnostics.push(
       diagnostic(
@@ -184,8 +330,16 @@ export function parseDmarcRecord(record: string, policyDomain: string): DmarcPol
       ),
     );
   return {
+    applicable:
+      validVersion &&
+      effectiveDisposition !== undefined &&
+      !diagnostics.some((item) =>
+        ['tag-duplicate', 'tag-malformed', 'tag-name-invalid'].includes(item.code),
+      ),
     destinations,
     diagnostics,
+    ...(effectiveDisposition === undefined ? {} : { effectiveDisposition }),
+    ...(psd === 'n' || psd === 'y' || psd === 'u' ? { psd } : {}),
     record,
     tags,
     valid: !diagnostics.some((item) => item.severity === 'error'),

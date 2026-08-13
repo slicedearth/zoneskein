@@ -10,12 +10,12 @@ It is not a subdomain scanner, reconnaissance platform, monitoring service, DNS 
 
 - DNS record explorer with A, AAAA, CNAME, MX, NS, TXT, SOA, CAA, SRV, PTR, DS, DNSKEY, RRSIG, NSEC, NSEC3, TLSA, HTTPS, and SVCB support.
 - RFC 8484 wire-format DNS-over-HTTPS to fixed Google Public DNS, Cloudflare 1.1.1.1, and Quad9 endpoints, using the browser-compatible GET or POST method each endpoint supports.
-- Side-by-side recursive-resolver comparison, exact DNS message sizes, normalized record fields, PTR conversion, and plain, BIND, JSON, or Markdown exports.
+- Side-by-side recursive-resolver comparison, exact DNS message sizes, EDNS Extended DNS Error explanations, RFC 2308 negative-cache TTLs, normalized record fields, PTR conversion, and plain, BIND, JSON, or Markdown exports.
 - DNSSEC evidence inspection with checking-enabled/checking-disabled queries, local DNSKEY key tags, SHA-256 and SHA-384 DS calculations, RRSIG time checks, and local DNSKEY RRset verification for browser-supported RSA, ECDSA, and Ed25519 algorithms.
 - Ordered SPF lexer and parser, recursive include/redirect graph, path-aware ten-term and void-lookup analysis, A/MX expansion, cycle detection, and guarded point-in-time snapshots with provenance.
 - Recoverable zone-snippet parser and linter for common records, directives, inherited owners, multiline records, TXT chunks, and cross-record conflicts.
 - Semantic DNS change comparison with unordered RRsets, TTL-only and formatting-only categories, MX priority changes, disruptive-change flags, and rollout guidance.
-- DMARC discovery and external-report authorization checks, DKIM key inspection, and CAA inheritance analysis and record authoring.
+- Current DMARC DNS Tree Walk discovery and external-report authorization checks, DKIM key inspection, and CAA inheritance analysis and authoring for web, wildcard, and S/MIME issuance.
 - Explicitly enabled, manual IndexedDB snapshots and fragment-only share links. Persistent storage is off by default.
 
 ## Architecture and privacy

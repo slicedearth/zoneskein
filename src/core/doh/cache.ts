@@ -7,16 +7,16 @@ interface CacheEntry {
 
 const MAX_CACHE_ENTRIES = 256;
 const MAX_CACHE_TTL_SECONDS = 86_400;
-const NEGATIVE_CACHE_SECONDS = 60;
-
 function responseTtl(response: DnsResponse): number {
-  const records = [
-    ...response.message.answers,
-    ...response.message.authorities,
-    ...response.message.additionals,
-  ].filter((record) => record.type !== 'OPT' && record.ttl > 0);
-  if (records.length === 0) return NEGATIVE_CACHE_SECONDS;
-  return Math.min(MAX_CACHE_TTL_SECONDS, ...records.map((record) => record.ttl));
+  const answerTtls = response.message.answers.map((record) => record.ttl);
+  const ttlCandidates = [
+    ...answerTtls,
+    ...(response.message.negativeCacheTtl === undefined
+      ? []
+      : [response.message.negativeCacheTtl]),
+  ];
+  if (ttlCandidates.length === 0) return 0;
+  return Math.min(MAX_CACHE_TTL_SECONDS, ...ttlCandidates);
 }
 
 export class DnsMemoryCache {
@@ -45,8 +45,10 @@ export class DnsMemoryCache {
 
   set(key: string, response: DnsResponse): void {
     this.#entries.delete(key);
+    const ttl = responseTtl(response);
+    if (ttl <= 0) return;
     this.#entries.set(key, {
-      expiresAt: this.#now() + responseTtl(response) * 1000,
+      expiresAt: this.#now() + ttl * 1000,
       response,
     });
     while (this.#entries.size > MAX_CACHE_ENTRIES) {

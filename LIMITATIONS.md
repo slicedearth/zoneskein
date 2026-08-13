@@ -4,6 +4,8 @@
 
 ZoneSkein queries recursive resolvers, not authoritative nameservers directly. Results are point-in-time resolver observations affected by caches, resolver policy, DNS filtering, EDNS behavior, and network conditions. Comparing three resolvers does not establish global propagation.
 
+When supplied, Extended DNS Errors are resolver-provided explanations rather than independently verified conclusions. Negative-cache guidance uses the lesser of the authority SOA TTL and SOA MINIMUM field; a response without the required SOA is not cached as a negative answer by ZoneSkein.
+
 The browser must permit cross-origin DNS-over-HTTPS requests. Enterprise policy, extensions, regional resolver behavior, or temporary CORS changes may block a resolver independently of DNS itself.
 
 ## DNSSEC
@@ -37,11 +39,11 @@ Diff normalization treats ordinary RRset ordering as non-semantic and recognizes
 
 ## DMARC, DKIM, and CAA
 
-DMARC inspection validates published policy syntax and external reporting authorization records. It does not inspect messages, prove SPF or DKIM alignment, test report delivery, or predict receiver enforcement.
+DMARC inspection follows the bounded DNS Tree Walk, validates published policy syntax, and checks external reporting authorization records. A tree walk can identify only the policy expressed in DNS; it does not inspect messages, prove SPF or DKIM alignment, test report delivery, or predict receiver enforcement.
 
 DKIM inspection validates one supplied selector and imports supported public keys. It does not discover selectors, inspect a message, or verify a message signature.
 
-CAA inspection follows a bounded parent walk and explains the first observed policy. It does not authenticate a certificate request, interpret every CA-specific parameter, or guarantee that issuance succeeds or fails.
+CAA inspection follows a bounded parent walk and explains the first observed policy, including standardized account, validation-method, and S/MIME controls. It does not authenticate a certificate request, interpret every CA-specific parameter, or guarantee that issuance succeeds or fails.
 
 ## Client-side controls
 

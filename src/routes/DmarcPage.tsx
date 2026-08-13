@@ -3,8 +3,13 @@ import { useRef, useState } from 'react';
 import { CopyButton } from '../components/CopyButton';
 import { StatusBadge } from '../components/StatusBadge';
 import { ToolIntro } from '../components/ToolIntro';
-import { dmarcDiscoveryNames, parseDmarcRecord } from '../core/dmarc/parser';
-import type { DmarcPolicy } from '../core/dmarc/types';
+import {
+  dmarcDiscoveryNames,
+  isDmarcRecord,
+  parseDmarcRecord,
+  selectDmarcPolicy,
+} from '../core/dmarc/parser';
+import type { DmarcDiscoveryObservation, DmarcPolicy } from '../core/dmarc/types';
 import { validateDnsName } from '../core/dns/names';
 import { queryPolicyRecords } from '../core/dns/policy-query';
 import type { ResolverId } from '../core/dns/types';
@@ -23,10 +28,12 @@ interface AuthorizationResult {
 interface DmarcReport {
   readonly authorizations: readonly AuthorizationResult[];
   readonly inherited: boolean;
+  readonly organizationalDomain?: string;
   readonly policy?: DmarcPolicy;
   readonly policyDomain?: string;
   readonly queryName?: string;
   readonly querySummary: readonly string[];
+  readonly source?: 'direct' | 'organizational' | 'public-suffix';
   readonly ttl?: number;
 }
 
@@ -58,8 +65,11 @@ export function DmarcPage() {
     const resolver = new WireDnsResolver(RESOLVERS[resolverId]);
     const names = dmarcDiscoveryNames(parsed.value.ascii);
     const summaries: string[] = [];
-    let selected:
-      { name: string; policyDomain: string; record: string; ttl?: number } | undefined;
+    const observations: DmarcDiscoveryObservation[] = [];
+    const records = new Map<
+      string,
+      { readonly name: string; readonly record: string; readonly ttl?: number }
+    >();
     for (const name of names) {
       const result = await queryPolicyRecords(resolver, run, name, 'TXT');
       if (run.cancelled) {
@@ -79,23 +89,25 @@ export function DmarcPage() {
         setState('idle');
         return;
       }
-      const policies = result.values.filter((value) =>
-        value.trimStart().toUpperCase().startsWith('V=DMARC1'),
-      );
+      const policyDomain = name.slice('_dmarc.'.length);
+      const policies = result.values.filter(isDmarcRecord);
       if (policies.length > 1) {
-        setError(`${name} publishes multiple DMARC policies.`);
-        setState('idle');
-        return;
+        summaries.push(`${name}: multiple DMARC records make this tree-walk node unusable`);
+        observations.push({ domain: policyDomain });
+        continue;
       }
       const record = policies[0];
       if (record !== undefined) {
-        selected = {
+        const policy = parseDmarcRecord(record, policyDomain);
+        observations.push({ domain: policyDomain, policy });
+        records.set(policyDomain, {
           name,
-          policyDomain: name.slice('_dmarc.'.length),
           record,
           ...(result.ttl === undefined ? {} : { ttl: result.ttl }),
-        };
-        break;
+        });
+        if (policy.applicable && (policy.psd === 'n' || policy.psd === 'y')) break;
+      } else {
+        observations.push({ domain: policyDomain });
       }
     }
     if (activeRun.current !== run) return;
@@ -103,12 +115,31 @@ export function DmarcPage() {
       setState('cancelled');
       return;
     }
-    if (selected === undefined) {
-      setReport({ authorizations: [], inherited: false, querySummary: summaries });
+    const selection = selectDmarcPolicy(parsed.value.ascii, observations);
+    const selectedObservation = selection.selected;
+    const selectedRecord =
+      selectedObservation === undefined ? undefined : records.get(selectedObservation.domain);
+    if (
+      selectedObservation === undefined ||
+      selectedRecord === undefined ||
+      selection.source === 'none'
+    ) {
+      setReport({
+        authorizations: [],
+        inherited: false,
+        ...(selection.organizationalDomain === undefined
+          ? {}
+          : { organizationalDomain: selection.organizationalDomain }),
+        querySummary: summaries,
+      });
       setState('complete');
       return;
     }
-    const policy = parseDmarcRecord(selected.record, selected.policyDomain);
+    const policy = parseDmarcRecord(
+      selectedRecord.record,
+      selectedObservation.domain,
+      selection.organizationalDomain ?? selectedObservation.domain,
+    );
     const authorizationNames = [
       ...new Set(
         policy.destinations.flatMap((destination) =>
@@ -127,7 +158,7 @@ export function DmarcPage() {
         return {
           authorized:
             authorizationError === undefined &&
-            result.values.some((value) => value.trim().toUpperCase() === 'V=DMARC1'),
+            result.values.some((value) => value.trim() === 'v=DMARC1'),
           ...(authorizationError === undefined ? {} : { error: authorizationError }),
           name,
         };
@@ -140,12 +171,16 @@ export function DmarcPage() {
     }
     setReport({
       authorizations,
-      inherited: selected.policyDomain !== parsed.value.ascii,
+      inherited: selection.source !== 'direct',
+      ...(selection.organizationalDomain === undefined
+        ? {}
+        : { organizationalDomain: selection.organizationalDomain }),
       policy,
-      policyDomain: selected.policyDomain,
-      queryName: selected.name,
+      policyDomain: selectedObservation.domain,
+      queryName: selectedRecord.name,
       querySummary: summaries,
-      ...(selected.ttl === undefined ? {} : { ttl: selected.ttl }),
+      source: selection.source,
+      ...(selectedRecord.ttl === undefined ? {} : { ttl: selectedRecord.ttl }),
     });
     setState('complete');
   }
@@ -165,8 +200,8 @@ export function DmarcPage() {
         eyebrow="DMARC policy inspector"
         title="Follow discovery and reporting boundaries."
       >
-        Discover direct or organizational-domain policy, parse every tag locally, and check the
-        DNS authorization required for external aggregate and forensic report destinations.
+        Follow the bounded DMARC DNS Tree Walk, identify direct, organizational, or
+        public-suffix policy, parse every tag locally, and check external report authorization.
       </ToolIntro>
       <form className="workbench-form" onSubmit={(event) => void inspect(event)}>
         <div className="field-group field-wide">
@@ -239,9 +274,8 @@ export function DmarcPage() {
             <article className="conclusion-panel">
               <StatusBadge tone="unknown">No policy observed</StatusBadge>
               <p>
-                Neither the exact domain nor its organizational-domain fallback returned one
-                DMARC policy. This does not describe messages’ SPF or DKIM authentication
-                results.
+                No applicable policy was found during the bounded DNS Tree Walk. This does not
+                describe messages’ SPF or DKIM authentication results.
               </p>
             </article>
           ) : (
@@ -260,8 +294,16 @@ export function DmarcPage() {
                   <div>
                     <dt>Discovery</dt>
                     <dd>
-                      {report.inherited ? 'Inherited from organizational domain' : 'Direct'}
+                      {report.source === 'public-suffix'
+                        ? 'Inherited from a public suffix'
+                        : report.inherited
+                          ? 'Inherited from organizational domain'
+                          : 'Direct'}
                     </dd>
+                  </div>
+                  <div>
+                    <dt>Organizational domain</dt>
+                    <dd>{report.organizationalDomain ?? 'Not identified'}</dd>
                   </div>
                   <div>
                     <dt>TTL</dt>
@@ -270,6 +312,10 @@ export function DmarcPage() {
                   <div>
                     <dt>Report destinations</dt>
                     <dd>{report.policy.destinations.length}</dd>
+                  </div>
+                  <div>
+                    <dt>Effective disposition</dt>
+                    <dd>{report.policy.effectiveDisposition ?? 'Not applicable'}</dd>
                   </div>
                 </dl>
               </article>

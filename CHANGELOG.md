@@ -11,5 +11,8 @@ All notable changes to ZoneSkein are documented here.
 - Added recursive SPF analysis and guarded point-in-time flattening with provenance, TTL-derived recheck guidance, TXT chunking, and response-size warnings.
 - Added zone-snippet linting and semantic DNS change comparison.
 - Added DMARC, DKIM, and CAA inspection and CAA record authoring.
+- Updated DMARC discovery to the bounded DNS Tree Walk and current policy-tag model.
+- Added CAA account URI, validation-method, and S/MIME issuance controls.
+- Added EDNS Extended DNS Error decoding and SOA-derived negative-cache lifetimes.
 - Added explicit opt-in IndexedDB snapshots and fragment-only report sharing.
 - Added dark and light themes, responsive layouts, accessible status text, keyboard controls, and reduced-motion behavior.

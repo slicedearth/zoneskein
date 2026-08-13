@@ -61,13 +61,29 @@ export interface DnsRecord {
   readonly typeCode: number;
 }
 
+export interface DnsExtendedError {
+  readonly code: number;
+  readonly name: string;
+  readonly text?: string;
+}
+
+export interface DnsEdns {
+  readonly dnssecOk: boolean;
+  readonly extendedErrors: readonly DnsExtendedError[];
+  readonly extendedResponseCode: number;
+  readonly udpPayloadSize: number;
+  readonly version: number;
+}
+
 export interface DnsMessage {
   readonly answers: readonly DnsRecord[];
   readonly authorities: readonly DnsRecord[];
   readonly additionals: readonly DnsRecord[];
+  readonly edns?: DnsEdns;
   readonly flags: DnsFlags;
   readonly id: number;
   readonly messageBytes: number;
+  readonly negativeCacheTtl?: number;
   readonly questions: readonly { readonly name: string; readonly type: string }[];
   readonly raw: Uint8Array;
   readonly responseCode: string;

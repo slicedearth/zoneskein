@@ -17,10 +17,26 @@ export interface DmarcDestination {
   readonly uri: string;
 }
 
+export type DmarcDisposition = 'none' | 'quarantine' | 'reject';
+
 export interface DmarcPolicy {
+  readonly applicable: boolean;
   readonly destinations: readonly DmarcDestination[];
   readonly diagnostics: readonly DmarcDiagnostic[];
+  readonly effectiveDisposition?: DmarcDisposition;
+  readonly psd?: 'n' | 'y' | 'u';
   readonly record: string;
   readonly tags: readonly DmarcTag[];
   readonly valid: boolean;
+}
+
+export interface DmarcDiscoveryObservation {
+  readonly domain: string;
+  readonly policy?: DmarcPolicy;
+}
+
+export interface DmarcSelection {
+  readonly organizationalDomain?: string;
+  readonly selected?: DmarcDiscoveryObservation & { readonly policy: DmarcPolicy };
+  readonly source: 'direct' | 'organizational' | 'public-suffix' | 'none';
 }

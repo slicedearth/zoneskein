@@ -67,8 +67,10 @@ function exportText(
   if (format === 'json') {
     return JSON.stringify(
       responses.map((response) => ({
+        edns: response.message.edns,
         flags: response.message.flags,
         messageBytes: response.message.messageBytes,
+        negativeCacheTtl: response.message.negativeCacheTtl,
         question: response.question,
         records: response.message.answers.map(recordJson),
         resolver: response.resolver.label,
@@ -141,6 +143,20 @@ function ResultPanel({ result }: { readonly result: QueryResult }) {
           <dt>DoH transport</dt>
           <dd>RFC 8484 {response.resolver.httpMethod}</dd>
         </div>
+        {message.negativeCacheTtl === undefined ? null : (
+          <div>
+            <dt>Negative cache TTL</dt>
+            <dd>{message.negativeCacheTtl} seconds</dd>
+          </div>
+        )}
+        {message.edns === undefined ? null : (
+          <div>
+            <dt>EDNS</dt>
+            <dd>
+              v{message.edns.version}, {message.edns.udpPayloadSize} byte UDP size
+            </dd>
+          </div>
+        )}
       </dl>
       <div className="flag-list" aria-label="DNS response flags">
         {Object.entries({
@@ -155,6 +171,23 @@ function ResultPanel({ result }: { readonly result: QueryResult }) {
           </span>
         ))}
       </div>
+      {message.edns !== undefined && message.edns.extendedErrors.length > 0 ? (
+        <section className="conclusion-panel partial-panel" aria-label="Extended DNS errors">
+          <StatusBadge tone="warning">Resolver explanation</StatusBadge>
+          <ul className="diagnostic-list">
+            {message.edns.extendedErrors.map((error, index) => (
+              <li key={`${String(error.code)}-${String(index)}`}>
+                <span>
+                  <strong>
+                    EDE {error.code}: {error.name}
+                  </strong>
+                  {error.text === undefined ? '' : ` · ${error.text}`}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
       <RecordTable records={message.answers} />
       {message.authorities.length > 0 ? (
         <details>

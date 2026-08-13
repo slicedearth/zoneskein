@@ -28,8 +28,7 @@
     "idb": "8.0.3",
     "ipaddr.js": "2.5.0",
     "react": "19.2.8",
-    "react-dom": "19.2.8",
-    "tldts": "7.4.10"
+    "react-dom": "19.2.8"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
