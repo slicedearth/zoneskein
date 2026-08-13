@@ -52,23 +52,40 @@ export function AboutPage() {
           <div>
             <strong>DNSSEC</strong>
             <span>
-              Independent root-to-name validation, exact DS and DNSKEY RRsets, SHA-1/SHA-256/
-              SHA-384 DS matching, authenticated denial, explicit Opt-Out uncertainty, and
-              replayable wire evidence.
+              Independent root-to-name validation, exact DS and DNSKEY RRsets, selected
+              exact-positive application RRsets, SHA-1/SHA-256/SHA-384 DS matching,
+              authenticated denial, explicit Opt-Out uncertainty, and replayable wire evidence.
             </span>
           </div>
           <div>
             <strong>SPF</strong>
             <span>
               Ordered AST, recursive dependency graph, path-aware lookup and void budgets,
-              conservative pass-set flattening, provenance, expiry, and response sizing.
+              conservative pass-set flattening, sender-context evaluation, macro and DNS
+              evidence, provenance, expiry, and response sizing.
             </span>
           </div>
           <div>
-            <strong>Authoring and change review</strong>
+            <strong>Record Studio and Change Lab</strong>
             <span>
-              Recoverable zone-snippet linting, semantic DNS diffing, CAA inheritance and
-              building, plus DMARC and DKIM inspection.
+              Local authoring for 18 supported record types, bounded working-set linting,
+              semantic comparison, risk findings, rollback timing, and staged rollout guidance.
+              Neither tool publishes DNS.
+            </span>
+          </div>
+          <div>
+            <strong>Email authentication</strong>
+            <span>
+              RFC 9989 DMARC policy discovery and conditional alignment assessment from supplied
+              prior authentication evidence, plus DKIM key inspection and bounded local message
+              verification.
+            </span>
+          </div>
+          <div>
+            <strong>CAA</strong>
+            <span>
+              Bounded inheritance analysis and record authoring for web, wildcard, and S/MIME
+              issuance controls.
             </span>
           </div>
         </div>
@@ -101,9 +118,22 @@ export function AboutPage() {
             <h3>Local and shared state</h3>
             <p>
               No cookies, analytics, telemetry, external fonts, advertising, or tracking pixels
-              are used. The local snapshot preference contains no query. Manual snapshots remain
-              in IndexedDB. Explicit share links put report data in the URL fragment; browser
-              history and every recipient can still see it.
+              are used. The local snapshot preference contains no query. A bounded anonymous
+              rate ledger stores only opaque request metadata, never questions or answers.
+              Manual snapshots remain in IndexedDB. Explicit share links put report data in the
+              URL fragment; browser history and every recipient can still see it.
+            </p>
+          </div>
+          <div>
+            <h3>Email and sender inputs</h3>
+            <p>
+              SPF macros can place parts of a supplied mailbox, IP address, HELO/EHLO name, or
+              receiver name into DNS questions visible to the selected resolver. DKIM keeps raw
+              message bytes, headers, addresses, and body content in page memory and sends only
+              derived selector TXT questions. Copied DKIM evidence excludes the raw message,
+              filename, addresses, and body, and redacts any AUID local-part. DMARC alignment
+              accepts domains and supplied prior authentication results, not a raw message. None
+              of these sensitive inputs is saved or shared automatically.
             </p>
           </div>
         </div>
@@ -118,8 +148,9 @@ export function AboutPage() {
             bursts, but a modified client can bypass it. It is not an enforcement boundary.
           </li>
           <li>
-            DNSSEC validates the delegation path from bundled IANA root trust anchors, but it
-            does not verify arbitrary application RRsets or complete NXDOMAIN proofs.
+            DNSSEC validates the delegation path and selected exact-positive application RRsets
+            from bundled IANA root trust anchors. Complete NXDOMAIN, application NODATA,
+            wildcard-denial, and CNAME or DNAME target-continuation proofs remain incomplete.
           </li>
           <li>
             SPF snapshots are withheld for macros, exists, ptr, cycles, unresolved dependencies,
@@ -130,8 +161,10 @@ export function AboutPage() {
             or DNS provider extension.
           </li>
           <li>
-            DMARC publication does not prove message alignment; a DKIM key does not prove
-            message signatures; CAA publication does not guarantee certificate issuance.
+            DMARC publication does not prove alignment, and alignment mode remains conditional
+            on supplied prior SPF and DKIM authentication evidence. A DKIM pass authenticates
+            only signed content for its signing domain; it does not establish DMARC alignment,
+            reputation, or delivery. CAA publication does not guarantee certificate issuance.
           </li>
         </ul>
       </section>

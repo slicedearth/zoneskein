@@ -2,7 +2,7 @@
 
 ## Summary
 
-ZoneSkein has no application backend. It does not receive, proxy, or store the DNS names a visitor queries.
+ZoneSkein's operator has no application backend that receives, proxies, or stores visitor DNS names or pasted content. The delivered browser application necessarily holds active inputs and results in page memory.
 
 ## Live DNS questions
 
@@ -14,11 +14,23 @@ When a visitor starts a live tool, the browser sends DNS-over-HTTPS wire message
 
 The resolver receives the DNS question and network connection information. Its privacy policy and operating jurisdiction apply. ZoneSkein cannot control resolver logging or retention. Resolver URLs are fixed in source; visitors cannot supply arbitrary fetch targets.
 
-DNS names never enter ZoneSkein page URLs or Netlify request URLs. Cloudflare questions use RFC 8484 POST bodies. Google and Quad9 questions use RFC 8484 GET because their standards-compliant POST endpoints do not currently work with ordinary browser CORS; the DNS wire message is base64url-encoded in the selected resolver’s `dns=` URL parameter. This is not encryption beyond HTTPS, and the resolver can decode or log it. In every case, the selected resolver receives the DNS name and network connection information.
+Every wire query includes EDNS Client Subnet with a zero source prefix (`0.0.0.0/0`). This asks the recursive resolver and any downstream authority not to tailor the answer to an address-derived client subnet. It does not hide the browser's connection address from the selected resolver, force the resolver to discard that address, or replace the resolver's privacy policy.
+
+Live tools do not place visitor-supplied DNS names in the Netlify request path or query string. An explicitly created share link can contain report names and data after `#`; browsers do not send that fragment in the HTTP request to Netlify.
+
+Cloudflare questions use RFC 8484 POST bodies. Google and Quad9 questions use RFC 8484 GET because their standards-compliant POST endpoints do not currently work with ordinary browser CORS; the DNS wire message is base64url-encoded in the selected resolver's `dns=` URL parameter. This is not encryption beyond HTTPS, and the resolver can decode or log it. In every case, the selected resolver receives the DNS name and network connection information.
 
 ## Hosting requests
 
 Netlify receives ordinary requests for ZoneSkein pages and static assets. It may process or retain visitor connection information under its own policies. The application does not add analytics identifiers, advertising identifiers, tracking pixels, telemetry, or third-party error reporting.
+
+## Email and sender inputs
+
+SPF sender mode accepts a client IP address, complete MAIL FROM identity, HELO/EHLO domain, and optional receiver name. These values remain in page memory and are not saved or shared automatically. SPF macros can place the mailbox local part, supplied IP address, HELO/EHLO name, or receiver name into DNS question labels. The selected resolver can read and log those derived questions. Copying the evaluation explicitly places those inputs and results on the clipboard; use synthetic inputs unless the resolver and clipboard destination are authorised to receive the real values.
+
+DKIM message mode reads pasted message text or `.eml` bytes locally. Raw bytes, headers, addresses, and body content remain in page memory and are never sent to Netlify, a resolver, IndexedDB, or a share link. Only derived `selector._domainkey.signing-domain` TXT questions leave the browser. Copied verification JSON excludes the raw message, uploaded filename, message addresses, and body. It redacts any DKIM AUID local-part but can retain signing metadata and the AUID and signing domains.
+
+DMARC alignment mode accepts domains and claimed prior authentication results, not a raw message. Those inputs remain in page memory and are not saved or shared automatically. The selected resolver receives the DNS boundary questions derived from the supplied domains.
 
 ## Browser storage
 
@@ -44,4 +56,4 @@ Fragments are not secret storage. The contents may remain in browser history, cl
 
 ## Pasted data
 
-Zone snippets, proposed changes, and report generation stay in the browser. Untrusted DNS and pasted text are rendered as text, never as HTML.
+Zone snippets, proposed changes, Record Studio working sets, raw messages, and sender or alignment inputs stay in the browser. A Record Studio working set enters IndexedDB only after an explicit snapshot action. The DKIM message, SPF sender, and DMARC alignment pages provide no snapshot or share action for their sensitive inputs. Untrusted DNS and pasted text are rendered as text, never as HTML.

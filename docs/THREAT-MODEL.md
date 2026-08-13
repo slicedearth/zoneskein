@@ -2,7 +2,8 @@
 
 ## Assets
 
-- DNS names and configuration snippets entered by a visitor;
+- DNS names, SMTP sender identities, client addresses, and configuration snippets entered by a visitor;
+- raw email messages and locally derived authentication evidence;
 - accuracy of protocol conclusions and generated records;
 - availability of public DNS-over-HTTPS resolvers;
 - local snapshot contents;
@@ -12,7 +13,7 @@
 
 The visitor trusts the delivered static files, browser runtime, selected resolver, Netlify’s static hosting, and their own device. ZoneSkein does not operate an application backend.
 
-Resolver responses, DNS record text, pasted zone data, URL fragments, and imported snapshot data are untrusted. Browser extensions and local malware are outside the application’s protection boundary.
+Resolver responses, DNS record text, pasted zone or message data, SMTP sender inputs, URL fragments, and imported snapshot data are untrusted. Browser extensions and local malware are outside the application's protection boundary.
 
 ## Threats and controls
 
@@ -28,7 +29,7 @@ A modified client can bypass browser-side controls. Public resolvers must enforc
 
 ### Resource exhaustion
 
-Names, zone snippets, snapshot records, fragments, graph depth, MX expansion, unique questions, cache entries, snapshot count, and snapshot size are bounded. DNSSEC also has whole-run limits for records, keys, signatures, digests, cryptographic attempts, and NSEC3 hash rounds. Long-running work observes cancellation between bounded cryptographic operations. DNS response bodies are streamed through the DNS wire limit rather than allocated without a bound.
+Names, zone snippets, raw-message bytes, header fields, DKIM signatures, SPF macro output, evidence traces, snapshot records, fragments, graph depth, MX expansion, unique questions, cache entries, snapshot count, and snapshot size are bounded. DNSSEC also has whole-run limits for records, keys, signatures, digests, cryptographic attempts, and NSEC3 hash rounds. Long-running work observes cancellation between bounded cryptographic operations. DNS response bodies are streamed through the DNS wire limit rather than allocated without a bound.
 
 ### Untrusted content execution
 
@@ -36,13 +37,13 @@ React renders record and pasted values as text. No `dangerouslySetInnerHTML`, ar
 
 ### Privacy leakage
 
-DNS questions never enter page or Netlify URLs. Cloudflare receives POST wire bodies; Google and Quad9 receive base64url-encoded RFC 8484 GET parameters so their endpoints work under browser CORS. Resolver URLs are fixed, and the selected resolver can read or log the question under either method. There is no application proxy, analytics, telemetry, tracking pixel, or default query history. Snapshot storage and fragment sharing require explicit actions and are explained before use.
+Live tools do not place visitor-supplied DNS names in the Netlify request path or query string. Explicit report sharing can place names and record data in the URL fragment, which is not sent to Netlify but remains visible to the browser, its history, and recipients. Cloudflare receives POST wire bodies; Google and Quad9 receive base64url-encoded RFC 8484 GET parameters so their endpoints work under browser CORS. Resolver URLs are fixed, and the selected resolver can read or log the question under either method. There is no application proxy, analytics, telemetry, tracking pixel, or default query history.
 
-The selected resolver still sees the DNS question. Netlify still sees ordinary page requests. Fragments remain visible to the browser and recipients. Local storage contains the snapshot opt-in boolean and the anonymous bounded rate-limit ledger, but no query history or DNS content.
+SPF macros can place parts of supplied mailbox, IP, HELO/EHLO, or receiver values into resolver-visible DNS questions. DKIM message verification keeps the raw message in page memory and sends only derived selector TXT questions. DMARC alignment sends boundary questions derived from supplied domains. Netlify still sees ordinary page requests. Local storage contains the snapshot opt-in boolean and the anonymous bounded rate-limit ledger, but no query history, DNS content, or pasted input.
 
 ### Misleading security conclusions
 
-Statuses are evidence-scoped. Recursive data is not called authoritative or global. Missing DNSSEC AD is not called unsigned. NSEC3 Opt-Out is not called a proven insecure delegation, and unsupported cryptography is not called invalid. Unsafe SPF input receives no flattened output. Partial lookup failures remain visible.
+Statuses are evidence-scoped. Recursive data is not called authoritative or global. Missing DNSSEC AD is not called unsigned. NSEC3 Opt-Out is not called a proven insecure delegation, and unsupported cryptography is not called invalid. Unsafe SPF input receives no flattened output, and a sender result describes only one supplied context. DMARC alignment conclusions are conditional on supplied prior authentication evidence. A DKIM pass authenticates only the signed content for its signing domain and does not imply DMARC alignment or delivery. Partial lookup failures remain visible.
 
 ### Supply chain and deployment
 
