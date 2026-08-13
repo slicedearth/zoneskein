@@ -45,6 +45,7 @@ Normal browser use is bounded by:
 - an 80-unique-question budget for each user-initiated run;
 - in-flight deduplication and TTL-aware memory caching;
 - cooldown circuits after resolver HTTP 429 responses;
+- bounded five-second to five-minute in-memory backoff after repeated resolution failures;
 - bounded recursion depth, graph size, pasted input size, raw-message bytes, header and signature work, and snapshot size;
 - bounded DNS response streaming and aggregate DNSSEC record, digest, signature, and NSEC3 hashing work;
 - cancellation, cycle detection, no ANY queries, no unrestricted batches, and no user-supplied fetch target.
@@ -76,11 +77,14 @@ npm run check
 npm run check:dnssec-anchors
 npm test
 npm run build
+npm run check:build
 npm run test:e2e
 npm run test:live
 ```
 
-`npm run test:live` is an optional manual check against current public resolvers. It is excluded from normal tests and continuous integration. Unit and browser tests use deterministic fixtures and mocked network responses.
+`npm run build` also verifies the bounded static output, legal assets, CSP resolver allowlist, SPA rewrite, and entry-asset hashes. `npm run check:build` repeats that verification for an existing `dist` directory. Production source maps are not emitted. Browser tests exercise deterministic, mocked workflows in Chromium, Firefox, WebKit, and a mobile Chromium viewport.
+
+`npm run test:live` is an optional manual check against current public resolvers. It is excluded from normal tests and continuous integration. Unit and browser tests otherwise use deterministic fixtures and mocked network responses.
 
 ## Netlify deployment
 

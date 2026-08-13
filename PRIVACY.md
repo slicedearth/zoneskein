@@ -44,7 +44,7 @@ Local snapshots are a separate, explicit opt-in feature:
 - only reports saved by a separate user action enter IndexedDB;
 - at most 100 reports are retained;
 - each report is limited to 256 KiB of UTF-8 content;
-- disabling local snapshots erases the IndexedDB database and the opt-in preference.
+- disabling local snapshots asks other ZoneSkein tabs to release the database, erases IndexedDB, and then clears the opt-in preference; the interface reports blocked or failed deletion and claims erasure only after the browser confirms it.
 
 ZoneSkein uses no cookies. It does not use local storage for query history or DNS content; local storage holds only the snapshot opt-in boolean and the bounded anonymous rate-limit ledger described above.
 

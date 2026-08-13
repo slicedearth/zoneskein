@@ -32,8 +32,8 @@ Application, protocol, test, and build-configuration source is strict TypeScript
 1. A route validates the user’s name locally.
 2. It creates one `DnsQueryRun`, which owns cancellation and an 80-unique-question budget.
 3. `WireDnsResolver` creates an RFC 8484 wire request with a fixed endpoint and transport: POST for Cloudflare, and base64url GET for Google and Quad9 because those methods are compatible with direct browser CORS. Every request carries a zero-prefix EDNS Client Subnet option so downstream answers are not requested for an address-derived subnet; this does not hide the connection address from the selected resolver. Credentials and referrers are omitted, and an eight-second abort timer applies.
-4. Shared rate and concurrency controls authorise the request. Identical in-flight requests are deduplicated and completed responses enter the bounded TTL cache.
-5. The response media type and declared length are checked before reading. A bounded stream reader rejects a body beyond 65,535 octets before it can be materialised, and the wire decoder checks the complete message structure and question binding. Negative responses derive their cache lifetime from the authority SOA, and EDNS Extended DNS Errors remain clearly attributed to the resolver.
+4. Shared rate and concurrency controls authorise the request. Identical in-flight requests are deduplicated. Completed responses enter a bounded cache classified as positive, resolver-AD negative, ordinary negative, or resolution failure. This classification controls lifetime only; it does not elevate the resolver AD flag into a local DNSSEC conclusion.
+5. The response media type and declared length are checked before reading. A bounded stream reader rejects a body beyond 65,535 octets before it can be materialised, and the wire decoder checks the complete message structure and question binding. Negative responses derive their cache lifetime from the authority SOA. Resolution failures use a separate five-second exponential backoff capped at five minutes and cannot inherit authority TTLs; Extended DNS Error evidence never overrides the DNS RCODE or useful answer data. Cached thrown failures retain only a sanitised category and timing value.
 6. Framework-independent record views feed the route. Untrusted values remain text.
 
 No ANY query, arbitrary URL, or unrestricted batch input is exposed.
@@ -42,7 +42,7 @@ No ANY query, arbitrary URL, or unrestricted batch input is exposed.
 
 Ordinary form and response state lives in React memory. DNS caching is memory-only. The theme is selected from browser preference and is not persisted. Cross-tab rate coordination writes only a bounded ledger of opaque request identifiers, timestamps, resolver buckets, and cooldown expiries to local storage; it never writes questions or answers.
 
-Snapshot persistence is separate. A boolean opt-in preference contains no DNS value. Only explicit saves write to IndexedDB. Disabling the feature deletes the database. Share state is created only on request, bounded, encoded in a URL fragment, and runtime-validated when read.
+Snapshot persistence is separate. A boolean opt-in preference contains no DNS value. Only explicit saves write to IndexedDB. Disabling the feature asks other ZoneSkein tabs to close database handles, waits for confirmed IndexedDB deletion, and only then clears the preference; blocked or failed deletion remains visible. Share state is created only on request, bounded, encoded in a URL fragment, and runtime-validated when read.
 
 Raw DKIM messages, SPF sender inputs, and DMARC alignment inputs remain in current React memory, and those routes provide no snapshot or share control for them. DKIM verification sends only derived selector TXT questions. SPF macros can place parts of supplied sender context into resolver-visible DNS questions. Record Studio working sets remain temporary unless the visitor explicitly saves one through the snapshot control.
 

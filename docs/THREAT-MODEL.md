@@ -29,7 +29,7 @@ A modified client can bypass browser-side controls. Public resolvers must enforc
 
 ### Resource exhaustion
 
-Names, zone snippets, raw-message bytes, header fields, DKIM signatures, SPF macro output, evidence traces, snapshot records, fragments, graph depth, MX expansion, unique questions, cache entries, snapshot count, and snapshot size are bounded. DNSSEC also has whole-run limits for records, keys, signatures, digests, cryptographic attempts, and NSEC3 hash rounds. Long-running work observes cancellation between bounded cryptographic operations. DNS response bodies are streamed through the DNS wire limit rather than allocated without a bound.
+Names, zone snippets, parser statements, tokens, diagnostics, records, proposed changes, plan findings, raw-message bytes, header fields, DKIM signatures, SPF macro output, evidence traces, snapshot records, fragments, graph depth, MX expansion, unique questions, cache entries, snapshot count, and snapshot size are bounded. Resource exhaustion produces an explicit incomplete result rather than a retained prefix comparison or rollout plan. DNSSEC also has whole-run limits for records, keys, signatures, digests, cryptographic attempts, and NSEC3 hash rounds. Long-running work observes cancellation between bounded cryptographic operations. DNS response bodies are streamed through the DNS wire limit rather than allocated without a bound.
 
 ### Untrusted content execution
 
