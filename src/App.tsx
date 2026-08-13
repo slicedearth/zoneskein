@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 
 import { DnssecPage } from './routes/DnssecPage';
 import { LookupPage } from './routes/LookupPage';
+import { SpfPage } from './routes/SpfPage';
 
 type Theme = 'light' | 'dark';
 
@@ -75,7 +76,9 @@ export function App() {
       </header>
 
       <main id="main-content">
-        {route === 'dnssec' ? (
+        {route === 'spf' ? (
+          <SpfPage />
+        ) : route === 'dnssec' ? (
           <DnssecPage />
         ) : route === 'lookup' ? (
           <LookupPage />
