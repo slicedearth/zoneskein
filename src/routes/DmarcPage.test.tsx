@@ -1,5 +1,5 @@
 import { encode, decode } from '@dnsquery/dns-packet';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -298,10 +298,13 @@ describe('DmarcPage', () => {
 
     await user.click(screen.getByRole('button', { name: 'Alignment check' }));
     await user.type(screen.getByLabelText('Visible From address domain'), 'example.com');
-    await user.type(
-      screen.getByLabelText('Domains from passing DKIM signatures'),
-      Array.from({ length: 21 }, (_, index) => `s${String(index)}.example.com`).join('\n'),
-    );
+    fireEvent.change(screen.getByLabelText('Domains from passing DKIM signatures'), {
+      target: {
+        value: Array.from({ length: 21 }, (_, index) => `s${String(index)}.example.com`).join(
+          '\n',
+        ),
+      },
+    });
     await user.click(screen.getByRole('button', { name: 'Check alignment' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/no more than 20/iu);
