@@ -14,6 +14,9 @@ import type {
 
 const encoder = new TextEncoder();
 const DNSSEC_COMPATIBLE_WITH_CNAME = new Set(['CNAME', 'RRSIG', 'NSEC', 'NSEC3']);
+const MAX_LINT_RECORDS = 4096;
+const MAX_LINT_DIAGNOSTICS = 4096;
+const MAX_RDATA_FIELDS_PER_RECORD = 256;
 
 function item(
   record: ZoneRecord,
@@ -332,6 +335,17 @@ function lintSvcb(record: ZoneRecord): readonly ZoneDiagnostic[] {
 
 function lintRecord(record: ZoneRecord, options: ZoneParseOptions): readonly ZoneDiagnostic[] {
   const diagnostics: ZoneDiagnostic[] = [...validateOwner(record)];
+  if (record.rdata.length > MAX_RDATA_FIELDS_PER_RECORD) {
+    diagnostics.push(
+      item(
+        record,
+        'record-field-limit',
+        'error',
+        `Record linting is limited to ${String(MAX_RDATA_FIELDS_PER_RECORD)} data fields per record.`,
+      ),
+    );
+    return diagnostics;
+  }
   if (record.ttl !== undefined) {
     if (options.minimumTtl !== undefined && record.ttl < options.minimumTtl)
       diagnostics.push(
@@ -697,7 +711,8 @@ function lintRecord(record: ZoneRecord, options: ZoneParseOptions): readonly Zon
   return diagnostics;
 }
 
-function normalizedRdata(record: ZoneRecord): string {
+function normalizedRdata(record: ZoneRecord): string | null {
+  if (record.rdata.length > MAX_RDATA_FIELDS_PER_RECORD) return null;
   return record.rdata
     .map((token) => token.value)
     .join(' ')
@@ -706,15 +721,34 @@ function normalizedRdata(record: ZoneRecord): string {
 
 export function lintZoneSnippet(source: string, options: ZoneParseOptions = {}): ZoneDocument {
   const document = parseZoneSnippet(source, options);
-  const diagnostics: ZoneDiagnostic[] = [...document.diagnostics];
-  for (const record of document.records) diagnostics.push(...lintRecord(record, options));
+  let diagnosticsTruncated = document.diagnostics.length >= MAX_LINT_DIAGNOSTICS;
+  const diagnostics: ZoneDiagnostic[] = document.diagnostics.slice(0, MAX_LINT_DIAGNOSTICS - 1);
+  const addDiagnostic = (diagnostic: ZoneDiagnostic) => {
+    if (diagnostics.length < MAX_LINT_DIAGNOSTICS - 1) diagnostics.push(diagnostic);
+    else diagnosticsTruncated = true;
+  };
+  const records = document.records.slice(0, MAX_LINT_RECORDS);
+  const firstOmitted = document.records[MAX_LINT_RECORDS];
+  if (firstOmitted !== undefined)
+    addDiagnostic(
+      item(
+        firstOmitted,
+        'lint-record-limit',
+        'warning',
+        `Only the first ${String(MAX_LINT_RECORDS)} records were linted.`,
+      ),
+    );
+  for (const record of records)
+    for (const diagnostic of lintRecord(record, options)) addDiagnostic(diagnostic);
 
   const exact = new Map<string, ZoneRecord>();
-  for (const record of document.records) {
-    const key = `${record.owner}|${record.type}|${normalizedRdata(record)}|${String(record.ttl ?? '')}`;
+  for (const record of records) {
+    const rdata = normalizedRdata(record);
+    if (rdata === null) continue;
+    const key = `${record.owner}|${record.type}|${rdata}|${String(record.ttl ?? '')}`;
     const prior = exact.get(key);
     if (prior !== undefined)
-      diagnostics.push(
+      addDiagnostic(
         item(
           record,
           'record-duplicate',
@@ -726,8 +760,11 @@ export function lintZoneSnippet(source: string, options: ZoneParseOptions = {}):
   }
 
   const owners = new Map<string, ZoneRecord[]>();
-  for (const record of document.records)
-    owners.set(record.owner, [...(owners.get(record.owner) ?? []), record]);
+  for (const record of records) {
+    const sameOwner = owners.get(record.owner);
+    if (sameOwner === undefined) owners.set(record.owner, [record]);
+    else sameOwner.push(record);
+  }
   for (const [owner, records] of owners) {
     const cname = records.find((record) => record.type === 'CNAME');
     if (cname !== undefined) {
@@ -735,7 +772,7 @@ export function lintZoneSnippet(source: string, options: ZoneParseOptions = {}):
         (record) => !DNSSEC_COMPATIBLE_WITH_CNAME.has(record.type),
       );
       if (incompatible.length > 0)
-        diagnostics.push(
+        addDiagnostic(
           item(
             cname,
             'cname-conflict',
@@ -744,7 +781,7 @@ export function lintZoneSnippet(source: string, options: ZoneParseOptions = {}):
           ),
         );
       if (document.origin !== undefined && owner === document.origin)
-        diagnostics.push(
+        addDiagnostic(
           item(
             cname,
             'apex-cname',
@@ -755,16 +792,18 @@ export function lintZoneSnippet(source: string, options: ZoneParseOptions = {}):
     }
     const spfRecords = records
       .filter((record) => record.type === 'TXT')
-      .filter((record) =>
-        record.rdata
-          .map((token) => token.value)
-          .join('')
-          .toLowerCase()
-          .startsWith('v=spf1'),
+      .filter(
+        (record) =>
+          record.rdata.length <= MAX_RDATA_FIELDS_PER_RECORD &&
+          record.rdata
+            .map((token) => token.value)
+            .join('')
+            .toLowerCase()
+            .startsWith('v=spf1'),
       );
     const duplicateSpf = spfRecords.at(1);
     if (duplicateSpf !== undefined)
-      diagnostics.push(
+      addDiagnostic(
         item(
           duplicateSpf,
           'spf-multiple',
@@ -777,9 +816,17 @@ export function lintZoneSnippet(source: string, options: ZoneParseOptions = {}):
       for (const spfDiagnostic of policy.diagnostics.filter(
         (entry) => entry.code === 'after-all',
       )) {
-        diagnostics.push(item(record, 'spf-after-all', 'warning', spfDiagnostic.message));
+        addDiagnostic(item(record, 'spf-after-all', 'warning', spfDiagnostic.message));
       }
     }
   }
+  if (diagnosticsTruncated)
+    diagnostics.push({
+      column: 1,
+      line: 1,
+      message: `Only the first ${String(MAX_LINT_DIAGNOSTICS - 1)} diagnostics are shown.`,
+      rule: 'lint-diagnostic-limit',
+      severity: 'warning',
+    });
   return { ...document, diagnostics };
 }

@@ -192,4 +192,44 @@ uri IN URI 10 1 relative/path
     );
     expect(document.diagnostics.map((item) => item.rule)).toContain('svcb-parameter-order');
   });
+
+  it('bounds same-owner record processing without quadratic array rebuilding', () => {
+    const source = Array.from(
+      { length: 4097 },
+      (_, index) => `@ IN TXT "value-${String(index)}"`,
+    ).join('\n');
+
+    const document = lintZoneSnippet(source, { origin: 'example.com' });
+
+    expect(document.records).toHaveLength(4097);
+    expect(document.diagnostics).toContainEqual(
+      expect.objectContaining({
+        line: 4097,
+        rule: 'lint-record-limit',
+        severity: 'warning',
+      }),
+    );
+  });
+
+  it('caps emitted diagnostics for adversarial repeated invalid records', () => {
+    const source = Array.from({ length: 3000 }, () => '@ IN A invalid extra').join('\n');
+
+    const document = lintZoneSnippet(source, { origin: 'example.com' });
+
+    expect(document.diagnostics).toHaveLength(4096);
+    expect(document.diagnostics.at(-1)).toMatchObject({
+      rule: 'lint-diagnostic-limit',
+      severity: 'warning',
+    });
+  });
+
+  it('stops record-specific work when one record has too many data fields', () => {
+    const source = `@ IN TXT ${Array.from({ length: 257 }, () => 'unquoted').join(' ')}`;
+
+    const document = lintZoneSnippet(source, { origin: 'example.com' });
+
+    expect(document.diagnostics).toEqual([
+      expect.objectContaining({ rule: 'record-field-limit', severity: 'error' }),
+    ]);
+  });
 });
