@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { DnssecPage } from './routes/DnssecPage';
 import { LookupPage } from './routes/LookupPage';
 import { SpfPage } from './routes/SpfPage';
+import { ZoneLintPage } from './routes/ZoneLintPage';
 
 type Theme = 'light' | 'dark';
 
@@ -76,7 +77,9 @@ export function App() {
       </header>
 
       <main id="main-content">
-        {route === 'spf' ? (
+        {route === 'zone-lint' ? (
+          <ZoneLintPage />
+        ) : route === 'spf' ? (
           <SpfPage />
         ) : route === 'dnssec' ? (
           <DnssecPage />
