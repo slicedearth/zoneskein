@@ -161,12 +161,18 @@ function ApplicationDetails({ value }: { readonly value: DnssecApplicationResult
       <p>{value.explanation}</p>
       <dl className="metadata-grid">
         <div>
-          <dt>Exact RRset records</dt>
+          <dt>Application RRset records</dt>
           <dd>{value.records.length}</dd>
         </div>
         <div>
           <dt>Wildcard expansion</dt>
-          <dd>{value.wildcardExpanded ? 'Detected, proof required' : 'No'}</dd>
+          <dd>
+            {value.wildcardExpanded
+              ? value.state === 'secure'
+                ? 'Authenticated'
+                : 'Detected, proof incomplete'
+              : 'No'}
+          </dd>
         </div>
       </dl>
       {value.records.length === 0 ? null : (
@@ -486,9 +492,9 @@ export function DnssecPage() {
         title="Build trust from the root to an RRset locally."
       >
         Validate each DS and DNSKEY RRset from bundled IANA root trust anchors using DNS wire
-        evidence and browser cryptography, then optionally verify an exact positive application
-        RRset with the authenticated zone keys. Resolver flags remain visible evidence, but they
-        do not decide the local result.
+        evidence and browser cryptography, then optionally authenticate a selected positive,
+        negative, wildcard, or bounded alias-continuation result with the relevant zone keys.
+        Resolver flags remain visible evidence, but they do not decide the local result.
       </ToolIntro>
       <form className="workbench-form" onSubmit={(event) => void submit(event)}>
         <div className="field-group field-wide">
@@ -605,6 +611,11 @@ export function DnssecPage() {
               )}
             </div>
           </div>
+          <p>
+            The evidence bundle contains complete raw DNS packets, decoded questions, resolver
+            names and endpoints, and capture times. Copying it, saving a local snapshot, or
+            sharing that snapshot exposes those details to the destination or recipient.
+          </p>
           <article className="conclusion-panel">
             <StatusBadge tone={stateTone(report.state)}>{stateLabel(report.state)}</StatusBadge>
             <p>{report.explanation}</p>
@@ -703,15 +714,18 @@ export function DnssecPage() {
               NSEC3 Opt-Out is reported separately because it cannot authenticate whether the
               covered delegation exists. When an application type is selected, the exact
               positive RRset is canonicalised and verified with the authenticated
-              containing-zone keys.
+              containing-zone keys. Authenticated NSEC or NSEC3 proof sets can establish
+              application NODATA, NXDOMAIN, wildcard synthesis, or wildcard NODATA. For other
+              requested types, signed CNAME, DNAME, and SVCB or HTTPS AliasMode transitions are
+              followed within the shared run bounds until the final answer authenticates.
             </p>
             <p>
               Secure means that this exact root-to-name chain validated at the captured time. It
               does not prove service safety or establish that every recursive resolver sees the
-              same data. Wildcard-expanded answers, negative answers, NODATA, CNAME and DNAME
-              continuations remain incomplete until their complete denial or alias proof chain
-              is authenticated. Unsupported, incomplete, insecure, Opt-Out, alias-boundary,
-              not-delegated, and bogus outcomes remain distinct.
+              same data. A result remains incomplete unless every required denial or alias link
+              authenticates at the same common validation instant. Locally validated,
+              Incomplete, Insecure delegation, Opt-Out, DNAME boundary, Not a delegation, Bogus,
+              and Unsupported outcomes remain distinct.
             </p>
           </details>
         </section>

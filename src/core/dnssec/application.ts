@@ -1,8 +1,9 @@
 import type { DnsRecord, DnsRecordType, DnsResponse } from '../dns/types';
+import { validateApplicationDenial, validateWildcardAnswerDenial } from './denial';
 import { parseRrsig } from './records';
-import type { DnskeyInfo, SignatureVerification } from './types';
+import type { DnskeyInfo, RrsigInfo, SignatureVerification } from './types';
 import { verifyRrset } from './verify';
-import { boundRrset, wireQuestionMatches } from './wire-evidence';
+import { boundDenialRecords, boundRrset, wireQuestionMatches } from './wire-evidence';
 import { DnssecWorkBudget } from './work-budget';
 
 export const DNSSEC_APPLICATION_TYPES = [
@@ -30,6 +31,7 @@ export interface DnssecApplicationResult {
   readonly records: readonly DnsRecord[];
   readonly state: DnssecApplicationState;
   readonly type: DnssecApplicationType;
+  readonly verificationGroups: readonly (readonly SignatureVerification[])[];
   readonly verifications: readonly SignatureVerification[];
   readonly wildcardExpanded: boolean;
 }
@@ -71,6 +73,26 @@ function failedState(verifications: readonly SignatureVerification[]): DnssecApp
     : 'bogus';
 }
 
+interface CorrelatedSignatureVerification {
+  readonly signature: RrsigInfo;
+  readonly verification: SignatureVerification;
+}
+
+function correlateSignatureVerifications(
+  signatures: readonly RrsigInfo[],
+  verifications: readonly SignatureVerification[],
+): readonly CorrelatedSignatureVerification[] {
+  return signatures.flatMap((signature, index) => {
+    const verification = verifications[index];
+    return verification?.algorithm === signature.algorithm &&
+      verification.expiration === signature.expiration &&
+      verification.inception === signature.inception &&
+      verification.keyTag === signature.keyTag
+      ? [{ signature, verification }]
+      : [];
+  });
+}
+
 export async function validateApplicationRrset(
   response: DnsResponse,
   owner: string,
@@ -88,15 +110,20 @@ export async function validateApplicationRrset(
       explanation: 'The decoded DNS response does not match the requested application RRset.',
       records: [],
       state: 'incomplete',
+      verificationGroups: [],
       verifications: [],
       wildcardExpanded: false,
     };
-  if (response.message.responseCode !== 'NOERROR')
+  if (
+    response.message.responseCode !== 'NOERROR' &&
+    response.message.responseCode !== 'NXDOMAIN'
+  )
     return {
       ...base,
-      explanation: `The ${type} question returned ${response.message.responseCode}; complete authenticated name-error validation is not yet available.`,
+      explanation: `The ${type} question returned ${response.message.responseCode}, which is not an authenticated answer, NODATA, or name-error form.`,
       records: [],
       state: 'incomplete',
+      verificationGroups: [],
       verifications: [],
       wildcardExpanded: false,
     };
@@ -109,6 +136,7 @@ export async function validateApplicationRrset(
         'The original DNS packet could not be bound to one lossless canonical application RRset.',
       records: [],
       state: 'incomplete',
+      verificationGroups: [],
       verifications: [],
       wildcardExpanded: false,
     };
@@ -119,18 +147,58 @@ export async function validateApplicationRrset(
         record.class.toUpperCase() === 'IN' &&
         (record.type === 'CNAME' || record.type === 'DNAME'),
     );
+    if (alias !== undefined)
+      return {
+        ...base,
+        explanation: `The answer crosses a ${alias.type} alias; the target RRset is not treated as locally validated until every alias step is authenticated.`,
+        records: [],
+        state: 'incomplete',
+        verificationGroups: [],
+        verifications: [],
+        wildcardExpanded: false,
+      };
+    const authorities = boundDenialRecords(response);
+    if (authorities === null)
+      return {
+        ...base,
+        explanation:
+          'The original DNS packet could not be bound to lossless authenticated-denial records.',
+        records: [],
+        state: 'incomplete',
+        verificationGroups: [],
+        verifications: [],
+        wildcardExpanded: false,
+      };
+    const denial = await validateApplicationDenial(
+      target,
+      type,
+      response.message.responseCode,
+      authorities,
+      trustedKeys,
+      now,
+      budget,
+    );
     return {
       ...base,
-      explanation:
-        alias === undefined
-          ? `No exact ${type} RRset was returned; complete authenticated NODATA validation is not yet available.`
-          : `The answer crosses a ${alias.type} alias; the target RRset is not treated as locally validated until every alias step is authenticated.`,
+      explanation: denial.explanation,
       records: [],
-      state: 'incomplete',
-      verifications: [],
+      state: denial.state,
+      verificationGroups: denial.verificationGroups,
+      verifications: denial.verifications,
       wildcardExpanded: false,
     };
   }
+
+  if (response.message.responseCode === 'NXDOMAIN')
+    return {
+      ...base,
+      explanation: `The response contains a ${type} RRset while claiming that its owner does not exist.`,
+      records,
+      state: 'bogus',
+      verificationGroups: [],
+      verifications: [],
+      wildcardExpanded: false,
+    };
 
   const signatures = rrset.flatMap((record) => {
     const parsed = parseRrsig(record, now);
@@ -148,20 +216,22 @@ export async function validateApplicationRrset(
       explanation: `The answer contains an unsigned CNAME synthesised from a DNAME; it remains incomplete until the DNAME signature and substitution are authenticated.`,
       records,
       state: 'incomplete',
+      verificationGroups: [],
       verifications: [],
       wildcardExpanded: false,
     };
   const verifications = await verifyRrset(rrset, type, trustedKeys, now, budget);
+  const signatureVerifications = correlateSignatureVerifications(signatures, verifications);
   const ownerLabels = ownerLabelCount(target);
-  const exactOwnerVerified = signatures.some(
-    (signature, index) =>
-      signature.labels === ownerLabels && verifications[index]?.status === 'verified',
+  const exactOwnerVerified = signatureVerifications.some(
+    ({ signature, verification }) =>
+      signature.labels === ownerLabels && verification.status === 'verified',
   );
   const wildcardExpanded =
     !exactOwnerVerified &&
-    signatures.some(
-      (signature, index) =>
-        signature.labels < ownerLabels && verifications[index]?.status === 'verified',
+    signatureVerifications.some(
+      ({ signature, verification }) =>
+        signature.labels < ownerLabels && verification.status === 'verified',
     );
   if (!verifications.some((verification) => verification.status === 'verified')) {
     const state = failedState(verifications);
@@ -175,24 +245,79 @@ export async function validateApplicationRrset(
             : `No current ${type} signature verified with the authenticated zone keys.`,
       records,
       state,
+      verificationGroups: [],
       verifications,
       wildcardExpanded,
     };
   }
-  if (wildcardExpanded)
+  if (wildcardExpanded) {
+    const authorities = boundDenialRecords(response);
+    if (authorities === null)
+      return {
+        ...base,
+        explanation:
+          'The wildcard answer verified, but its denial records could not be bound to the original DNS packet.',
+        records,
+        state: 'incomplete',
+        verificationGroups: [],
+        verifications,
+        wildcardExpanded: true,
+      };
+    const labels = signatureVerifications.flatMap(({ signature, verification }) =>
+      signature.labels < ownerLabels && verification.status === 'verified'
+        ? [signature.labels]
+        : [],
+    );
+    const denial = await validateWildcardAnswerDenial(
+      target,
+      labels,
+      authorities,
+      trustedKeys,
+      now,
+      budget,
+    );
+    const positiveVerificationGroup = signatureVerifications.flatMap(
+      ({ signature, verification }) =>
+        signature.labels === denial.wildcardSignatureLabels ? [verification] : [],
+    );
+    if (
+      denial.state === 'secure' &&
+      (denial.wildcardSignatureLabels === null ||
+        !positiveVerificationGroup.some((verification) => verification.status === 'verified'))
+    )
+      return {
+        ...base,
+        explanation:
+          'The wildcard denial proof was not bound to the verified signature label count.',
+        records,
+        state: 'bogus',
+        verificationGroups: [],
+        verifications: [...verifications, ...denial.verifications],
+        wildcardExpanded: true,
+      };
     return {
       ...base,
-      explanation: `The wildcard-expanded ${type} signature verified, but the answer remains incomplete until the closest-encloser and next-closer denial proofs are authenticated.`,
+      explanation: denial.explanation,
       records,
-      state: 'incomplete',
-      verifications,
+      state: denial.state,
+      verificationGroups:
+        denial.state === 'secure'
+          ? [positiveVerificationGroup, ...denial.verificationGroups]
+          : [],
+      verifications: [...verifications, ...denial.verifications],
       wildcardExpanded: true,
     };
+  }
   return {
     ...base,
     explanation: `The exact positive ${type} RRset verified locally with the authenticated zone keys.`,
     records,
     state: 'secure',
+    verificationGroups: [
+      signatureVerifications.flatMap(({ signature, verification }) =>
+        signature.labels === ownerLabels ? [verification] : [],
+      ),
+    ],
     verifications,
     wildcardExpanded: false,
   };

@@ -523,7 +523,8 @@ describe('independent DNSSEC chain validation', () => {
       rrsetType: 'A',
     });
     expect(continued).toMatchObject({ state: 'incomplete' });
-    expect(continued.explanation).toMatch(/CNAME alias/iu);
+    expect(continued.explanation).toMatch(/target\.test.*could not be retrieved/iu);
+    expect(continued.evidence.at(-1)).toMatchObject({ name: 'target.test.', type: 'DS' });
     expect(continued.application).toBeUndefined();
   });
 

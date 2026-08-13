@@ -74,16 +74,30 @@ describe('DnssecPage', () => {
     );
   });
 
-  it('invalidates completed evidence when any material run input changes', async () => {
+  it('exports versioned raw evidence and invalidates it when any material input changes', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
     vi.spyOn(dnssecChain, 'validateDnssecChain').mockResolvedValue({
-      evidence: [],
+      evidence: [
+        {
+          decodedQuestion: { class: 'IN', name: 'example.test.', type: 'A' },
+          name: 'example.test.',
+          rawDnsBase64: 'AA==',
+          receivedAt: new Date(1_800_000_000_000).toISOString(),
+          resolverEndpoint: 'https://cloudflare-dns.com/dns-query',
+          type: 'A',
+        },
+      ],
       explanation: 'The fixture chain validated locally.',
       state: 'secure',
       steps: [],
       target: 'example.test.',
       trustAnchorSource: ROOT_TRUST_ANCHOR_SOURCE,
       validatedAt: new Date(1_800_000_000_000).toISOString(),
-      validatorVersion: 2,
+      validatorVersion: 3,
     });
     render(<DnssecPage />);
 
@@ -95,6 +109,14 @@ describe('DnssecPage', () => {
     fireEvent.change(target, { target: { value: 'A' } });
     fireEvent.click(submit);
     expect(await screen.findByRole('heading', { name: 'example.test.' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Copy evidence bundle' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
+    const evidence = JSON.parse(String(writeText.mock.calls[0]?.[0])) as {
+      readonly evidence: readonly { readonly rawDnsBase64?: string }[];
+      readonly validatorVersion: number;
+    };
+    expect(evidence.validatorVersion).toBe(3);
+    expect(evidence.evidence[0]?.rawDnsBase64).toBe('AA==');
 
     fireEvent.change(target, { target: { value: 'HTTPS' } });
     expect(screen.queryByRole('heading', { name: 'example.test.' })).not.toBeInTheDocument();
