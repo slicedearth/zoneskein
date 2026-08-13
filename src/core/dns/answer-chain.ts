@@ -50,26 +50,27 @@ export function reachableAnswerRecords(
     return result(matchingType.length, [], records);
   }
 
-  const aliasCandidates = answers
-    .filter(
-      (record) =>
-        record.class.toUpperCase() === 'IN' &&
-        (record.type === 'CNAME' || record.type === 'DNAME'),
-    )
-    .slice(0, MAX_ALIAS_RECORDS);
+  const recordsByOwner = new Map<string, DnsRecord[]>();
+  for (const record of answers) {
+    if (record.class.toUpperCase() !== 'IN') continue;
+    const recordOwner = canonicalName(record.owner);
+    if (recordOwner === null) continue;
+    const ownerRecords = recordsByOwner.get(recordOwner);
+    if (ownerRecords === undefined) recordsByOwner.set(recordOwner, [record]);
+    else ownerRecords.push(record);
+  }
   const aliases: DnsRecord[] = [];
   const visited = new Set<string>();
   let owner = start;
 
-  for (let depth = 0; depth <= MAX_ALIAS_RECORDS; depth += 1) {
+  for (let depth = 0; ; depth += 1) {
     if (visited.has(owner))
       return result(matchingType.length, aliases, [], 'The DNS answer contains an alias loop.');
     visited.add(owner);
 
-    const records = matchingType.filter((record) => canonicalName(record.owner) === owner);
-    const cnames = aliasCandidates.filter(
-      (record) => record.type === 'CNAME' && canonicalName(record.owner) === owner,
-    );
+    const ownerRecords = recordsByOwner.get(owner) ?? [];
+    const records = ownerRecords.filter((record) => record.type === type);
+    const cnames = ownerRecords.filter((record) => record.type === 'CNAME');
     if (cnames.length > 0) {
       if (records.length > 0)
         return result(
@@ -94,19 +95,27 @@ export function reachableAnswerRecords(
           [],
           'The DNS answer contains an invalid CNAME target.',
         );
+      if (depth >= MAX_ALIAS_RECORDS)
+        return result(
+          matchingType.length,
+          aliases,
+          [],
+          `The DNS answer exceeds the ${String(MAX_ALIAS_RECORDS)}-alias safety limit.`,
+        );
       aliases.push(...cnames);
       owner = target;
       continue;
     }
     if (records.length > 0) return result(matchingType.length, aliases, records);
 
-    const applicableDnames = aliasCandidates.flatMap((record) => {
-      if (record.type !== 'DNAME') return [];
-      const aliasOwner = canonicalName(record.owner);
-      const target = aliasTarget(record);
-      if (aliasOwner === null || target === null || !owner.endsWith(`.${aliasOwner}`))
-        return [];
-      return [{ aliasOwner, record, target }];
+    const ownerLabels = owner.split('.');
+    const applicableDnames = ownerLabels.slice(1).flatMap((_, labelIndex) => {
+      const aliasOwner = ownerLabels.slice(labelIndex + 1).join('.');
+      return (recordsByOwner.get(aliasOwner) ?? []).flatMap((record) => {
+        if (record.type !== 'DNAME') return [];
+        const target = aliasTarget(record);
+        return target === null ? [] : [{ aliasOwner, record, target }];
+      });
     });
     if (applicableDnames.length === 0) return result(matchingType.length, aliases, []);
     const longest = Math.max(
@@ -136,13 +145,14 @@ export function reachableAnswerRecords(
         [],
         'The DNS answer contains an invalid DNAME target.',
       );
+    if (depth >= MAX_ALIAS_RECORDS)
+      return result(
+        matchingType.length,
+        aliases,
+        [],
+        `The DNS answer exceeds the ${String(MAX_ALIAS_RECORDS)}-alias safety limit.`,
+      );
     aliases.push(...closest.map((candidate) => candidate.record));
     owner = rewritten;
   }
-  return result(
-    matchingType.length,
-    aliases,
-    [],
-    `The DNS answer exceeds the ${String(MAX_ALIAS_RECORDS)}-alias safety limit.`,
-  );
 }

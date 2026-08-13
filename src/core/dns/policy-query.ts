@@ -42,7 +42,7 @@ export async function queryPolicyRecords(
         ? reachableAnswerRecords(parsed.value.ascii, response.message.answers, type)
         : { aliases: [], ignoredRecords: 0, records: [] };
     const records = bound.records;
-    const ttlValues = records.map((record) => record.ttl);
+    const ttlValues = [...bound.aliases, ...records].map((record) => record.ttl);
     const values =
       type === 'TXT'
         ? records.flatMap((record) => {

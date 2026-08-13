@@ -48,6 +48,48 @@ describe('reachable answer RR binding', () => {
     expect(view.aliases).toEqual([]);
   });
 
+  it('does not let unrelated aliases exhaust the reachable-chain safety limit', () => {
+    const unrelatedAliases = Array.from({ length: 128 }, (_, index) =>
+      record(
+        'CNAME',
+        `unrelated-${String(index)}.example.com.`,
+        `target-${String(index)}.example.net.`,
+      ),
+    );
+    const view = reachableAnswerRecords(
+      'mail.example.com',
+      [
+        ...unrelatedAliases,
+        record('CNAME', 'mail.example.com.', 'edge.example.net.'),
+        record('TXT', 'edge.example.net.', 'v=policy'),
+      ],
+      'TXT',
+    );
+
+    expect(view.error).toBeUndefined();
+    expect(view.records.map((item) => item.data)).toEqual(['v=policy']);
+    expect(view.aliases).toHaveLength(1);
+  });
+
+  it('applies the alias limit only to the chain being followed', () => {
+    const chain = Array.from({ length: 65 }, (_, index) =>
+      record(
+        'CNAME',
+        index === 0 ? 'mail.example.com.' : `hop-${String(index)}.example.net.`,
+        `hop-${String(index + 1)}.example.net.`,
+      ),
+    );
+    const view = reachableAnswerRecords(
+      'mail.example.com',
+      [...chain, record('TXT', 'hop-65.example.net.', 'v=policy')],
+      'TXT',
+    );
+
+    expect(view.error).toMatch(/64-alias safety limit/iu);
+    expect(view.records).toEqual([]);
+    expect(view.aliases).toHaveLength(64);
+  });
+
   it('does not reinterpret a URL-shaped response owner as the queried DNS name', () => {
     const view = reachableAnswerRecords(
       'mail.example.com',

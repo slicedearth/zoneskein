@@ -4,14 +4,14 @@ import { DnsQueryRun } from '../doh/query-run';
 import { queryPolicyRecords } from './policy-query';
 import type { DnsMessage, DnsRecord, DnsResolver, DnsResponse } from './types';
 
-function record(owner: string, value: string): DnsRecord {
+function record(owner: string, value: string, ttl = 300): DnsRecord {
   return {
     class: 'IN',
     data: [Uint8Array.from(value, (character) => character.charCodeAt(0))],
     owner,
     rawRdata: new Uint8Array(),
     section: 'answer',
-    ttl: 300,
+    ttl,
     type: 'TXT',
     typeCode: 16,
   };
@@ -117,5 +117,31 @@ describe('policy query RR binding', () => {
 
     expect(result.error).toMatch(/ambiguous CNAME/iu);
     expect(result.values).toEqual([]);
+  });
+
+  it('uses the lowest reachable alias or policy TTL', async () => {
+    const result = await queryPolicyRecords(
+      new FixtureResolver([
+        {
+          ...record('mail.example.com.', 'unused', 60),
+          data: 'edge.example.net.',
+          type: 'CNAME',
+          typeCode: 5,
+        },
+        record('edge.example.net.', 'v=DMARC1; p=reject', 300),
+        {
+          ...record('sibling.example.com.', 'unused', 10),
+          data: 'hostile.example.net.',
+          type: 'CNAME',
+          typeCode: 5,
+        },
+      ]),
+      new DnsQueryRun(),
+      'mail.example.com',
+      'TXT',
+    );
+
+    expect(result.ttl).toBe(60);
+    expect(result.values).toEqual(['v=DMARC1; p=reject']);
   });
 });

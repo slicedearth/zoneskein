@@ -27,26 +27,32 @@ function normalizedAddress(value: string): string {
 
 function semanticRdata(record: ZoneRecord, origin: string | undefined): string {
   const values = record.rdata.map((token) => token.value);
+  const rawValues = record.rdata.map((token) => token.raw);
   if (record.type === 'TXT') return values.join('');
   if (record.type === 'A' || record.type === 'AAAA') return normalizedAddress(values[0] ?? '');
   if (record.type === 'MX') {
-    return `${String(Number(values[0] ?? 0))} ${absoluteTarget(values[1] ?? '', origin)}`;
+    return `${String(Number(values[0] ?? 0))} ${absoluteTarget(rawValues[1] ?? '', origin)}`;
   }
   if (record.type === 'SRV') {
     return [
       String(Number(values[0] ?? 0)),
       String(Number(values[1] ?? 0)),
       String(Number(values[2] ?? 0)),
-      absoluteTarget(values[3] ?? '', origin),
+      absoluteTarget(rawValues[3] ?? '', origin),
     ].join(' ');
   }
-  if (record.type === 'CNAME' || record.type === 'NS' || record.type === 'PTR') {
-    return absoluteTarget(values[0] ?? '', origin);
+  if (
+    record.type === 'CNAME' ||
+    record.type === 'DNAME' ||
+    record.type === 'NS' ||
+    record.type === 'PTR'
+  ) {
+    return absoluteTarget(rawValues[0] ?? '', origin);
   }
   if (record.type === 'SOA') {
     return [
-      absoluteTarget(values[0] ?? '', origin),
-      absoluteTarget(values[1] ?? '', origin),
+      absoluteTarget(rawValues[0] ?? '', origin),
+      absoluteTarget(rawValues[1] ?? '', origin),
       ...values.slice(2).map((value) => String(Number(value))),
     ].join(' ');
   }

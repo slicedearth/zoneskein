@@ -163,8 +163,11 @@ test('change comparison builds a risk-aware staged rollout', async ({ page }) =>
   await page.getByLabel('Origin for relative names').fill('example.com');
   await page.getByRole('button', { name: 'Compare snapshots' }).click();
 
-  await expect(page.getByRole('heading', { name: 'Preflight and rollout plan' })).toBeVisible();
-  await expect(page.getByText('high risk', { exact: true }).first()).toBeVisible();
+  const planPanel = page.locator('article.change-plan-summary');
+  await expect(
+    planPanel.getByRole('heading', { name: 'Preflight and rollout plan' }),
+  ).toBeVisible();
+  await expect(planPanel.locator('.status-badge')).toContainText('high risk');
   await expect(page.getByText('3600 seconds', { exact: true })).toBeVisible();
   await expect(
     page.getByRole('heading', { name: 'Publish in dependency order' }),

@@ -11,6 +11,7 @@ import {
 } from '../core/diff/compare';
 import { planDnsChanges } from '../core/diff/plan';
 import type { ChangeRisk, DiffReport, DnsChange, DnsChangePlan } from '../core/diff/types';
+import { reachableAnswerRecords } from '../core/dns/answer-chain';
 import { validateDnsName } from '../core/dns/names';
 import { bindRecord } from '../core/dns/presentation';
 import { DnsQueryError, type DnsRecordType, type ResolverId } from '../core/dns/types';
@@ -191,7 +192,16 @@ export function DiffPage() {
               type,
             };
           }
-          return { records: response.message.answers, type };
+          if (response.message.responseCode !== 'NOERROR') return { records: [], type };
+          const bound = reachableAnswerRecords(
+            parsed.value.ascii,
+            response.message.answers,
+            type,
+          );
+          if (bound.error !== undefined) {
+            return { error: `${type}: ${bound.error}`, records: [], type };
+          }
+          return { records: [...bound.aliases, ...bound.records], type };
         } catch (cause) {
           const message =
             cause instanceof DnsQueryError
@@ -204,7 +214,7 @@ export function DiffPage() {
       }),
     );
     if (activeRun.current !== run) return;
-    if (outcomes.every((outcome) => outcome.error?.includes('cancelled') === true)) {
+    if (run.cancelled) {
       setState('cancelled');
       return;
     }
@@ -255,11 +265,12 @@ export function DiffPage() {
 
   return (
     <div className="tool-page">
-      <ToolIntro eyebrow="DNS change diff" title="Separate semantic changes from noise.">
+      <ToolIntro eyebrow="DNS Change Lab" title="Compare records and plan a bounded rollout.">
         Compare unordered RRsets, TTLs, priorities, values, and presentation. Use pasted
-        snapshots or observe selected current records before reviewing a proposed snippet.
+        snapshots or observe selected current records, then review preflight risk, timing,
+        rollback, and staged rollout guidance for a proposed snippet.
       </ToolIntro>
-      <div className="mode-switch" aria-label="Diff source mode">
+      <div className="mode-switch" aria-label="Change Lab source mode">
         <button
           aria-pressed={mode === 'pasted'}
           type="button"
@@ -416,7 +427,7 @@ export function DiffPage() {
               <CopyButton label="Copy Markdown report" text={markdown(display)} />
               <SnapshotButton
                 content={markdown(display)}
-                title="DNS change comparison"
+                title="DNS Change Lab report"
                 tool="diff"
               />
             </div>
@@ -450,7 +461,7 @@ export function DiffPage() {
           <article className="result-panel change-plan-summary">
             <div className="result-heading">
               <div>
-                <p className="eyebrow">Change lab</p>
+                <p className="eyebrow">Change Lab</p>
                 <h3>Preflight and rollout plan</h3>
               </div>
               <StatusBadge tone={riskTone(display.plan.risk)}>

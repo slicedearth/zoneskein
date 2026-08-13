@@ -83,4 +83,14 @@ describe('semantic DNS change comparison', () => {
       'added',
     ]);
   });
+
+  it('does not collapse escaped in-label dots into DNS label separators', () => {
+    const report = compare(
+      'a\\046b 300 IN CNAME target\\046name.example.',
+      'a.b 300 IN CNAME target.name.example.',
+    );
+
+    expect(report.changes.map((item) => item.category)).toEqual(['removed', 'added']);
+    expect(report.changes[0]?.owner).toBe('a\\046b.example.com.');
+  });
 });
