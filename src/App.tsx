@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 
+import { LookupPage } from './routes/LookupPage';
+
 type Theme = 'light' | 'dark';
 
 function applicationPath(): string {
@@ -72,7 +74,9 @@ export function App() {
       </header>
 
       <main id="main-content">
-        {route === '' ? (
+        {route === 'lookup' ? (
+          <LookupPage />
+        ) : route === '' ? (
           <section className="hero" aria-labelledby="home-title">
             <p className="eyebrow">Browser-based DNS workbench</p>
             <h1 id="home-title">Untangle DNS.</h1>
