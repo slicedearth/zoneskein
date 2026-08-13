@@ -32,8 +32,8 @@ For DNSSEC, SPF, DMARC, DKIM, CAA, wire parsing, or zone syntax changes:
 2. add deterministic test vectors or fixtures;
 3. distinguish unsupported input from invalid input;
 4. describe what evidence supports every user-facing conclusion;
-5. update the current-state architecture or limitations documentation when behavior changes.
+5. update the current-state architecture or limitations documentation when behaviour changes.
 
 ## Commits
 
-Keep commits coherent and use concise messages such as `fix: preserve TXT chunk boundaries` or `test: cover SPF redirect cycles`. Do not mix unrelated formatting and protocol changes.
+Keep each commit coherent and use an imperative subject that describes the completed increment. Add a detailed body explaining the user-visible outcome, important protocol or security boundaries, and why the change is safe. End with the exact verification commands or checks that passed. Do not mix unrelated formatting and protocol changes.

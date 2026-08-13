@@ -284,7 +284,7 @@ export function DkimPage() {
             <summary>What this does not prove</summary>
             <p>
               A well-formed DNS key does not prove that outgoing messages use this selector,
-              that headers and body canonicalize correctly, or that a receiver accepts the
+              that headers and body canonicalise correctly, or that a receiver accepts the
               signature. Inspect an actual message to verify those properties.
             </p>
           </details>

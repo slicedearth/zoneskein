@@ -325,7 +325,7 @@ export function parseDmarcRecord(
     diagnostics.push(
       diagnostic(
         'report-destination-limit',
-        'More than ten report destinations exceeds ZoneSkein’s bounded authorization check.',
+        'More than ten report destinations exceeds ZoneSkein’s bounded authorisation check.',
         'warning',
       ),
     );

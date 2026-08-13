@@ -2,7 +2,7 @@
 
 ## Ordered parsing
 
-SPF is tokenized before parsing. The AST preserves source order, original text, qualifier, mechanism or modifier type, argument, dual CIDR lengths, macro presence, and character offsets.
+SPF is tokenised before parsing. The AST preserves source order, original text, qualifier, mechanism or modifier type, argument, dual CIDR lengths, macro presence, and character offsets.
 
 Supported mechanisms are `all`, `include`, `a`, `mx`, `ptr`, `ip4`, `ip6`, and `exists`. Supported modifiers are `redirect` and `exp`.
 
@@ -16,7 +16,7 @@ Graph traversal is cycle-safe and depth-bounded. One user run cannot exceed 80 u
 
 ## Safe pass-set extraction
 
-Snapshot generation evaluates only finite pass-authorizing terms:
+Snapshot generation evaluates only finite pass-authorising terms:
 
 - `ip4` and `ip6` networks;
 - default or explicit `+a` through observed A and AAAA answers;
@@ -31,7 +31,7 @@ Snapshot output is refused for macros, `exists`, `ptr`, cycles, multiple policie
 
 ## Networks and ordering
 
-Exact networks are deduplicated. CIDR networks are coalesced only when their union is identical to the observed authorized set. IPv4 and IPv6 remain separate. Any policy construct whose ordered behavior cannot be represented as one finite pass set blocks the snapshot.
+Exact networks are deduplicated. CIDR networks are coalesced only when their union is identical to the observed authorised set. IPv4 and IPv6 remain separate. Any policy construct whose ordered behaviour cannot be represented as one finite pass set blocks the snapshot.
 
 ## Output and staleness
 

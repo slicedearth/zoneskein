@@ -162,9 +162,9 @@ export function CaaPage() {
         eyebrow="CAA inspection and authoring"
         title="See where certificate policy is inherited."
       >
-        Follow a bounded CNAME chain, walk from the requested name toward its parents, stop at
+        Follow a bounded CNAME chain, walk from the requested name towards its parents, stop at
         the first observed CAA RRset, explain critical properties, and author a generic issue or
-        issue, issuewild, or issuemail record locally, including standardized CA account and
+        issue, issuewild, or issuemail record locally, including standardised CA account and
         validation-method constraints.
       </ToolIntro>
       <form className="workbench-form" onSubmit={(event) => void inspect(event)}>

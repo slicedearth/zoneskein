@@ -16,7 +16,7 @@ Resolver responses, DNS record text, pasted zone data, URL fragments, and import
 
 ## Threats and controls
 
-### Arbitrary requests and SSRF-like behavior
+### Arbitrary requests and SSRF-like behaviour
 
 All resolver definitions and endpoints are compile-time allowlisted. The UI accepts no URL, host, or protocol for network destinations. CSP `connect-src` repeats the allowlist. Credentials are omitted and referrers are suppressed.
 
@@ -28,7 +28,7 @@ A modified client can bypass browser-side controls. Public resolvers must enforc
 
 ### Resource exhaustion
 
-Names, zone snippets, snapshot records, fragments, graph depth, MX expansion, unique questions, cache entries, snapshot count, and snapshot size are bounded. Long-running work is cancellable. DNS response messages are rejected beyond DNS wire limits.
+Names, zone snippets, snapshot records, fragments, graph depth, MX expansion, unique questions, cache entries, snapshot count, and snapshot size are bounded. DNSSEC also has whole-run limits for records, keys, signatures, digests, cryptographic attempts, and NSEC3 hash rounds. Long-running work observes cancellation between bounded cryptographic operations. DNS response bodies are streamed through the DNS wire limit rather than allocated without a bound.
 
 ### Untrusted content execution
 
@@ -42,7 +42,7 @@ The selected resolver still sees the DNS question. Netlify still sees ordinary p
 
 ### Misleading security conclusions
 
-Statuses are evidence-scoped. Recursive data is not called authoritative or global. Missing DNSSEC AD is not called unsigned. Unsupported cryptography is not called invalid. Unsafe SPF input receives no flattened output. Partial lookup failures remain visible.
+Statuses are evidence-scoped. Recursive data is not called authoritative or global. Missing DNSSEC AD is not called unsigned. NSEC3 Opt-Out is not called a proven insecure delegation, and unsupported cryptography is not called invalid. Unsafe SPF input receives no flattened output. Partial lookup failures remain visible.
 
 ### Supply chain and deployment
 

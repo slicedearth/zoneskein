@@ -1,0 +1,23 @@
+{
+  "source": "https://data.iana.org/root-anchors/root-anchors.xml",
+  "sourceUpdated": "2024-11-05",
+  "retrievedAt": "2026-08-13",
+  "anchors": [
+    {
+      "id": "Klajeyz",
+      "validFrom": "2017-02-02T00:00:00+00:00",
+      "keyTag": 20326,
+      "algorithm": 8,
+      "digestType": 2,
+      "digest": "E06D44B80B8F1D39A95C0B0D7C65D08458E880409BBC683457104237C7F8EC8D"
+    },
+    {
+      "id": "Kmyv6jo",
+      "validFrom": "2024-07-18T00:00:00+00:00",
+      "keyTag": 38696,
+      "algorithm": 8,
+      "digestType": 2,
+      "digest": "683D2D0ACB8C9B712A1948B27F741219298D0A450D612C483AF444A4C0FB2B16"
+    }
+  ]
+}

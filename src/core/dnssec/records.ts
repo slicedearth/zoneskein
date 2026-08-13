@@ -11,18 +11,31 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object';
 }
 
-function numberField(value: Record<string, unknown>, name: string): number | null {
+function numberField(
+  value: Record<string, unknown>,
+  name: string,
+  maximum = 0xffff_ffff,
+): number | null {
   const field = value[name];
-  return typeof field === 'number' && Number.isInteger(field) && field >= 0 ? field : null;
+  return typeof field === 'number' && Number.isInteger(field) && field >= 0 && field <= maximum
+    ? field
+    : null;
 }
 
-function signatureTimeState(
+function serialBefore(left: number, right: number): boolean {
+  const distance = (right - left) >>> 0;
+  return distance !== 0 && distance < 0x8000_0000;
+}
+
+export function signatureTimeState(
   inception: number,
   expiration: number,
   now: number,
-): SignatureTimeState {
-  if (now < inception) return 'not-yet-valid';
-  if (now > expiration) return 'expired';
+): SignatureTimeState | null {
+  if (!serialBefore(inception, expiration)) return null;
+  const serialNow = now >>> 0;
+  if (serialBefore(serialNow, inception)) return 'not-yet-valid';
+  if (serialBefore(expiration, serialNow)) return 'expired';
   return 'current';
 }
 
@@ -48,7 +61,12 @@ export function dnskeyKeyTag(rdata: Uint8Array): number {
 }
 
 export function parseDnskey(record: DnsRecord): DnskeyInfo | null {
-  if (record.type !== 'DNSKEY' || record.rawRdata.length < 4) return null;
+  if (
+    record.type !== 'DNSKEY' ||
+    record.class.toUpperCase() !== 'IN' ||
+    record.rawRdata.length < 5
+  )
+    return null;
   const flags = readUint16(record.rawRdata, 0);
   const protocol = record.rawRdata[2];
   const algorithm = record.rawRdata[3];
@@ -67,11 +85,19 @@ export function parseDnskey(record: DnsRecord): DnskeyInfo | null {
 }
 
 export function parseDs(record: DnsRecord): DsInfo | null {
-  if (record.type !== 'DS' || record.rawRdata.length < 5) return null;
+  if (record.type !== 'DS' || record.class.toUpperCase() !== 'IN' || record.rawRdata.length < 5)
+    return null;
   const keyTag = readUint16(record.rawRdata, 0);
   const algorithm = record.rawRdata[2];
   const digestType = record.rawRdata[3];
   if (keyTag === null || algorithm === undefined || digestType === undefined) return null;
+  const digestLength = record.rawRdata.length - 4;
+  if (
+    (digestType === 1 && digestLength !== 20) ||
+    (digestType === 2 && digestLength !== 32) ||
+    (digestType === 4 && digestLength !== 48)
+  )
+    return null;
   return {
     algorithm,
     digest: record.rawRdata.slice(4),
@@ -86,12 +112,12 @@ export function parseRrsig(
   now = Math.floor(Date.now() / 1000),
 ): RrsigInfo | null {
   if (record.type !== 'RRSIG' || !isObject(record.data)) return null;
-  const algorithm = numberField(record.data, 'algorithm');
-  const labels = numberField(record.data, 'labels');
+  const algorithm = numberField(record.data, 'algorithm', 0xff);
+  const labels = numberField(record.data, 'labels', 0xff);
   const originalTtl = numberField(record.data, 'originalTTL');
   const expiration = numberField(record.data, 'expiration');
   const inception = numberField(record.data, 'inception');
-  const keyTag = numberField(record.data, 'keyTag');
+  const keyTag = numberField(record.data, 'keyTag', 0xffff);
   const typeCovered = record.data['typeCovered'];
   const signerName = record.data['signersName'];
   const signature = record.data['signature'];
@@ -104,10 +130,13 @@ export function parseRrsig(
     keyTag === null ||
     typeof typeCovered !== 'string' ||
     typeof signerName !== 'string' ||
-    !(signature instanceof Uint8Array)
+    !(signature instanceof Uint8Array) ||
+    record.class.toUpperCase() !== 'IN'
   ) {
     return null;
   }
+  const timeState = signatureTimeState(inception, expiration, now);
+  if (timeState === null) return null;
   return {
     algorithm,
     expiration,
@@ -118,7 +147,7 @@ export function parseRrsig(
     record,
     signature,
     signerName,
-    timeState: signatureTimeState(inception, expiration, now),
+    timeState,
     typeCovered,
   };
 }

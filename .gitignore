@@ -33,4 +33,4 @@ Thumbs.db
 # Local certificates and logs
 *.log
 *.pem
-
+!scripts/icann-root-ca.pem

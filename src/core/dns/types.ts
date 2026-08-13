@@ -84,7 +84,11 @@ export interface DnsMessage {
   readonly id: number;
   readonly messageBytes: number;
   readonly negativeCacheTtl?: number;
-  readonly questions: readonly { readonly name: string; readonly type: string }[];
+  readonly questions: readonly {
+    readonly class: string;
+    readonly name: string;
+    readonly type: string;
+  }[];
   readonly raw: Uint8Array;
   readonly responseCode: string;
 }

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { buildCaaRecord, caaParentNames, parseCaaPolicy } from './parser';
 
 describe('CAA policy analysis', () => {
-  it('walks from a host toward its parent names', () => {
+  it('walks from a host towards its parent names', () => {
     expect(caaParentNames('www.shop.example.com')).toEqual([
       'www.shop.example.com',
       'shop.example.com',
@@ -28,7 +28,7 @@ describe('CAA policy analysis', () => {
     );
   });
 
-  it('parses standardized account and validation method parameters', () => {
+  it('parses standardised account and validation method parameters', () => {
     const policy = parseCaaPolicy([
       {
         flags: 0,

@@ -200,8 +200,8 @@ export function DmarcPage() {
         eyebrow="DMARC policy inspector"
         title="Follow discovery and reporting boundaries."
       >
-        Follow the bounded DMARC DNS Tree Walk, identify direct, organizational, or
-        public-suffix policy, parse every tag locally, and check external report authorization.
+        Follow the bounded DMARC DNS Tree Walk, identify direct, organisational, or
+        public-suffix policy, parse every tag locally, and check external report authorisation.
       </ToolIntro>
       <form className="workbench-form" onSubmit={(event) => void inspect(event)}>
         <div className="field-group field-wide">
@@ -297,12 +297,12 @@ export function DmarcPage() {
                       {report.source === 'public-suffix'
                         ? 'Inherited from a public suffix'
                         : report.inherited
-                          ? 'Inherited from organizational domain'
+                          ? 'Inherited from organisational domain'
                           : 'Direct'}
                     </dd>
                   </div>
                   <div>
-                    <dt>Organizational domain</dt>
+                    <dt>Organisational domain</dt>
                     <dd>{report.organizationalDomain ?? 'Not identified'}</dd>
                   </div>
                   <div>
@@ -360,7 +360,7 @@ export function DmarcPage() {
                 </article>
               </div>
               <article className="result-panel">
-                <h3>External reporting authorization</h3>
+                <h3>External reporting authorisation</h3>
                 {report.policy.destinations.length === 0 ? (
                   <p className="empty-note">No rua or ruf destinations.</p>
                 ) : (
@@ -371,7 +371,7 @@ export function DmarcPage() {
                           <th>Kind</th>
                           <th>URI</th>
                           <th>Boundary</th>
-                          <th>Authorization</th>
+                          <th>Authorisation</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -388,14 +388,14 @@ export function DmarcPage() {
                               <td>
                                 {destination.external
                                   ? 'External'
-                                  : 'Same organizational domain'}
+                                  : 'Same organisational domain'}
                               </td>
                               <td>
                                 {destination.external
                                   ? authorization?.authorized === true
-                                    ? 'Authorized by DNS'
+                                    ? 'Authorised by DNS'
                                     : (authorization?.error ??
-                                      'Authorization record not observed')
+                                      'Authorisation record not observed')
                                   : 'Not required'}
                               </td>
                             </tr>

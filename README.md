@@ -10,12 +10,12 @@ It is not a subdomain scanner, reconnaissance platform, monitoring service, DNS 
 
 - DNS record explorer with A, AAAA, CNAME, MX, NS, TXT, SOA, CAA, SRV, PTR, DS, DNSKEY, RRSIG, NSEC, NSEC3, TLSA, HTTPS, and SVCB support.
 - RFC 8484 wire-format DNS-over-HTTPS to fixed Google Public DNS, Cloudflare 1.1.1.1, and Quad9 endpoints, using the browser-compatible GET or POST method each endpoint supports.
-- Side-by-side recursive-resolver comparison, exact DNS message sizes, EDNS Extended DNS Error explanations, RFC 2308 negative-cache TTLs, normalized record fields, PTR conversion, and plain, BIND, JSON, or Markdown exports.
-- DNSSEC evidence inspection with checking-enabled/checking-disabled queries, local DNSKEY key tags, SHA-256 and SHA-384 DS calculations, RRSIG time checks, and local DNSKEY RRset verification for browser-supported RSA, ECDSA, and Ed25519 algorithms.
+- Side-by-side recursive-resolver comparison, exact DNS message sizes, EDNS Extended DNS Error explanations, RFC 2308 negative-cache TTLs, normalised record fields, PTR conversion, and plain, BIND, JSON, or Markdown exports.
+- Independent DNSSEC chain validation from bundled IANA root trust anchors, with authenticated DS and DNSKEY RRsets, SHA-1/SHA-256/SHA-384 DS matching, exact NSEC/NSEC3 delegation proofs, explicit NSEC3 Opt-Out uncertainty, and browser-supported RSA, ECDSA, and Ed25519 verification.
 - Ordered SPF lexer and parser, recursive include/redirect graph, path-aware ten-term and void-lookup analysis, A/MX expansion, cycle detection, and guarded point-in-time snapshots with provenance.
 - Recoverable zone-snippet parser and linter for common records, directives, inherited owners, multiline records, TXT chunks, and cross-record conflicts.
 - Semantic DNS change comparison with unordered RRsets, TTL-only and formatting-only categories, MX priority changes, disruptive-change flags, and rollout guidance.
-- Current DMARC DNS Tree Walk discovery and external-report authorization checks, DKIM key inspection, and CAA inheritance analysis and authoring for web, wildcard, and S/MIME issuance.
+- Current DMARC DNS Tree Walk discovery and external-report authorisation checks, DKIM key inspection, and CAA inheritance analysis and authoring for web, wildcard, and S/MIME issuance.
 - Explicitly enabled, manual IndexedDB snapshots and fragment-only share links. Persistent storage is off by default.
 
 ## Architecture and privacy
@@ -40,6 +40,7 @@ Normal browser use is bounded by:
 - in-flight deduplication and TTL-aware memory caching;
 - cooldown circuits after resolver HTTP 429 responses;
 - bounded recursion depth, graph size, pasted input size, and snapshot size;
+- bounded DNS response streaming and aggregate DNSSEC record, digest, signature, and NSEC3 hashing work;
 - cancellation, cycle detection, no ANY queries, no unrestricted batches, and no user-supplied fetch target.
 
 These controls reduce accidental and ordinary abuse. They cannot enforce policy against someone who modifies a fully client-side application.
@@ -62,6 +63,7 @@ Useful commands:
 npm run format:check
 npm run lint
 npm run check
+npm run check:dnssec-anchors
 npm test
 npm run build
 npm run test:e2e
@@ -86,7 +88,7 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 ZoneSkein reports evidence conservatively:
 
 - recursive answers are point-in-time observations, not authoritative answers or proof of global propagation;
-- DNSSEC does not independently validate the parent DS RRset to a bundled root trust anchor and does not verify every possible RRset or denial-of-existence proof;
+- DNSSEC validates the delegation chain from bundled IANA root trust anchors at one common instant, but does not validate arbitrary application RRsets or complete NXDOMAIN proofs; an NSEC3 Opt-Out interval cannot authenticate whether a covered delegation exists;
 - SPF flattening is a time-bound snapshot and is withheld whenever preserving the effective pass set would require guessing or sender context;
 - the zone parser is a practical subset, not a complete BIND or provider-specific parser;
 - a published DMARC, DKIM, or CAA record does not prove message alignment, signature use, receiver enforcement, or certificate issuance.

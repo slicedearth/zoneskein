@@ -11,6 +11,7 @@ import {
   type Packet,
 } from '@dnsquery/dns-packet';
 import { toType } from '@dnsquery/dns-packet/types.js';
+import { toRcode } from '@dnsquery/dns-packet/rcodes.js';
 
 import type {
   DnsEdns,
@@ -23,7 +24,7 @@ import type {
 } from './types';
 import { displayRecordType, wireRecordType } from './record-types';
 
-const MAX_DNS_MESSAGE_BYTES = 65_535;
+export const MAX_DNS_MESSAGE_BYTES = 65_535;
 const EXTENDED_ERROR_NAMES: Readonly<Record<number, string>> = {
   0: 'Other',
   1: 'Unsupported DNSKEY Algorithm',
@@ -260,9 +261,13 @@ export function decodeDnsMessage(bytes: Uint8Array): DnsMessage {
   const authorities = mapSection(packet.authorities, 'authority');
   const additionals = mapSection(packet.additionals, 'additional');
   const flags = packet.flags ?? 0;
-  const responseCode = packet.rcode ?? 'UNKNOWN';
-  const negativeTtl = negativeCacheTtl(responseCode, answers, authorities);
+  const headerResponseCode = packet.rcode ?? 'UNKNOWN';
   const edns = ednsMetadata(packet.additionals);
+  const responseCode =
+    edns !== undefined && edns.extendedResponseCode !== 0
+      ? `EXTENDED_RCODE_${String((edns.extendedResponseCode << 4) | toRcode(headerResponseCode))}`
+      : headerResponseCode;
+  const negativeTtl = negativeCacheTtl(responseCode, answers, authorities);
   return {
     additionals,
     answers,
@@ -280,6 +285,7 @@ export function decodeDnsMessage(bytes: Uint8Array): DnsMessage {
     messageBytes: bytes.length,
     ...(negativeTtl === undefined ? {} : { negativeCacheTtl: negativeTtl }),
     questions: (packet.questions ?? []).map((question) => ({
+      class: question.class ?? 'IN',
       name: question.name,
       type: displayRecordType(question.type),
     })),

@@ -195,7 +195,7 @@ export function compareZoneDocuments(before: ZoneDocument, after: ZoneDocument):
           'value-changed',
           prior.record,
           next.record,
-          'The record value changed after semantic normalization.',
+          'The record value changed after semantic normalisation.',
         ),
       );
     }

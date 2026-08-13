@@ -807,6 +807,30 @@ summary {
   font-size: 1.5rem;
 }
 
+.chain-scroll {
+  display: flex;
+  align-items: stretch;
+  overflow-x: auto;
+  padding-bottom: 0.35rem;
+}
+
+.chain-segment {
+  display: flex;
+  flex: 1 0 220px;
+  align-items: stretch;
+}
+
+.chain-segment article {
+  position: relative;
+  flex: 1;
+  min-height: 150px;
+  padding: 1.2rem;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 0.55rem;
+  background: var(--surface);
+}
+
 .method-note {
   padding: 1rem 1.2rem;
   border: 1px solid var(--line);

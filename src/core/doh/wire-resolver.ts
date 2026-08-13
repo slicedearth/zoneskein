@@ -6,7 +6,7 @@ import {
   type DnsResponse,
   type ResolverDefinition,
 } from '../dns/types';
-import { decodeDnsMessage, encodeDnsQuery } from '../dns/wire';
+import { decodeDnsMessage, encodeDnsQuery, MAX_DNS_MESSAGE_BYTES } from '../dns/wire';
 import { DnsMemoryCache } from './cache';
 import { BrowserRateLimiter } from './rate-limit';
 import { Semaphore } from './semaphore';
@@ -68,10 +68,62 @@ function asArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return buffer;
 }
 
+async function boundedDnsBody(response: Response): Promise<Uint8Array> {
+  const contentLength = response.headers.get('Content-Length');
+  if (contentLength !== null) {
+    if (!/^\d+$/u.test(contentLength) || Number(contentLength) > MAX_DNS_MESSAGE_BYTES) {
+      throw new DnsQueryError(
+        'invalid-response',
+        `The resolver response exceeds ${String(MAX_DNS_MESSAGE_BYTES)} DNS message octets.`,
+      );
+    }
+  }
+
+  const reader = response.body?.getReader();
+  if (reader === undefined) return new Uint8Array();
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  let complete = false;
+  try {
+    while (!complete) {
+      const next = await reader.read();
+      complete = next.done;
+      if (next.done) continue;
+      const { value } = next;
+      length += value.byteLength;
+      if (length > MAX_DNS_MESSAGE_BYTES) {
+        try {
+          await reader.cancel('DNS response exceeds the message-size bound.');
+        } catch {
+          // The size rejection remains authoritative if stream cancellation also fails.
+        }
+        throw new DnsQueryError(
+          'invalid-response',
+          `The resolver response exceeds ${String(MAX_DNS_MESSAGE_BYTES)} DNS message octets.`,
+        );
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
 function base64Url(bytes: Uint8Array): string {
   let binary = '';
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/u, '');
+}
+
+function sameDnsName(left: string, right: string): boolean {
+  return left.toLowerCase().replace(/\.$/u, '') === right.toLowerCase().replace(/\.$/u, '');
 }
 
 export interface WireResolverDependencies {
@@ -166,7 +218,7 @@ export class WireDnsResolver implements DnsResolver {
         );
       }
 
-      const raw = new Uint8Array(await response.arrayBuffer());
+      const raw = await boundedDnsBody(response);
       let message;
       try {
         message = decodeDnsMessage(raw);
@@ -176,6 +228,22 @@ export class WireDnsResolver implements DnsResolver {
           cause instanceof Error
             ? cause.message
             : 'The resolver response could not be decoded.',
+        );
+      }
+      const decodedQuestion = message.questions[0];
+      if (
+        message.id !== 0 ||
+        message.questions.length !== 1 ||
+        decodedQuestion?.class.toUpperCase() !== 'IN' ||
+        !sameDnsName(decodedQuestion.name, question.name.absolute) ||
+        decodedQuestion.type !== question.type ||
+        message.flags.truncated
+      ) {
+        throw new DnsQueryError(
+          'invalid-response',
+          message.flags.truncated
+            ? 'The resolver returned a truncated DNS response.'
+            : 'The resolver response does not match the original DNS question.',
         );
       }
 

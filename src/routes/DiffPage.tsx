@@ -426,9 +426,9 @@ export function DiffPage() {
             </article>
           ) : null}
           <details className="method-note">
-            <summary>How normalization works</summary>
+            <summary>How normalisation works</summary>
             <p>
-              RRset order is ignored. Names and addresses are normalized where their record type
+              RRset order is ignored. Names and addresses are normalised where their record type
               defines case-insensitive name fields. TXT character-string boundaries are treated
               as presentation, while TTL, MX preference, and semantic RDATA remain distinct.
               “Propagation complete” is not assigned a universal time because prior TTLs and

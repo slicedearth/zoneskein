@@ -37,10 +37,17 @@ export interface RrsigInfo {
 }
 
 export type SignatureVerificationStatus =
-  'verified' | 'invalid' | 'missing-key' | 'unsupported' | 'outside-validity';
+  | 'verified'
+  | 'invalid'
+  | 'missing-key'
+  | 'unsupported'
+  | 'outside-validity'
+  | 'resource-limit';
 
 export interface SignatureVerification {
   readonly algorithm: number;
+  readonly expiration?: number;
+  readonly inception?: number;
   readonly keyTag: number;
   readonly message: string;
   readonly status: SignatureVerificationStatus;

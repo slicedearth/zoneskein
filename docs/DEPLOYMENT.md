@@ -57,4 +57,4 @@ ZoneSkein requires no paid API, database, function runtime, scheduled job, authe
 
 ## Rollback
 
-Use Netlify’s previous static deploy artifact to roll back. Because there is no server migration or shared application database, rollback is limited to the deployed files. Visitor-created IndexedDB snapshots remain on their devices and use a versioned schema.
+Use Netlify’s previous static deploy artefact to roll back. Because there is no server migration or shared application database, rollback is limited to the deployed files. Visitor-created IndexedDB snapshots remain on their devices and use a versioned schema.

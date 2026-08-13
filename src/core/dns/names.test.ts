@@ -4,6 +4,10 @@ import { validateDnsName } from './names';
 
 describe('DNS name validation', () => {
   it('normalises root dots and IDNA names', () => {
+    expect(validateDnsName('.')).toMatchObject({
+      ok: true,
+      value: { absolute: '.', ascii: '', display: '.', hadRootDot: true },
+    });
     expect(validateDnsName('Example.COM.')).toMatchObject({
       ok: true,
       value: { absolute: 'example.com.', ascii: 'example.com', hadRootDot: true },

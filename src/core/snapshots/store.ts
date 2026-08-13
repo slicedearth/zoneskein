@@ -10,7 +10,7 @@ import {
 const DATABASE_NAME = 'zoneskein-snapshots-v1';
 const ENABLED_KEY = 'zoneskein-snapshots-enabled';
 const MAX_SNAPSHOTS = 100;
-const MAX_CONTENT_OCTETS = 262_144;
+export const MAX_SNAPSHOT_CONTENT_OCTETS = 262_144;
 const MAX_TITLE_CHARACTERS = 80;
 const MAX_SHARE_OCTETS = 16_384;
 const encoder = new TextEncoder();
@@ -62,8 +62,10 @@ function validateInput(input: SnapshotInput): SnapshotInput {
     );
   }
   if (input.content.length === 0) throw new Error('Snapshot content cannot be empty.');
-  if (encoder.encode(input.content).length > MAX_CONTENT_OCTETS) {
-    throw new Error(`Snapshot content exceeds ${String(MAX_CONTENT_OCTETS)} UTF-8 octets.`);
+  if (encoder.encode(input.content).length > MAX_SNAPSHOT_CONTENT_OCTETS) {
+    throw new Error(
+      `Snapshot content exceeds ${String(MAX_SNAPSHOT_CONTENT_OCTETS)} UTF-8 octets.`,
+    );
   }
   return { content: input.content, title, tool: input.tool };
 }

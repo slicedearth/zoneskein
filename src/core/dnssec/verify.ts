@@ -3,6 +3,11 @@ import { toType } from '@dnsquery/dns-packet/types.js';
 import type { DnsRecord } from '../dns/types';
 import { parseDnskey, parseRrsig } from './records';
 import type { DnskeyInfo, RrsigInfo, SignatureVerification } from './types';
+import { DnssecWorkBudget } from './work-budget';
+
+const MAX_RRSET_RECORDS = 64;
+const MAX_RRSET_SIGNATURES = 16;
+const MAX_VERIFICATION_KEYS = 32;
 
 function uint16(value: number): Uint8Array {
   return new Uint8Array([(value >>> 8) & 0xff, value & 0xff]);
@@ -28,23 +33,34 @@ function join(parts: readonly Uint8Array[]): Uint8Array {
   return output;
 }
 
-function canonicalName(name: string): Uint8Array {
+export function canonicalName(name: string): Uint8Array {
   const normalized = name.endsWith('.') ? name.slice(0, -1) : name;
   if (normalized === '') return new Uint8Array([0]);
   const encoder = new TextEncoder();
   const parts: number[] = [];
   for (const label of normalized.toLowerCase().split('.')) {
     const bytes = encoder.encode(label);
+    if (bytes.length === 0 || bytes.length > 63)
+      throw new Error('DNS owner name contains an invalid label.');
     parts.push(bytes.length, ...bytes);
   }
   parts.push(0);
+  if (parts.length > 255) throw new Error('DNS owner name exceeds the wire-format limit.');
   return new Uint8Array(parts);
 }
 
-function ownerForSignature(owner: string, labels: number): string {
+function ownerForSignature(owner: string, labels: number): string | null {
   const ownerLabels = owner.replace(/\.$/u, '').split('.').filter(Boolean);
-  if (ownerLabels.length <= labels) return owner;
-  return `*.${ownerLabels.slice(-labels).join('.')}.`;
+  return ownerLabels.length === labels ? owner : null;
+}
+
+function nameIsAtOrBelow(owner: string, signer: string): boolean {
+  const ownerLabels = owner.toLowerCase().replace(/\.$/u, '').split('.').filter(Boolean);
+  const signerLabels = signer.toLowerCase().replace(/\.$/u, '').split('.').filter(Boolean);
+  if (signerLabels.length > ownerLabels.length) return false;
+  return signerLabels.every(
+    (label, index) => ownerLabels[ownerLabels.length - signerLabels.length + index] === label,
+  );
 }
 
 function compareBytes(left: Uint8Array, right: Uint8Array): number {
@@ -54,6 +70,12 @@ function compareBytes(left: Uint8Array, right: Uint8Array): number {
     if (difference !== 0) return difference;
   }
   return left.length - right.length;
+}
+
+function bytesKey(bytes: Uint8Array): string {
+  let value = '';
+  for (const byte of bytes) value += String.fromCharCode(byte);
+  return btoa(value);
 }
 
 function signaturePrefix(signature: RrsigInfo): Uint8Array {
@@ -68,30 +90,64 @@ function signaturePrefix(signature: RrsigInfo): Uint8Array {
   ]);
 }
 
+function canonicalRdata(record: DnsRecord): Uint8Array | null {
+  if (
+    record.type === 'DNSKEY' ||
+    record.type === 'DS' ||
+    record.type === 'NSEC' ||
+    record.type === 'NSEC3'
+  )
+    return record.rawRdata;
+  return null;
+}
+
+export function rrsetSignedData(
+  records: readonly DnsRecord[],
+  signature: RrsigInfo,
+): Uint8Array | null {
+  const owner = ownerForSignature(signature.record.owner, signature.labels);
+  if (owner === null || signature.record.class.toUpperCase() !== 'IN') return null;
+  const canonicalRecords = records
+    .filter(
+      (record) =>
+        record.type === signature.typeCovered &&
+        record.class.toUpperCase() === 'IN' &&
+        record.owner.toLowerCase() === signature.record.owner.toLowerCase(),
+    )
+    .map(canonicalRdata);
+  if (canonicalRecords.length === 0 || canonicalRecords.some((rdata) => rdata === null))
+    return null;
+  try {
+    const uniqueRdata = [
+      ...new Map(
+        (canonicalRecords as Uint8Array[]).map((rdata) => [bytesKey(rdata), rdata]),
+      ).values(),
+    ];
+    const encodedRecords = uniqueRdata
+      .sort(compareBytes)
+      .map((rdata) =>
+        join([
+          canonicalName(owner),
+          uint16(toType(signature.typeCovered)),
+          uint16(1),
+          uint32(signature.originalTtl),
+          uint16(rdata.length),
+          rdata,
+        ]),
+      );
+    return join([signaturePrefix(signature), ...encodedRecords]);
+  } catch {
+    return null;
+  }
+}
+
 export function dnskeyRrsetSignedData(
   records: readonly DnsRecord[],
   signature: RrsigInfo,
 ): Uint8Array {
-  const owner = ownerForSignature(signature.record.owner, signature.labels);
-  const canonicalRecords = records
-    .filter(
-      (record) =>
-        record.type === 'DNSKEY' &&
-        record.owner.toLowerCase() === signature.record.owner.toLowerCase(),
-    )
-    .map((record) => record.rawRdata)
-    .sort(compareBytes)
-    .map((rdata) =>
-      join([
-        canonicalName(owner),
-        uint16(48),
-        uint16(1),
-        uint32(signature.originalTtl),
-        uint16(rdata.length),
-        rdata,
-      ]),
-    );
-  return join([signaturePrefix(signature), ...canonicalRecords]);
+  const data = rrsetSignedData(records, signature);
+  if (data === null) throw new Error('DNSKEY RRset could not be canonicalised.');
+  return data;
 }
 
 function base64Url(bytes: Uint8Array): string {
@@ -112,10 +168,30 @@ function rsaParts(key: Uint8Array): { exponent: Uint8Array; modulus: Uint8Array 
   const exponentLength = first === 0 ? ((key[1] ?? 0) << 8) | (key[2] ?? 0) : first;
   const lengthBytes = first === 0 ? 3 : 1;
   if (exponentLength === 0 || lengthBytes + exponentLength >= key.length) return null;
-  return {
-    exponent: key.slice(lengthBytes, lengthBytes + exponentLength),
-    modulus: key.slice(lengthBytes + exponentLength),
-  };
+  const exponent = key.slice(lengthBytes, lengthBytes + exponentLength);
+  const modulus = key.slice(lengthBytes + exponentLength);
+  const exponentBits = bitLength(exponent);
+  if (
+    exponentBits < 2 ||
+    exponentBits > 64 ||
+    exponent[0] === 0 ||
+    ((exponent.at(-1) ?? 0) & 1) === 0 ||
+    modulus[0] === 0
+  )
+    return null;
+  return { exponent, modulus };
+}
+
+function bitLength(bytes: Uint8Array): number {
+  const firstIndex = bytes.findIndex((byte) => byte !== 0);
+  if (firstIndex < 0) return 0;
+  const first = bytes[firstIndex];
+  if (first === undefined) return 0;
+  return (bytes.length - firstIndex - 1) * 8 + (32 - Math.clz32(first));
+}
+
+function browserAlgorithmSupported(algorithm: number): boolean {
+  return [5, 7, 8, 10, 13, 14, 15].includes(algorithm);
 }
 
 async function importVerificationKey(key: DnskeyInfo): Promise<CryptoKey | null> {
@@ -127,6 +203,9 @@ async function importVerificationKey(key: DnskeyInfo): Promise<CryptoKey | null>
   ) {
     const parts = rsaParts(key.key);
     if (parts === null) return null;
+    const modulusBits = bitLength(parts.modulus);
+    if (modulusBits > 4096 || (key.algorithm === 10 ? modulusBits < 1024 : modulusBits < 512))
+      return null;
     const hash = key.algorithm === 8 ? 'SHA-256' : key.algorithm === 10 ? 'SHA-512' : 'SHA-1';
     return crypto.subtle.importKey(
       'jwk',
@@ -155,6 +234,7 @@ async function importVerificationKey(key: DnskeyInfo): Promise<CryptoKey | null>
     );
   }
   if (key.algorithm === 15) {
+    if (key.key.length !== 32) return null;
     return crypto.subtle.importKey('raw', asArrayBuffer(key.key), { name: 'Ed25519' }, false, [
       'verify',
     ]);
@@ -196,65 +276,147 @@ async function verifyWithKey(
   );
 }
 
-export async function verifyDnskeyRrset(
+export async function verifyRrset(
   records: readonly DnsRecord[],
+  typeCovered: string,
+  keys: readonly DnskeyInfo[],
   now = Math.floor(Date.now() / 1000),
+  budget = new DnssecWorkBudget(),
 ): Promise<readonly SignatureVerification[]> {
-  const keys = records.flatMap((record) => {
-    const key = parseDnskey(record);
-    return key === null ? [] : [key];
-  });
+  if (
+    records.length > MAX_RRSET_RECORDS ||
+    keys.length > MAX_VERIFICATION_KEYS ||
+    !budget.consume('records', records.length) ||
+    !budget.consume('keys', keys.length)
+  )
+    return [
+      {
+        algorithm: 0,
+        keyTag: 0,
+        message: 'The RRset exceeds the local cryptographic work bound.',
+        status: 'resource-limit',
+      },
+    ];
   const signatures = records.flatMap((record) => {
     const signature = parseRrsig(record, now);
-    return signature?.typeCovered === 'DNSKEY' ? [signature] : [];
+    return signature?.typeCovered === typeCovered ? [signature] : [];
   });
+  if (
+    signatures.length > MAX_RRSET_SIGNATURES ||
+    !budget.consume('signatures', signatures.length)
+  )
+    return [
+      {
+        algorithm: 0,
+        keyTag: 0,
+        message: 'The RRset contains too many signatures for one local validation step.',
+        status: 'resource-limit',
+      },
+    ];
   const results: SignatureVerification[] = [];
 
   for (const signature of signatures) {
+    const signatureIdentity = {
+      algorithm: signature.algorithm,
+      expiration: signature.expiration,
+      inception: signature.inception,
+      keyTag: signature.keyTag,
+    } as const;
     if (signature.timeState !== 'current') {
       results.push({
-        algorithm: signature.algorithm,
-        keyTag: signature.keyTag,
+        ...signatureIdentity,
         message: `The signature is ${signature.timeState.replaceAll('-', ' ')}.`,
         status: 'outside-validity',
       });
       continue;
     }
+    if (!nameIsAtOrBelow(signature.record.owner, signature.signerName)) {
+      results.push({
+        ...signatureIdentity,
+        message: 'The RRSIG signer does not contain the signed RRset owner.',
+        status: 'invalid',
+      });
+      continue;
+    }
     const candidates = keys.filter(
-      (key) => key.keyTag === signature.keyTag && key.algorithm === signature.algorithm,
+      (key) =>
+        key.keyTag === signature.keyTag &&
+        key.algorithm === signature.algorithm &&
+        key.protocol === 3 &&
+        key.zoneKey &&
+        !key.revoked &&
+        (key.flags & ~0x0181) === 0 &&
+        key.record.owner.toLowerCase() === signature.signerName.toLowerCase(),
     );
     if (candidates.length === 0) {
       results.push({
-        algorithm: signature.algorithm,
-        keyTag: signature.keyTag,
+        ...signatureIdentity,
         message: 'No matching DNSKEY was returned for this signature.',
         status: 'missing-key',
       });
       continue;
     }
 
-    const data = dnskeyRrsetSignedData(records, signature);
+    const data = rrsetSignedData(records, signature);
+    if (data === null) {
+      results.push({
+        ...signatureIdentity,
+        message: `The ${signature.typeCovered} RRset could not be canonicalised safely.`,
+        status: 'invalid',
+      });
+      continue;
+    }
     let supported = false;
     let verified = false;
     for (const key of candidates) {
+      if (!browserAlgorithmSupported(key.algorithm)) continue;
+      if (!budget.consume('cryptographicVerifications')) {
+        results.push({
+          ...signatureIdentity,
+          message: budget.explanation,
+          status: 'resource-limit',
+        });
+        return results;
+      }
       try {
         const result = await verifyWithKey(key, signature, data);
-        if (result !== null) supported = true;
+        if (budget.cancelled) {
+          results.push({
+            ...signatureIdentity,
+            message: budget.explanation,
+            status: 'resource-limit',
+          });
+          return results;
+        }
+        supported = true;
         if (result === true) verified = true;
-      } catch {
-        supported = false;
+      } catch (cause) {
+        if (!(cause instanceof DOMException && cause.name === 'NotSupportedError'))
+          supported = true;
+        // Another matching key or signature can still establish this RRset.
       }
     }
     results.push({
-      algorithm: signature.algorithm,
-      keyTag: signature.keyTag,
+      ...signatureIdentity,
       message: verified
-        ? 'The DNSKEY RRset signature verified locally.'
+        ? `The ${signature.typeCovered} RRset signature verified locally.`
         : supported
-          ? 'The DNSKEY RRset signature did not verify with the returned key.'
+          ? `The ${signature.typeCovered} RRset signature did not verify with the trusted key.`
           : 'This browser cannot verify this DNSSEC signature algorithm.',
       status: verified ? 'verified' : supported ? 'invalid' : 'unsupported',
     });
   }
   return results;
+}
+
+export async function verifyDnskeyRrset(
+  records: readonly DnsRecord[],
+  now = Math.floor(Date.now() / 1000),
+  budget = new DnssecWorkBudget(),
+): Promise<readonly SignatureVerification[]> {
+  const keys = records.flatMap((record) => {
+    const key = parseDnskey(record);
+    return key === null ? [] : [key];
+  });
+  return verifyRrset(records, 'DNSKEY', keys, now, budget);
 }

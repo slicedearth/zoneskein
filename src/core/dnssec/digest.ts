@@ -1,4 +1,5 @@
 import type { DnskeyInfo, DsInfo, DsMatch } from './types';
+import { DnssecWorkBudget } from './work-budget';
 
 function canonicalNameWire(name: string): Uint8Array {
   const normalized = name.endsWith('.') ? name.slice(0, -1) : name;
@@ -46,9 +47,9 @@ export function hex(bytes: Uint8Array): string {
 export async function dnskeyDigest(
   owner: string,
   rdata: Uint8Array,
-  digestType: 2 | 4,
+  digestType: 1 | 2 | 4,
 ): Promise<Uint8Array> {
-  const algorithm = digestType === 2 ? 'SHA-256' : 'SHA-384';
+  const algorithm = digestType === 1 ? 'SHA-1' : digestType === 2 ? 'SHA-256' : 'SHA-384';
   const input = concatenate(canonicalNameWire(owner), rdata);
   return new Uint8Array(await crypto.subtle.digest(algorithm, asArrayBuffer(input)));
 }
@@ -57,13 +58,27 @@ export async function compareDsToDnskeys(
   owner: string,
   dsRecords: readonly DsInfo[],
   keys: readonly DnskeyInfo[],
+  budget = new DnssecWorkBudget(),
 ): Promise<readonly DsMatch[]> {
   const matches: DsMatch[] = [];
+  const digests = new Map<DnskeyInfo['record'], Map<number, Promise<Uint8Array>>>();
   for (const ds of dsRecords) {
-    if (ds.digestType !== 2 && ds.digestType !== 4) continue;
+    if (ds.digestType !== 1 && ds.digestType !== 2 && ds.digestType !== 4) continue;
     for (const dnskey of keys) {
       if (dnskey.keyTag !== ds.keyTag || dnskey.algorithm !== ds.algorithm) continue;
-      const calculated = await dnskeyDigest(owner, dnskey.record.rawRdata, ds.digestType);
+      let byType = digests.get(dnskey.record);
+      if (byType === undefined) {
+        byType = new Map();
+        digests.set(dnskey.record, byType);
+      }
+      let pending = byType.get(ds.digestType);
+      if (pending === undefined) {
+        if (!budget.consume('digestOperations')) return matches;
+        pending = dnskeyDigest(owner, dnskey.record.rawRdata, ds.digestType);
+        byType.set(ds.digestType, pending);
+      }
+      const calculated = await pending;
+      if (budget.cancelled) return matches;
       matches.push({
         digestType: ds.digestType,
         dnskey,

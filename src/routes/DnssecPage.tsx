@@ -1,208 +1,336 @@
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 
 import { CopyButton } from '../components/CopyButton';
 import { SnapshotButton } from '../components/SnapshotButton';
 import { StatusBadge } from '../components/StatusBadge';
 import { ToolIntro } from '../components/ToolIntro';
 import { validateDnsName } from '../core/dns/names';
+import type { DnsQuestion, ResolverId, ValidatedDnsName } from '../core/dns/types';
 import {
-  DnsQueryError,
-  type DnsRecordType,
-  type DnsResponse,
-  type ResolverId,
-} from '../core/dns/types';
-import { classifyDnssecEvidence, type DnssecConclusion } from '../core/dnssec/classify';
-import { compareDsToDnskeys, hex } from '../core/dnssec/digest';
-import {
-  digestTypeName,
-  dnssecAlgorithmName,
-  parseDnskey,
-  parseDs,
-  parseRrsig,
-} from '../core/dnssec/records';
-import type {
-  DnskeyInfo,
-  DsInfo,
-  DsMatch,
-  RrsigInfo,
-  SignatureVerification,
-} from '../core/dnssec/types';
-import { verifyDnskeyRrset } from '../core/dnssec/verify';
+  validateDnssecChain,
+  type DnssecChainQuery,
+  type DnssecChainReport,
+  type DnssecChainState,
+  type DnssecChainStep,
+} from '../core/dnssec/chain';
+import { hex } from '../core/dnssec/digest';
+import { digestTypeName, dnssecAlgorithmName } from '../core/dnssec/records';
+import type { SignatureVerification } from '../core/dnssec/types';
 import { DnsQueryRun } from '../core/doh/query-run';
 import { RESOLVERS } from '../core/doh/resolvers';
 import { WireDnsResolver } from '../core/doh/wire-resolver';
+import { MAX_SNAPSHOT_CONTENT_OCTETS } from '../core/snapshots/store';
 
 const RESOLVER_IDS = Object.keys(RESOLVERS) as ResolverId[];
 
-interface QueryOutcome {
-  readonly error?: DnsQueryError;
-  readonly response?: DnsResponse;
+const ROOT_NAME: ValidatedDnsName = {
+  absolute: '.',
+  ascii: '',
+  display: '.',
+  hadRootDot: true,
+  unicode: false,
+};
+
+function stateTone(
+  state: DnssecChainState,
+): 'pass' | 'information' | 'warning' | 'error' | 'unknown' {
+  if (state === 'secure') return 'pass';
+  if (state === 'bogus') return 'error';
+  if (state === 'insecure' || state === 'not-delegated' || state === 'alias-boundary')
+    return 'information';
+  if (state === 'incomplete' || state === 'opt-out') return 'warning';
+  return 'unknown';
 }
 
-interface DnssecReport {
-  readonly checkingDnskey: QueryOutcome;
-  readonly checkingDs: QueryOutcome;
-  readonly conclusion: DnssecConclusion;
-  readonly dnskeys: readonly DnskeyInfo[];
-  readonly ds: readonly DsInfo[];
-  readonly matches: readonly DsMatch[];
-  readonly signatures: readonly RrsigInfo[];
-  readonly verifications: readonly SignatureVerification[];
-  readonly validatingDnskey: QueryOutcome;
-  readonly validatingDs: QueryOutcome;
-  readonly zone: string;
+function stateLabel(state: DnssecChainState): string {
+  const labels: Readonly<Record<DnssecChainState, string>> = {
+    'alias-boundary': 'DNAME boundary',
+    bogus: 'Bogus',
+    incomplete: 'Incomplete',
+    insecure: 'Insecure delegation',
+    'not-delegated': 'Not a delegation',
+    'opt-out': 'Opt-Out: existence indeterminate',
+    secure: 'Locally validated',
+    unsupported: 'Unsupported',
+  };
+  return labels[state];
 }
 
-function asError(cause: unknown): DnsQueryError {
-  return cause instanceof DnsQueryError
-    ? cause
-    : new DnsQueryError(
-        'transport-error',
-        cause instanceof Error ? cause.message : 'The DNSSEC query failed.',
-      );
-}
-
-function responseSummary(outcome: QueryOutcome): string {
-  if (outcome.error !== undefined) return `${outcome.error.code}: ${outcome.error.message}`;
-  if (outcome.response === undefined) return 'No response';
-  const message = outcome.response.message;
-  return `${message.responseCode}; AD=${message.flags.authenticatedData ? 'set' : 'clear'}; ${String(message.messageBytes)} bytes`;
-}
-
-function reportJson(report: DnssecReport): string {
+function reportJson(report: DnssecChainReport): string {
   return JSON.stringify(
     {
-      checkingDisabled: {
-        dnskey: responseSummary(report.checkingDnskey),
-        ds: responseSummary(report.checkingDs),
-      },
-      conclusion: report.conclusion,
-      dnskeys: report.dnskeys.map((key) => ({
-        algorithm: key.algorithm,
-        flags: key.flags,
-        keyTag: key.keyTag,
-        protocol: key.protocol,
+      evidence: report.evidence,
+      explanation: report.explanation,
+      state: report.state,
+      steps: report.steps.map((step) => ({
+        denial:
+          step.denial === undefined
+            ? undefined
+            : {
+                explanation: step.denial.explanation,
+                proofType: step.denial.proofType,
+                state: step.denial.state,
+              },
+        dnskeys: step.dnskeys.map((key) => ({
+          algorithm: key.algorithm,
+          flags: key.flags,
+          keyTag: key.keyTag,
+          protocol: key.protocol,
+          revoked: key.revoked,
+          secureEntryPoint: key.secureEntryPoint,
+          zoneKey: key.zoneKey,
+        })),
+        dnskeyVerifications: step.dnskeyVerifications,
+        ds: step.ds.map((record) => ({
+          algorithm: record.algorithm,
+          digest: hex(record.digest),
+          digestType: record.digestType,
+          keyTag: record.keyTag,
+        })),
+        dsMatches: step.dsMatches.map((match) => ({
+          digestType: match.digestType,
+          keyTag: match.dnskey.keyTag,
+          matches: match.matches,
+        })),
+        dsVerifications: step.dsVerifications,
+        explanation: step.explanation,
+        state: step.state,
+        trustAnchors: step.trustAnchors?.map((match) => ({
+          algorithm: match.anchor.algorithm,
+          digest: match.anchor.digestHex,
+          digestType: match.anchor.digestType,
+          id: match.anchor.id,
+          keyTag: match.anchor.keyTag,
+          validFrom: match.anchor.validFrom,
+          validUntil: match.anchor.validUntil,
+        })),
+        validatedAt: step.validatedAt,
+        zone: step.zone,
       })),
-      ds: report.ds.map((record) => ({
-        algorithm: record.algorithm,
-        digest: hex(record.digest),
-        digestType: record.digestType,
-        keyTag: record.keyTag,
-      })),
-      matches: report.matches.map((match) => ({
-        digestType: match.digestType,
-        keyTag: match.dnskey.keyTag,
-        matches: match.matches,
-      })),
-      signatures: report.signatures.map((signature) => ({
-        algorithm: signature.algorithm,
-        expiration: new Date(signature.expiration * 1000).toISOString(),
-        inception: new Date(signature.inception * 1000).toISOString(),
-        keyTag: signature.keyTag,
-        timeState: signature.timeState,
-        typeCovered: signature.typeCovered,
-      })),
-      validating: {
-        dnskey: responseSummary(report.validatingDnskey),
-        ds: responseSummary(report.validatingDs),
-      },
-      verifications: report.verifications,
-      zone: report.zone,
+      target: report.target,
+      trustAnchorSource: report.trustAnchorSource,
+      validatedAt: report.validatedAt,
+      validatorVersion: report.validatorVersion,
     },
     null,
     2,
   );
 }
 
-function QueryComparison({ report }: { readonly report: DnssecReport }) {
+function VerificationList({ values }: { readonly values: readonly SignatureVerification[] }) {
+  if (values.length === 0) return null;
   return (
-    <div className="comparison-grid">
-      <article>
-        <p className="step-label">Checking enabled</p>
-        <h3>Resolver validation path</h3>
-        <dl className="compact-list">
-          <div>
-            <dt>DNSKEY</dt>
-            <dd>{responseSummary(report.validatingDnskey)}</dd>
-          </div>
-          <div>
-            <dt>DS</dt>
-            <dd>{responseSummary(report.validatingDs)}</dd>
-          </div>
-        </dl>
-      </article>
-      <article>
-        <p className="step-label">Checking disabled</p>
-        <h3>Diagnostic retrieval path</h3>
-        <dl className="compact-list">
-          <div>
-            <dt>DNSKEY</dt>
-            <dd>{responseSummary(report.checkingDnskey)}</dd>
-          </div>
-          <div>
-            <dt>DS</dt>
-            <dd>{responseSummary(report.checkingDs)}</dd>
-          </div>
-        </dl>
-      </article>
+    <ul className="diagnostic-list">
+      {values.map((verification, index) => (
+        <li
+          key={`${String(verification.keyTag)}-${String(verification.algorithm)}-${String(index)}`}
+        >
+          <StatusBadge
+            tone={
+              verification.status === 'verified'
+                ? 'pass'
+                : verification.status === 'invalid'
+                  ? 'error'
+                  : 'unknown'
+            }
+          >
+            {verification.status}
+          </StatusBadge>
+          <span>{verification.message}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function ChainPath({ steps }: { readonly steps: readonly DnssecChainStep[] }) {
+  return (
+    <div className="chain-scroll" aria-label="DNSSEC chain from the root to the requested name">
+      {steps.map((step, index) => (
+        <div className="chain-segment" key={step.zone}>
+          {index === 0 ? null : (
+            <span className="chain-join" aria-hidden="true">
+              →
+            </span>
+          )}
+          <article>
+            <span className="chain-index">{index + 1}</span>
+            <p className="step-label">
+              {index === 0
+                ? 'Trust anchor'
+                : step.state === 'not-delegated'
+                  ? 'Intermediate name'
+                  : step.state === 'alias-boundary'
+                    ? 'Alias boundary'
+                    : step.state === 'opt-out'
+                      ? 'Opt-Out interval'
+                      : 'Delegation'}
+            </p>
+            <h3>{step.zone}</h3>
+            <StatusBadge tone={stateTone(step.state)}>{stateLabel(step.state)}</StatusBadge>
+          </article>
+        </div>
+      ))}
     </div>
   );
 }
 
-function EvidenceChain({ report }: { readonly report: DnssecReport }) {
-  const anyMatch = report.matches.some((match) => match.matches);
-  const localSignature = report.verifications.some(
-    (verification) => verification.status === 'verified',
-  );
+function StepDetails({ step }: { readonly step: DnssecChainStep }) {
   return (
-    <div className="evidence-chain" aria-label="DNSSEC evidence chain">
-      <article>
-        <span className="chain-index">1</span>
-        <p className="step-label">Parent evidence</p>
-        <h3>
-          {report.ds.length} DS record{report.ds.length === 1 ? '' : 's'}
-        </h3>
-        <StatusBadge tone={report.ds.length > 0 ? 'information' : 'unknown'}>
-          {report.ds.length > 0 ? 'Published' : 'Not returned'}
-        </StatusBadge>
-      </article>
-      <span className="chain-join" aria-hidden="true">
-        →
-      </span>
-      <article>
-        <span className="chain-index">2</span>
-        <p className="step-label">Digest calculation</p>
-        <h3>
-          {report.dnskeys.length} child DNSKEY{report.dnskeys.length === 1 ? '' : 's'}
-        </h3>
-        <StatusBadge tone={anyMatch ? 'pass' : 'unknown'}>
-          {anyMatch ? 'DS match' : 'No supported match'}
-        </StatusBadge>
-      </article>
-      <span className="chain-join" aria-hidden="true">
-        →
-      </span>
-      <article>
-        <span className="chain-index">3</span>
-        <p className="step-label">Local cryptography</p>
-        <h3>DNSKEY RRset signature</h3>
-        <StatusBadge tone={localSignature ? 'pass' : 'unknown'}>
-          {localSignature ? 'Verified locally' : 'Not locally verified'}
-        </StatusBadge>
-      </article>
-    </div>
+    <article className="result-panel">
+      <div className="result-heading">
+        <h3>{step.zone}</h3>
+        <StatusBadge tone={stateTone(step.state)}>{stateLabel(step.state)}</StatusBadge>
+      </div>
+      <p>{step.explanation}</p>
+      <dl className="metadata-grid">
+        <div>
+          <dt>Validated at</dt>
+          <dd>{new Date(step.validatedAt).toLocaleString()}</dd>
+        </div>
+        <div>
+          <dt>Trust-anchor matches</dt>
+          <dd>{step.trustAnchors?.length ?? 0}</dd>
+        </div>
+        <div>
+          <dt>Parent DS records</dt>
+          <dd>{step.ds.length}</dd>
+        </div>
+        <div>
+          <dt>Child DNSKEY records</dt>
+          <dd>{step.dnskeys.length}</dd>
+        </div>
+        <div>
+          <dt>Authenticated denial</dt>
+          <dd>{step.denial?.proofType ?? 'None'}</dd>
+        </div>
+      </dl>
+      {step.trustAnchors === undefined || step.trustAnchors.length === 0 ? null : (
+        <div className="table-scroll">
+          <table>
+            <caption>Matched root trust anchors</caption>
+            <thead>
+              <tr>
+                <th>Identifier</th>
+                <th>Key tag</th>
+                <th>Valid from</th>
+                <th>Valid until</th>
+                <th>Digest</th>
+              </tr>
+            </thead>
+            <tbody>
+              {step.trustAnchors.map((match) => (
+                <tr key={match.anchor.id}>
+                  <td>{match.anchor.id}</td>
+                  <td>{match.anchor.keyTag}</td>
+                  <td>{new Date(match.anchor.validFrom).toLocaleString()}</td>
+                  <td>
+                    {match.anchor.validUntil === undefined
+                      ? 'No end date published'
+                      : new Date(match.anchor.validUntil).toLocaleString()}
+                  </td>
+                  <td>
+                    <code className="record-value">
+                      {digestTypeName(match.anchor.digestType)} · {match.anchor.digestHex}
+                    </code>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {step.ds.length === 0 ? null : (
+        <div className="table-scroll">
+          <table>
+            <caption>Authenticated parent DS records</caption>
+            <thead>
+              <tr>
+                <th>Key tag</th>
+                <th>Algorithm</th>
+                <th>Digest</th>
+                <th>Child match</th>
+              </tr>
+            </thead>
+            <tbody>
+              {step.ds.map((record) => (
+                <tr
+                  key={`${String(record.keyTag)}-${String(record.digestType)}-${hex(record.digest)}`}
+                >
+                  <td>{record.keyTag}</td>
+                  <td>{dnssecAlgorithmName(record.algorithm)}</td>
+                  <td>
+                    <code className="record-value">
+                      {digestTypeName(record.digestType)} · {hex(record.digest)}
+                    </code>
+                  </td>
+                  <td>
+                    {step.dsMatches.some((match) => match.ds === record && match.matches)
+                      ? 'Matches DNSKEY'
+                      : [1, 2, 4].includes(record.digestType)
+                        ? 'No match'
+                        : 'Unsupported digest'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {step.dnskeys.length === 0 ? null : (
+        <div className="table-scroll">
+          <table>
+            <caption>DNSKEY records</caption>
+            <thead>
+              <tr>
+                <th>Key tag</th>
+                <th>Flags</th>
+                <th>Protocol</th>
+                <th>Algorithm</th>
+                <th>Role</th>
+              </tr>
+            </thead>
+            <tbody>
+              {step.dnskeys.map((key) => (
+                <tr
+                  key={`${String(key.keyTag)}-${String(key.algorithm)}-${hex(key.key).slice(0, 16)}`}
+                >
+                  <td>{key.keyTag}</td>
+                  <td>{key.flags}</td>
+                  <td>{key.protocol}</td>
+                  <td>{dnssecAlgorithmName(key.algorithm)}</td>
+                  <td>
+                    {key.revoked
+                      ? 'Revoked'
+                      : key.secureEntryPoint
+                        ? 'SEP and zone key'
+                        : key.zoneKey
+                          ? 'Zone key'
+                          : 'Other'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <VerificationList values={[...step.dsVerifications, ...step.dnskeyVerifications]} />
+    </article>
   );
 }
 
 export function DnssecPage() {
   const [input, setInput] = useState('');
   const [resolverId, setResolverId] = useState<ResolverId>('google');
-  const [state, setState] = useState<'idle' | 'loading' | 'complete' | 'error' | 'cancelled'>(
-    'idle',
-  );
+  const [state, setState] = useState<'idle' | 'loading' | 'complete' | 'cancelled'>('idle');
   const [error, setError] = useState('');
-  const [report, setReport] = useState<DnssecReport | null>(null);
+  const [report, setReport] = useState<DnssecChainReport | null>(null);
   const activeRun = useRef<DnsQueryRun | null>(null);
+  const evidenceBundle = useMemo(() => (report === null ? '' : reportJson(report)), [report]);
+  const evidenceOctets = useMemo(
+    () => new TextEncoder().encode(evidenceBundle).length,
+    [evidenceBundle],
+  );
 
   async function submit(event: React.SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -211,87 +339,41 @@ export function DnssecPage() {
       setError(parsed.error.message);
       return;
     }
-    setError('');
-    setReport(null);
     activeRun.current?.cancel();
     const run = new DnsQueryRun();
     activeRun.current = run;
+    setError('');
+    setReport(null);
     setState('loading');
     const resolver = new WireDnsResolver(RESOLVERS[resolverId]);
-    const query = async (
-      type: DnsRecordType,
-      checkingDisabled: boolean,
-    ): Promise<QueryOutcome> => {
-      try {
-        return {
-          response: await run.query(
-            resolver,
-            { name: parsed.value, type },
-            { checkingDisabled, dnssecOk: true },
-          ),
-        };
-      } catch (cause) {
-        return { error: asError(cause) };
-      }
+    const query: DnssecChainQuery = async (absoluteName, type) => {
+      const validated =
+        absoluteName === '.' ? ROOT_NAME : validateDnsName(absoluteName.replace(/\.$/u, ''));
+      if ('ok' in validated && !validated.ok) throw new Error(validated.error.message);
+      const question: DnsQuestion = {
+        name: 'ok' in validated ? validated.value : validated,
+        type,
+      };
+      return run.query(resolver, question, { checkingDisabled: true, dnssecOk: true });
     };
-    const [validatingDnskey, checkingDnskey, validatingDs, checkingDs] = await Promise.all([
-      query('DNSKEY', false),
-      query('DNSKEY', true),
-      query('DS', false),
-      query('DS', true),
-    ]);
-    if (activeRun.current !== run) return;
-    const cancelled = [validatingDnskey, checkingDnskey, validatingDs, checkingDs].every(
-      (outcome) => outcome.error?.code === 'aborted',
-    );
-    if (cancelled) {
-      setState('cancelled');
-      return;
+    try {
+      const next = await validateDnssecChain(parsed.value.absolute, query, {
+        signal: run.signal,
+      });
+      if (activeRun.current !== run) return;
+      if (run.cancelled) {
+        setState('cancelled');
+        return;
+      }
+      setReport(next);
+      setState('complete');
+    } catch (cause) {
+      if (activeRun.current !== run) return;
+      setError(
+        cause instanceof Error ? cause.message : 'DNSSEC validation could not complete.',
+      );
+      setState(run.cancelled ? 'cancelled' : 'idle');
     }
-
-    const keyResponse = checkingDnskey.response ?? validatingDnskey.response;
-    const dsResponse = checkingDs.response ?? validatingDs.response;
-    const keyRecords = keyResponse?.message.answers ?? [];
-    const dnskeys = keyRecords.flatMap((record) => {
-      const key = parseDnskey(record);
-      return key === null ? [] : [key];
-    });
-    const ds = (dsResponse?.message.answers ?? []).flatMap((record) => {
-      const value = parseDs(record);
-      return value === null ? [] : [value];
-    });
-    const signatures = keyRecords.flatMap((record) => {
-      const signature = parseRrsig(record);
-      return signature === null ? [] : [signature];
-    });
-    const matches = await compareDsToDnskeys(parsed.value.absolute, ds, dnskeys);
-    const verifications = await verifyDnskeyRrset(keyRecords);
-    const conclusion = classifyDnssecEvidence({
-      ...(checkingDnskey.response === undefined
-        ? {}
-        : { checkingDnskey: checkingDnskey.response }),
-      dsMatches: matches,
-      publishedDsCount: ds.length,
-      signatures: verifications,
-      ...(validatingDnskey.response === undefined
-        ? {}
-        : { validatingDnskey: validatingDnskey.response }),
-      ...(validatingDs.response === undefined ? {} : { validatingDs: validatingDs.response }),
-    });
-    setReport({
-      checkingDnskey,
-      checkingDs,
-      conclusion,
-      dnskeys,
-      ds,
-      matches,
-      signatures,
-      validatingDnskey,
-      validatingDs,
-      verifications,
-      zone: parsed.value.absolute,
-    });
-    setState('complete');
   }
 
   function clear() {
@@ -306,11 +388,12 @@ export function DnssecPage() {
   return (
     <div className="tool-page">
       <ToolIntro
-        eyebrow="DNSSEC chain inspector"
-        title="Follow the evidence, not a green light."
+        eyebrow="Independent DNSSEC validator"
+        title="Build trust from the root locally."
       >
-        Compare validating and checking-disabled answers, calculate DS candidates locally, and
-        verify returned DNSKEY RRset signatures when the browser supports their algorithm.
+        Validate each DS and DNSKEY RRset from bundled IANA root trust anchors using DNS wire
+        evidence and browser cryptography. Resolver flags remain visible evidence, but they do
+        not decide the local result.
       </ToolIntro>
       <form className="workbench-form" onSubmit={(event) => void submit(event)}>
         <div className="field-group field-wide">
@@ -327,7 +410,7 @@ export function DnssecPage() {
           />
         </div>
         <div className="field-group">
-          <label htmlFor="dnssec-resolver">Resolver</label>
+          <label htmlFor="dnssec-resolver">Resolver transport</label>
           <select
             id="dnssec-resolver"
             value={resolverId}
@@ -340,14 +423,14 @@ export function DnssecPage() {
             ))}
           </select>
         </div>
-        {error !== '' ? (
+        {error === '' ? null : (
           <p className="form-error" role="alert">
             {error}
           </p>
-        ) : null}
+        )}
         <div className="form-actions">
           <button className="primary-button" type="submit" disabled={state === 'loading'}>
-            {state === 'loading' ? 'Inspecting…' : 'Inspect DNSSEC'}
+            {state === 'loading' ? 'Validating…' : 'Validate DNSSEC chain'}
           </button>
           {state === 'loading' ? (
             <button
@@ -364,191 +447,144 @@ export function DnssecPage() {
         </div>
       </form>
       <div className="run-status" aria-live="polite">
-        {state === 'loading' ? 'Four bounded DNSSEC evidence questions are in progress.' : null}
-        {state === 'cancelled' ? 'The DNSSEC run was cancelled.' : null}
-        {state === 'error' ? 'DNSSEC inspection could not complete.' : null}
+        {state === 'loading'
+          ? 'The bounded root-to-name validation chain is in progress.'
+          : state === 'cancelled'
+            ? 'The DNSSEC run was cancelled.'
+            : null}
       </div>
 
-      {report !== null ? (
+      {report === null ? null : (
         <section className="results" aria-labelledby="dnssec-result-title">
           <div className="section-heading">
             <div>
-              <p className="eyebrow">Conservative conclusion</p>
-              <h2 id="dnssec-result-title">{report.zone}</h2>
+              <p className="eyebrow">Independent validation result</p>
+              <h2 id="dnssec-result-title">{report.target}</h2>
             </div>
             <div className="export-actions">
-              <CopyButton label="Copy evidence JSON" text={reportJson(report)} />
-              <SnapshotButton
-                content={reportJson(report)}
-                title={`DNSSEC evidence — ${report.zone}`}
-                tool="dnssec"
-              />
+              <CopyButton label="Copy evidence bundle" text={evidenceBundle} />
+              {evidenceOctets <= MAX_SNAPSHOT_CONTENT_OCTETS ? (
+                <SnapshotButton
+                  content={evidenceBundle}
+                  title={`DNSSEC evidence — ${report.target}`}
+                  tool="dnssec"
+                />
+              ) : (
+                <button
+                  className="quiet-button"
+                  type="button"
+                  disabled
+                  title="Copy the evidence bundle instead; its raw DNS packets exceed the local snapshot limit."
+                >
+                  Snapshot too large
+                </button>
+              )}
             </div>
           </div>
           <article className="conclusion-panel">
-            <StatusBadge tone={report.conclusion.tone}>{report.conclusion.label}</StatusBadge>
-            <p>{report.conclusion.explanation}</p>
+            <StatusBadge tone={stateTone(report.state)}>{stateLabel(report.state)}</StatusBadge>
+            <p>{report.explanation}</p>
           </article>
-          <EvidenceChain report={report} />
-          <QueryComparison report={report} />
-
-          <div className="comparison-grid">
-            <article className="result-panel">
-              <h3>Child DNSKEY records</h3>
-              {report.dnskeys.length === 0 ? (
-                <p className="empty-note">No DNSKEY data returned.</p>
-              ) : (
-                <div className="table-scroll">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Key tag</th>
-                        <th>Flags</th>
-                        <th>Protocol</th>
-                        <th>Algorithm</th>
-                        <th>Role</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {report.dnskeys.map((key) => (
-                        <tr key={`${String(key.keyTag)}-${String(key.algorithm)}`}>
-                          <td>{key.keyTag}</td>
-                          <td>{key.flags}</td>
-                          <td>{key.protocol}</td>
-                          <td>
-                            {dnssecAlgorithmName(key.algorithm)} ({key.algorithm})
-                          </td>
-                          <td>
-                            {key.revoked
-                              ? 'Revoked'
-                              : key.secureEntryPoint
-                                ? 'SEP / zone key'
-                                : key.zoneKey
-                                  ? 'Zone key'
-                                  : 'Other'}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </article>
-            <article className="result-panel">
-              <h3>Published parent DS records</h3>
-              {report.ds.length === 0 ? (
-                <p className="empty-note">No DS data returned.</p>
-              ) : (
-                <div className="table-scroll">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Key tag</th>
-                        <th>Algorithm</th>
-                        <th>Digest</th>
-                        <th>Local comparison</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {report.ds.map((ds) => {
-                        const match = report.matches.find(
-                          (item) => item.ds === ds && item.matches,
-                        );
-                        return (
-                          <tr
-                            key={`${String(ds.keyTag)}-${String(ds.digestType)}-${hex(ds.digest)}`}
-                          >
-                            <td>{ds.keyTag}</td>
-                            <td>{dnssecAlgorithmName(ds.algorithm)}</td>
-                            <td>
-                              <code className="record-value">
-                                {digestTypeName(ds.digestType)} · {hex(ds.digest)}
-                              </code>
-                            </td>
-                            <td>
-                              {ds.digestType === 2 || ds.digestType === 4
-                                ? match === undefined
-                                  ? 'No match'
-                                  : 'Matches DNSKEY'
-                                : 'Unsupported digest'}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </article>
-          </div>
-
+          <ChainPath steps={report.steps} />
           <article className="result-panel">
-            <h3>DNSKEY signature checks</h3>
-            {report.signatures.length === 0 ? (
-              <p className="empty-note">No DNSKEY-covering RRSIG was returned.</p>
-            ) : (
-              <div className="table-scroll">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Covered</th>
-                      <th>Key tag</th>
-                      <th>Algorithm</th>
-                      <th>Inception</th>
-                      <th>Expiration</th>
-                      <th>Time</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {report.signatures.map((signature, index) => (
-                      <tr key={`${String(signature.keyTag)}-${String(index)}`}>
-                        <td>{signature.typeCovered}</td>
-                        <td>{signature.keyTag}</td>
-                        <td>{dnssecAlgorithmName(signature.algorithm)}</td>
-                        <td>{new Date(signature.inception * 1000).toLocaleString()}</td>
-                        <td>{new Date(signature.expiration * 1000).toLocaleString()}</td>
-                        <td>{signature.timeState}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            <h3>Root trust-anchor provenance</h3>
+            <dl className="metadata-grid">
+              <div>
+                <dt>IANA source update</dt>
+                <dd>{report.trustAnchorSource.sourceUpdated}</dd>
               </div>
-            )}
-            {report.verifications.map((verification, index) => (
-              <p key={`${String(verification.keyTag)}-${String(index)}`}>
-                <StatusBadge
-                  tone={
-                    verification.status === 'verified'
-                      ? 'pass'
-                      : verification.status === 'invalid'
-                        ? 'error'
-                        : 'unknown'
-                  }
-                >
-                  {verification.status}
-                </StatusBadge>{' '}
-                {verification.message}
-              </p>
-            ))}
+              <div>
+                <dt>Last checked</dt>
+                <dd>{report.trustAnchorSource.retrievedAt}</dd>
+              </div>
+              <div>
+                <dt>Maintenance check</dt>
+                <dd>
+                  <code>npm run check:dnssec-anchors</code>
+                </dd>
+              </div>
+              <div>
+                <dt>Evidence bundle</dt>
+                <dd>{Math.ceil(evidenceOctets / 1024).toLocaleString()} KiB</dd>
+              </div>
+            </dl>
+            <p className="detail-note">
+              The maintenance command downloads the current IANA XML and detached signature,
+              verifies the named signer through the reviewed ICANN root certificate committed
+              with ZoneSkein, and fails if the current anchor set differs from the committed
+              copy. Runtime validation makes no extra web request for anchor data.
+            </p>
           </article>
-
+          {report.steps.map((step) => (
+            <StepDetails key={step.zone} step={step} />
+          ))}
+          <article className="result-panel">
+            <h3>Captured DNS evidence</h3>
+            <div className="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Question</th>
+                    <th>Decoded question</th>
+                    <th>Type</th>
+                    <th>Resolver</th>
+                    <th>Response</th>
+                    <th>AD</th>
+                    <th>Extended errors</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {report.evidence.map((item, index) => (
+                    <tr key={`${item.name}-${item.type}-${String(index)}`}>
+                      <td>{item.name}</td>
+                      <td>
+                        {item.decodedQuestion === undefined
+                          ? 'No response'
+                          : `${item.decodedQuestion.name} ${item.decodedQuestion.class} ${item.decodedQuestion.type}`}
+                      </td>
+                      <td>{item.type}</td>
+                      <td>{item.resolver ?? 'No response'}</td>
+                      <td>{item.error ?? item.responseCode ?? 'Unknown'}</td>
+                      <td>
+                        {item.authenticatedData === undefined
+                          ? 'Unknown'
+                          : item.authenticatedData
+                            ? 'Set'
+                            : 'Clear'}
+                      </td>
+                      <td>
+                        {item.extendedErrors?.length
+                          ? item.extendedErrors
+                              .map((value) => `EDE ${String(value.code)} ${value.name}`)
+                              .join('; ')
+                          : 'None'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </article>
           <details className="method-note">
-            <summary>How this conclusion was reached</summary>
+            <summary>Validation method and boundaries</summary>
             <p>
-              ZoneSkein sent wire-format DNSKEY and DS questions with DNSSEC requested, once
-              with resolver checking enabled and once with checking disabled. SHA-256 and
-              SHA-384 DS digests were calculated locally. DNSKEY RRset signatures use Web Crypto
-              for RSA/SHA-1, RSA/SHA-256, RSA/SHA-512, ECDSA P-256, ECDSA P-384, and Ed25519
-              where available.
+              ZoneSkein retrieves DNSSEC material with checking disabled, matches the root
+              DNSKEY against the bundled IANA anchors, verifies that DNSKEY RRset locally, then
+              validates each parent DS signature, DS digest, and child DNSKEY signature in turn.
+              SHA-1, SHA-256, and SHA-384 DS digests are supported. Exact NSEC and bounded NSEC3
+              proofs distinguish exact authenticated insecure delegations from missing evidence.
+              NSEC3 Opt-Out is reported separately because it cannot authenticate whether the
+              covered delegation exists.
             </p>
             <p>
-              The parent DS answer is not independently chained to a bundled root trust anchor.
-              A local DS match and DNSKEY signature therefore strengthen the evidence but do not
-              replace a complete validating resolver or prove every RRset in the zone.
+              Secure means that this exact root-to-name chain validated at the captured time. It
+              does not validate every application RRset, prove service safety, or establish that
+              every recursive resolver sees the same data. Unsupported, incomplete, insecure,
+              Opt-Out, alias-boundary, not-delegated, and bogus outcomes remain distinct.
             </p>
           </details>
         </section>
-      ) : null}
+      )}
     </div>
   );
 }

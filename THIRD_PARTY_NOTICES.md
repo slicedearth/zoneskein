@@ -7,7 +7,7 @@ ZoneSkein’s original source is AGPL-3.0-only. The packages below are separate 
 | `@dnsquery/dns-packet`    |   6.1.1 | MIT          | <https://github.com/dnsquery/dns-packet>        | DNS wire-message encoding and decoding |
 | `@leichtgewicht/ip-codec` |   2.0.5 | MIT          | <https://github.com/martinheidegger/ip-codec>   | Transitive IP wire codec               |
 | `utf8-codec`              |   1.0.0 | MIT          | <https://github.com/martinheidegger/utf8-codec> | Transitive UTF-8 wire codec            |
-| `cidr-tools`              |  12.1.3 | BSD-2-Clause | <https://github.com/silverwind/cidr-tools>      | Safe CIDR normalization and coalescing |
+| `cidr-tools`              |  12.1.3 | BSD-2-Clause | <https://github.com/silverwind/cidr-tools>      | Safe CIDR normalisation and coalescing |
 | `ip-bigint`               |   9.0.8 | BSD-2-Clause | <https://github.com/silverwind/ip-bigint>       | Transitive integer CIDR operations     |
 | `idb`                     |   8.0.3 | ISC          | <https://github.com/jakearchibald/idb>          | Explicitly enabled IndexedDB snapshots |
 | `ipaddr.js`               |   2.5.0 | MIT          | <https://github.com/whitequark/ipaddr.js>       | IPv4 and IPv6 parsing and validation   |

@@ -39,7 +39,7 @@ describe('semantic DNS change comparison', () => {
     ]);
   });
 
-  it('recognizes TXT chunking and whitespace as formatting-only', () => {
+  it('recognises TXT chunking and whitespace as formatting-only', () => {
     const report = compare('@ 300 IN TXT "v=spf1 " "-all"', '@    300 IN TXT "v=spf1 -all"');
     expect(report.changes).toEqual([
       expect.objectContaining({ category: 'formatting-only', disruptive: false }),

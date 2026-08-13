@@ -8,7 +8,7 @@ import {
 } from './parser';
 
 describe('DMARC policy parser', () => {
-  it('parses policy tags and external report authorization names', () => {
+  it('parses policy tags and external report authorisation names', () => {
     const policy = parseDmarcRecord(
       'v=DMARC1; p=reject; sp=quarantine; pct=100; rua=mailto:dmarc@reports.example.net!10m',
       'example.com',
@@ -67,7 +67,7 @@ describe('DMARC policy parser', () => {
     expect(policy.diagnostics.map((item) => item.code)).toContain('policy-default-none');
   });
 
-  it('selects organizational and public-suffix policies from tree-walk markers', () => {
+  it('selects organisational and public-suffix policies from tree-walk markers', () => {
     const organizational = parseDmarcRecord('v=DMARC1; p=reject; psd=n', 'example.com');
     const selection = selectDmarcPolicy('mail.example.com', [
       { domain: 'mail.example.com' },

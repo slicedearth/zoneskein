@@ -13,6 +13,10 @@ export class DnsQueryRun {
     return this.#budget.used;
   }
 
+  get signal(): AbortSignal {
+    return this.#controller.signal;
+  }
+
   cancel(): void {
     this.#controller.abort();
   }

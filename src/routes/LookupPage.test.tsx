@@ -39,7 +39,7 @@ describe('DNS record explorer', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('renders a normalized recursive-resolver response', async () => {
+  it('renders a normalised recursive-resolver response', async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(answerResponse());
     vi.stubGlobal('fetch', fetchMock);
     const user = userEvent.setup();

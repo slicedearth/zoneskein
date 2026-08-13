@@ -71,6 +71,15 @@ export function validateDnsName(input: string): Result<ValidatedDnsName, DnsName
 
   const hadRootDot = extracted.value.endsWith('.');
   const source = hadRootDot ? extracted.value.slice(0, -1) : extracted.value;
+  if (extracted.value === '.') {
+    return success({
+      absolute: '.',
+      ascii: '',
+      display: '.',
+      hadRootDot: true,
+      unicode: false,
+    });
+  }
   if (source.length === 0 || /[\s/@\\:[\]]/u.test(source)) {
     return error(
       'invalid-hostname',

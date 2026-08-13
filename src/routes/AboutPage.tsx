@@ -46,14 +46,15 @@ export function AboutPage() {
             <strong>DNS lookup</strong>
             <span>
               Wire-format DoH, 18 explicit record types, PTR, resolver comparison, exact message
-              sizes, normalized fields, and exports.
+              sizes, normalised fields, and exports.
             </span>
           </div>
           <div>
             <strong>DNSSEC</strong>
             <span>
-              Validating/checking-disabled comparison, DNSKEY key tags, SHA-256/SHA-384 DS
-              matches, RRSIG time checks, and supported local DNSKEY RRset verification.
+              Independent root-to-name validation, exact DS and DNSKEY RRsets, SHA-1/SHA-256/
+              SHA-384 DS matching, authenticated denial, explicit Opt-Out uncertainty, and
+              replayable wire evidence.
             </span>
           </div>
           <div>
@@ -117,8 +118,8 @@ export function AboutPage() {
             bursts, but a modified client can bypass it. It is not an enforcement boundary.
           </li>
           <li>
-            DNSSEC local checks do not independently validate the parent DS RRset to a bundled
-            root trust anchor and do not verify every RRset or NSEC/NSEC3 denial.
+            DNSSEC validates the delegation path from bundled IANA root trust anchors, but it
+            does not verify arbitrary application RRsets or complete NXDOMAIN proofs.
           </li>
           <li>
             SPF snapshots are withheld for macros, exists, ptr, cycles, unresolved dependencies,
