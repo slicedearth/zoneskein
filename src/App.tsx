@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 
+import { DiffPage } from './routes/DiffPage';
 import { DnssecPage } from './routes/DnssecPage';
 import { LookupPage } from './routes/LookupPage';
 import { SpfPage } from './routes/SpfPage';
@@ -77,7 +78,9 @@ export function App() {
       </header>
 
       <main id="main-content">
-        {route === 'zone-lint' ? (
+        {route === 'diff' ? (
+          <DiffPage />
+        ) : route === 'zone-lint' ? (
           <ZoneLintPage />
         ) : route === 'spf' ? (
           <SpfPage />
