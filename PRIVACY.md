@@ -24,6 +24,8 @@ Netlify receives ordinary requests for ZoneSkein pages and static assets. It may
 
 Query history is not persisted by default. Normal DNS responses use a bounded in-memory TTL cache that disappears with the page session.
 
+To coordinate abuse controls across tabs, ZoneSkein stores a bounded rate-limit ledger in local storage. It contains only random request identifiers, timestamps, per-resolver buckets, and temporary cooldown expiry times. It contains no DNS names, record types, answers, pasted content, or report data, and entries age out automatically.
+
 Local snapshots are a separate, explicit opt-in feature:
 
 - the opt-in preference is one boolean and contains no DNS name;
@@ -32,7 +34,7 @@ Local snapshots are a separate, explicit opt-in feature:
 - each report is limited to 256 KiB of UTF-8 content;
 - disabling local snapshots erases the IndexedDB database and the opt-in preference.
 
-ZoneSkein uses no cookies. It does not use local storage for query history.
+ZoneSkein uses no cookies. It does not use local storage for query history or DNS content; local storage holds only the snapshot opt-in boolean and the bounded anonymous rate-limit ledger described above.
 
 ## Share links
 

@@ -34,7 +34,7 @@ No ANY query, arbitrary URL, or unrestricted batch input is exposed.
 
 ## State
 
-Ordinary form and response state lives in React memory. DNS caching is memory-only. The theme is selected from browser preference and is not persisted.
+Ordinary form and response state lives in React memory. DNS caching is memory-only. The theme is selected from browser preference and is not persisted. Cross-tab rate coordination writes only a bounded ledger of opaque request identifiers, timestamps, resolver buckets, and cooldown expiries to local storage; it never writes questions or answers.
 
 Snapshot persistence is separate. A boolean opt-in preference contains no DNS value. Only explicit saves write to IndexedDB. Disabling the feature deletes the database. Share state is created only on request, bounded, encoded in a URL fragment, and runtime-validated when read.
 

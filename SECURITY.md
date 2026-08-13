@@ -20,7 +20,7 @@ ZoneSkein is a static browser application:
 
 ## Abuse resistance
 
-ZoneSkein limits normal use with a shared four-request semaphore, per-resolver token buckets, a rolling request window, cross-tab request signals, an 80-question per-run budget, TTL caching, in-flight deduplication, cancellation, graph depth limits, cycle detection, and resolver cooldown circuits.
+ZoneSkein limits normal use with a shared four-request semaphore, per-resolver token buckets, a rolling request window, bounded first-in-first-out queues, replay-resistant cross-tab request signals, an 80-question per-run budget, TTL caching, in-flight deduplication, cancellation, graph depth limits, cycle detection, and capped resolver cooldown circuits. Its bounded cross-tab ledger stores only opaque request identifiers, timestamps, resolver buckets, and cooldown expiries, never questions or answers.
 
 Because source and execution are in the visitor’s browser, these controls cannot prevent a modified copy from issuing different requests. Resolver operators remain the authoritative enforcement boundary for hostile clients.
 

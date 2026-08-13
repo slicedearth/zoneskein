@@ -35,7 +35,8 @@ Normal browser use is bounded by:
 - four active DNS requests across all tools and resolvers;
 - an eight-second timeout;
 - a token bucket with a four-request burst and two requests per second per resolver;
-- a rolling limit of 120 requests per minute per tab and resolver, coordinated across tabs where `BroadcastChannel` is available;
+- a rolling limit of 120 requests per minute and resolver, coordinated across tabs with replay-resistant events and a bounded anonymous local ledger where browser facilities are available;
+- a first-in-first-out queue capped at 256 waiting requests per resolver, with complete cancellation cleanup;
 - an 80-unique-question budget for each user-initiated run;
 - in-flight deduplication and TTL-aware memory caching;
 - cooldown circuits after resolver HTTP 429 responses;

@@ -22,7 +22,7 @@ All resolver definitions and endpoints are compile-time allowlisted. The UI acce
 
 ### Resolver abuse
 
-Shared concurrency, token buckets, a rolling request window, cross-tab signals, run budgets, timeouts, cooldown circuits, TTL caching, in-flight deduplication, depth limits, cycle detection, and bounded targets reduce accidental amplification. There is no bulk input, subdomain generation, ANY query, or automatic retry storm.
+Shared concurrency, token buckets, a rolling request window, bounded first-in-first-out queues, cross-tab signals, replay-resistant opaque request identifiers, run budgets, timeouts, cooldown circuits, TTL caching, in-flight deduplication, depth limits, cycle detection, and bounded targets reduce accidental amplification. Cross-tab state has strict shapes, size and age limits, contains no questions or answers, and fails back to tab-local coordination when browser messaging or storage is unavailable. There is no bulk input, subdomain generation, ANY query, or automatic retry storm.
 
 A modified client can bypass browser-side controls. Public resolvers must enforce their own service limits.
 
@@ -38,7 +38,7 @@ React renders record and pasted values as text. No `dangerouslySetInnerHTML`, ar
 
 DNS questions never enter page or Netlify URLs. Cloudflare receives POST wire bodies; Google and Quad9 receive base64url-encoded RFC 8484 GET parameters so their endpoints work under browser CORS. Resolver URLs are fixed, and the selected resolver can read or log the question under either method. There is no application proxy, analytics, telemetry, tracking pixel, or default query history. Snapshot storage and fragment sharing require explicit actions and are explained before use.
 
-The selected resolver still sees the DNS question. Netlify still sees ordinary page requests. Fragments remain visible to the browser and recipients.
+The selected resolver still sees the DNS question. Netlify still sees ordinary page requests. Fragments remain visible to the browser and recipients. Local storage contains the snapshot opt-in boolean and the anonymous bounded rate-limit ledger, but no query history or DNS content.
 
 ### Misleading security conclusions
 
