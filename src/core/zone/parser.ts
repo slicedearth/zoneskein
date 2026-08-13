@@ -17,6 +17,7 @@ const KNOWN_TYPES = new Set([
   'DS',
   'HTTPS',
   'MX',
+  'NAPTR',
   'NS',
   'NSEC',
   'NSEC3',
@@ -24,9 +25,11 @@ const KNOWN_TYPES = new Set([
   'RRSIG',
   'SOA',
   'SRV',
+  'SSHFP',
   'SVCB',
   'TLSA',
   'TXT',
+  'URI',
 ]);
 
 interface LogicalStatement {
@@ -100,7 +103,7 @@ function statements(
     } else if (escaped) {
       buffer += character;
       escaped = false;
-    } else if (character === '\\' && quote) {
+    } else if (character === '\\') {
       buffer += character;
       escaped = true;
     } else if (character === '"') {
@@ -173,7 +176,6 @@ function tokens(
   const values: ZoneToken[] = [];
   let start = -1;
   let quote = false;
-  let escaped = false;
   let decoded = '';
 
   const finish = (end: number) => {
@@ -184,7 +186,7 @@ function tokens(
       ...location,
       quoted: raw.startsWith('"'),
       raw,
-      value: raw.startsWith('"') ? decoded : raw,
+      value: decoded,
     });
     start = -1;
     decoded = '';
@@ -198,11 +200,57 @@ function tokens(
     }
     if (start < 0 && /\s/u.test(character)) continue;
     if (start < 0) start = index;
-    if (escaped) {
-      decoded += character;
-      escaped = false;
-    } else if (quote && character === '\\') escaped = true;
-    else if (character === '"') {
+    if (character === '\\') {
+      const location = tokenLocation(statement, index);
+      const next = statement.text[index + 1];
+      if (next === undefined) {
+        diagnostics.push(
+          diagnostic(
+            'escape-malformed',
+            'error',
+            'A trailing backslash does not escape a character.',
+            location.line,
+            location.column,
+          ),
+        );
+        decoded += '\\';
+        continue;
+      }
+      if (!/\d/u.test(next)) {
+        decoded += next;
+        index += 1;
+        continue;
+      }
+      const digits = statement.text.slice(index + 1, index + 4);
+      if (!/^\d{3}$/u.test(digits)) {
+        diagnostics.push(
+          diagnostic(
+            'escape-decimal-malformed',
+            'error',
+            'A decimal escape must contain exactly three digits.',
+            location.line,
+            location.column,
+          ),
+        );
+        decoded += next;
+        index += 1;
+        continue;
+      }
+      const octet = Number(digits);
+      if (octet > 255) {
+        diagnostics.push(
+          diagnostic(
+            'escape-decimal-range',
+            'error',
+            `Decimal escape \\${digits} is outside the octet range \\000–\\255.`,
+            location.line,
+            location.column,
+          ),
+        );
+        decoded += digits;
+      } else decoded += String.fromCharCode(octet);
+      index += 3;
+    } else if (character === '"') {
       quote = !quote;
       if (!quote) finish(index + 1);
     } else if (!quote && /\s/u.test(character)) finish(index);

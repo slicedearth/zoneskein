@@ -66,6 +66,7 @@ test('all static routes load directly and the shell remains usable', async ({ pa
     '/dnssec/',
     '/spf/',
     '/zone-lint/',
+    '/studio/',
     '/diff/',
     '/dmarc/',
     '/dkim/',
@@ -134,6 +135,40 @@ test('zone linting runs entirely locally', async ({ page }) => {
 
   await expect(page.getByText(/Parsed 2 records and produced/)).toBeVisible();
   await expect(page.getByText('cname-conflict')).toBeVisible();
+});
+
+test('record studio builds and lints a modern service record locally', async ({ page }) => {
+  await page.goto('/studio/');
+  await page.getByLabel('Owner name').fill('service.example.com.');
+  await page.getByLabel('Record type').selectOption('HTTPS');
+  await page.getByLabel('Target name').fill('.');
+  await page.getByLabel('Service parameters').fill('mandatory=alpn,port\nalpn=h2,h3\nport=443');
+
+  await expect(page.getByText('Ready to add').first()).toBeVisible();
+  await expect(page.getByText(/IN HTTPS 1 \. mandatory=/u)).toBeVisible();
+  await page.getByRole('button', { name: 'Add valid record' }).click();
+  const workingSet = page.getByRole('region', { name: 'Working set' });
+  await workingSet.getByRole('button', { name: 'Lint working set' }).click();
+  await expect(workingSet.getByText('No diagnostics')).toBeVisible();
+});
+
+test('change comparison builds a risk-aware staged rollout', async ({ page }) => {
+  await page.goto('/diff/');
+  await page
+    .getByLabel('Current or earlier snapshot')
+    .fill('@ 3600 IN MX 10 old-mail.example.net.');
+  await page
+    .getByLabel('Proposed or later snapshot')
+    .fill('@ 300 IN MX 10 new-mail.example.net.');
+  await page.getByLabel('Origin for relative names').fill('example.com');
+  await page.getByRole('button', { name: 'Compare snapshots' }).click();
+
+  await expect(page.getByRole('heading', { name: 'Preflight and rollout plan' })).toBeVisible();
+  await expect(page.getByText('high risk', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('3600 seconds', { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'Publish in dependency order' }),
+  ).toBeVisible();
 });
 
 test('local snapshots require opt-in and a separate save', async ({ page }) => {

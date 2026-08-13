@@ -4,8 +4,13 @@ import { CopyButton } from '../components/CopyButton';
 import { SnapshotButton } from '../components/SnapshotButton';
 import { StatusBadge } from '../components/StatusBadge';
 import { ToolIntro } from '../components/ToolIntro';
-import { compareZoneDocuments } from '../core/diff/compare';
-import type { DiffReport, DnsChange } from '../core/diff/types';
+import {
+  compareZoneDocuments,
+  isDefinitiveDnsObservation,
+  omitIncompleteRecordTypes,
+} from '../core/diff/compare';
+import { planDnsChanges } from '../core/diff/plan';
+import type { ChangeRisk, DiffReport, DnsChange, DnsChangePlan } from '../core/diff/types';
 import { validateDnsName } from '../core/dns/names';
 import { bindRecord } from '../core/dns/presentation';
 import { DnsQueryError, type DnsRecordType, type ResolverId } from '../core/dns/types';
@@ -35,6 +40,7 @@ interface DisplayReport {
   readonly before: ZoneDocument;
   readonly currentSnapshot?: string;
   readonly partialErrors: readonly string[];
+  readonly plan: DnsChangePlan;
   readonly report: DiffReport;
 }
 
@@ -50,20 +56,58 @@ function categoryTone(change: DnsChange) {
   return 'warning';
 }
 
+function riskTone(risk: ChangeRisk) {
+  if (risk === 'critical' || risk === 'high') return 'error';
+  if (risk === 'moderate') return 'warning';
+  if (risk === 'low') return 'pass';
+  return 'information';
+}
+
+function dateLabel(value: string | undefined): string {
+  if (value === undefined) return 'Not established';
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(new Date(value));
+}
+
 function markdown(report: DisplayReport): string {
   return [
     '# ZoneSkein DNS change comparison',
     '',
-    '| Category | Owner | Type | Before | After | Disruptive |',
-    '| --- | --- | --- | --- | --- | --- |',
-    ...report.report.changes.map(
-      (change) =>
-        `| ${change.category} | ${change.owner} | ${change.type} | ${recordText(change.before).replaceAll('|', '\\|')} | ${recordText(change.after).replaceAll('|', '\\|')} | ${change.disruptive ? 'yes' : 'no'} |`,
-    ),
+    `Overall risk: ${report.plan.risk}`,
     '',
-    '## Rollout guidance',
+    '| Category | Risk | Owner | Type | Before | After | Rollback |',
+    '| --- | --- | --- | --- | --- | --- | --- |',
+    ...report.report.changes.map((change, index) => {
+      const impact = report.plan.impacts[index];
+      return `| ${change.category} | ${impact?.risk ?? 'unknown'} | ${change.owner} | ${change.type} | ${recordText(change.before).replaceAll('|', '\\|')} | ${recordText(change.after).replaceAll('|', '\\|')} | ${(impact?.rollback ?? '').replaceAll('|', '\\|')} |`;
+    }),
     '',
-    ...report.report.guidance.map((item) => `- ${item}`),
+    '## Preflight findings',
+    '',
+    ...(report.plan.findings.length === 0
+      ? ['- No warning or error findings in the supplied snapshots.']
+      : report.plan.findings.map(
+          (item) => `- **${item.risk} / ${item.code}:** ${item.message}`,
+        )),
+    '',
+    '## Timing evidence',
+    '',
+    `- Planned publication: ${dateLabel(report.plan.timing.plannedAt)}`,
+    `- Largest observed prior TTL: ${report.plan.timing.previousTtlSeconds === undefined ? 'not established' : `${String(report.plan.timing.previousTtlSeconds)} seconds`}`,
+    `- Preparatory publication deadline: ${dateLabel(report.plan.timing.preparationDeadline)}`,
+    `- Earliest change if a lower TTL were published now: ${dateLabel(report.plan.timing.safeChangeAtIfLoweredNow)}`,
+    `- Observed cache rollback horizon: ${dateLabel(report.plan.timing.rollbackCacheHorizon)}`,
+    '',
+    '## Staged rollout',
+    '',
+    ...report.plan.phases.flatMap((phase, index) => [
+      `### ${String(index + 1)}. ${phase.title}`,
+      '',
+      ...phase.actions.map((item) => `- ${item}`),
+      '',
+    ]),
   ].join('\n');
 }
 
@@ -73,6 +117,7 @@ export function DiffPage() {
   const [after, setAfter] = useState('');
   const [domain, setDomain] = useState('');
   const [origin, setOrigin] = useState('');
+  const [plannedAt, setPlannedAt] = useState('');
   const [resolverId, setResolverId] = useState<ResolverId>('google');
   const [types, setTypes] = useState(DEFAULT_CURRENT_TYPES);
   const [state, setState] = useState<'idle' | 'loading' | 'complete' | 'cancelled'>('idle');
@@ -94,15 +139,24 @@ export function DiffPage() {
     setError('');
     setDisplay(null);
     activeRun.current?.cancel();
+    const plannedDate = plannedAt === '' ? undefined : new Date(plannedAt);
+    if (plannedDate !== undefined && Number.isNaN(plannedDate.getTime())) {
+      setError('Enter a valid planned publication date and time.');
+      return;
+    }
     const parseOptions = origin.trim() === '' ? {} : { origin };
     if (mode === 'pasted') {
       const prior = parseZoneSnippet(before, parseOptions);
       const next = parseZoneSnippet(after, parseOptions);
+      const report = compareZoneDocuments(prior, next);
       setDisplay({
         after: next,
         before: prior,
         partialErrors: [],
-        report: compareZoneDocuments(prior, next),
+        plan: planDnsChanges(prior, next, report, {
+          ...(plannedDate === undefined ? {} : { plannedAt: plannedDate }),
+        }),
+        report,
       });
       setState('complete');
       return;
@@ -130,6 +184,13 @@ export function DiffPage() {
             { name: parsed.value, type },
             { checkingDisabled: false, dnssecOk: true },
           );
+          if (!isDefinitiveDnsObservation(response.message.responseCode)) {
+            return {
+              error: `${type}: resolver returned ${response.message.responseCode}; this scope was not compared.`,
+              records: [],
+              type,
+            };
+          }
           return { records: response.message.answers, type };
         } catch (cause) {
           const message =
@@ -153,14 +214,25 @@ export function DiffPage() {
     const partialErrors = outcomes.flatMap((outcome) =>
       outcome.error === undefined ? [] : [outcome.error],
     );
+    const incompleteTypes = outcomes.flatMap((outcome) =>
+      outcome.error === undefined ? [] : [outcome.type],
+    );
     const prior = parseZoneSnippet(currentSnapshot, { origin: parsed.value.ascii });
     const next = parseZoneSnippet(after, { origin: parsed.value.ascii });
+    const report = omitIncompleteRecordTypes(
+      compareZoneDocuments(prior, next),
+      incompleteTypes,
+    );
     setDisplay({
       after: next,
       before: prior,
       currentSnapshot,
       partialErrors,
-      report: compareZoneDocuments(prior, next),
+      plan: planDnsChanges(prior, next, report, {
+        incompleteTypes,
+        ...(plannedDate === undefined ? {} : { plannedAt: plannedDate }),
+      }),
+      report,
     });
     setState('complete');
   }
@@ -172,6 +244,7 @@ export function DiffPage() {
     setAfter('');
     setDomain('');
     setOrigin('');
+    setPlannedAt('');
     setError('');
     setDisplay(null);
     setState('idle');
@@ -186,18 +259,16 @@ export function DiffPage() {
         Compare unordered RRsets, TTLs, priorities, values, and presentation. Use pasted
         snapshots or observe selected current records before reviewing a proposed snippet.
       </ToolIntro>
-      <div className="mode-switch" role="tablist" aria-label="Diff source mode">
+      <div className="mode-switch" aria-label="Diff source mode">
         <button
-          role="tab"
-          aria-selected={mode === 'pasted'}
+          aria-pressed={mode === 'pasted'}
           type="button"
           onClick={() => setMode('pasted')}
         >
           Two pasted snapshots
         </button>
         <button
-          role="tab"
-          aria-selected={mode === 'current'}
+          aria-pressed={mode === 'current'}
           type="button"
           onClick={() => setMode('current')}
         >
@@ -296,6 +367,15 @@ export function DiffPage() {
             </div>
           </>
         )}
+        <div className="field-group">
+          <label htmlFor="planned-change-time">Planned publication time (optional)</label>
+          <input
+            id="planned-change-time"
+            type="datetime-local"
+            value={plannedAt}
+            onChange={(event) => setPlannedAt(event.currentTarget.value)}
+          />
+        </div>
         {error !== '' ? (
           <p className="form-error" role="alert">
             {error}
@@ -329,7 +409,7 @@ export function DiffPage() {
         <section className="results" aria-labelledby="diff-results-title">
           <div className="section-heading">
             <div>
-              <p className="eyebrow">Normalized comparison</p>
+              <p className="eyebrow">Normalised comparison</p>
               <h2 id="diff-results-title">Change set</h2>
             </div>
             <div className="export-actions">
@@ -367,6 +447,57 @@ export function DiffPage() {
               </pre>
             </details>
           )}
+          <article className="result-panel change-plan-summary">
+            <div className="result-heading">
+              <div>
+                <p className="eyebrow">Change lab</p>
+                <h3>Preflight and rollout plan</h3>
+              </div>
+              <StatusBadge tone={riskTone(display.plan.risk)}>
+                {display.plan.risk} risk
+              </StatusBadge>
+            </div>
+            <p className="empty-note">
+              This plan is derived from the supplied snapshots. It does not publish records or
+              claim that every recursive cache has converged.
+            </p>
+            <div className="change-timing-grid">
+              <div>
+                <span>Largest prior TTL</span>
+                <strong>
+                  {display.plan.timing.previousTtlSeconds === undefined
+                    ? 'Unknown'
+                    : `${String(display.plan.timing.previousTtlSeconds)} seconds`}
+                </strong>
+              </div>
+              <div>
+                <span>Preparation deadline</span>
+                <strong>{dateLabel(display.plan.timing.preparationDeadline)}</strong>
+              </div>
+              <div>
+                <span>Earliest if lowered now</span>
+                <strong>{dateLabel(display.plan.timing.safeChangeAtIfLoweredNow)}</strong>
+              </div>
+              <div>
+                <span>Rollback cache horizon</span>
+                <strong>{dateLabel(display.plan.timing.rollbackCacheHorizon)}</strong>
+              </div>
+            </div>
+            {display.plan.findings.length === 0 ? (
+              <p className="empty-note">No warning or error findings in these snapshots.</p>
+            ) : (
+              <ul className="diagnostic-list">
+                {display.plan.findings.map((finding) => (
+                  <li key={`${finding.code}-${finding.message}`}>
+                    <StatusBadge tone={riskTone(finding.risk)}>{finding.risk}</StatusBadge>
+                    <span>
+                      <strong>{finding.code}</strong> — {finding.message}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </article>
           <article className="result-panel">
             {display.report.changes.length === 0 ? (
               <p className="empty-note">No semantic, TTL, or formatting changes were found.</p>
@@ -405,8 +536,24 @@ export function DiffPage() {
                           <code className="record-value">{recordText(change.after)}</code>
                         </td>
                         <td>
+                          <StatusBadge
+                            tone={riskTone(display.plan.impacts[index]?.risk ?? 'moderate')}
+                          >
+                            {display.plan.impacts[index]?.risk ?? 'moderate'} risk
+                          </StatusBadge>{' '}
                           {change.explanation}
                           {change.disruptive ? ' Potentially disruptive.' : ''}
+                          {display.plan.impacts[index] === undefined ? null : (
+                            <details className="inline-details">
+                              <summary>Impact and rollback</summary>
+                              <ul>
+                                {display.plan.impacts[index].reasons.map((reason) => (
+                                  <li key={reason}>{reason}</li>
+                                ))}
+                              </ul>
+                              <p>{display.plan.impacts[index].rollback}</p>
+                            </details>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -425,6 +572,21 @@ export function DiffPage() {
               </ul>
             </article>
           ) : null}
+          <article className="result-panel">
+            <h3>Staged rollout</h3>
+            <ol className="rollout-phases">
+              {display.plan.phases.map((phase) => (
+                <li key={phase.id}>
+                  <h4>{phase.title}</h4>
+                  <ul>
+                    {phase.actions.map((action) => (
+                      <li key={action}>{action}</li>
+                    ))}
+                  </ul>
+                </li>
+              ))}
+            </ol>
+          </article>
           <details className="method-note">
             <summary>How normalisation works</summary>
             <p>

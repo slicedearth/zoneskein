@@ -3,6 +3,7 @@ import ipaddr from 'ipaddr.js';
 import { validateDnsName } from '../dns/names';
 import { parseSpfRecord } from '../spf/parser';
 import { parseTtl, parseZoneSnippet } from './parser';
+import { canonicalSvcbKey, decodeBase64, isValidEchConfigList, svcbKeyNumber } from './svcb';
 import type {
   ZoneDiagnostic,
   ZoneDocument,
@@ -36,6 +37,21 @@ function integer(token: ZoneToken | undefined, minimum: number, maximum: number)
   if (token === undefined || !/^\d+$/u.test(token.value)) return false;
   const value = Number(token.value);
   return Number.isInteger(value) && value >= minimum && value <= maximum;
+}
+
+function hexadecimalOctets(value: string): number | null {
+  const compact = value.replaceAll(/\s+/gu, '');
+  return /^(?:[0-9A-Fa-f]{2})+$/u.test(compact) ? compact.length / 2 : null;
+}
+
+function absoluteUri(value: string): boolean {
+  if (!/^[A-Za-z][A-Za-z0-9+.-]*:/u.test(value)) return false;
+  try {
+    new URL(value);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function looksLikeIp(value: string): boolean {
@@ -73,6 +89,245 @@ function targetWarning(
     token,
     `Use ${token.value}. if this target is intended to be absolute.`,
   );
+}
+
+interface ParsedSvcParam {
+  readonly identity: string;
+  readonly key: string;
+  readonly keyNumber: number | null;
+  readonly token: ZoneToken;
+  readonly value?: string;
+}
+
+function parsedSvcParam(token: ZoneToken): ParsedSvcParam | null {
+  const equals = token.value.indexOf('=');
+  const suppliedKey = (equals < 0 ? token.value : token.value.slice(0, equals)).toLowerCase();
+  if (!/^(?:[a-z0-9][a-z0-9-]{0,62}|key(?:0|[1-9]\d{0,4}))$/u.test(suppliedKey)) return null;
+  const keyNumber = svcbKeyNumber(suppliedKey);
+  if (suppliedKey.startsWith('key') && keyNumber === null) return null;
+  const key = canonicalSvcbKey(suppliedKey);
+  return {
+    identity: keyNumber === null ? key : `key${String(keyNumber)}`,
+    key,
+    keyNumber,
+    token,
+    ...(equals < 0 ? {} : { value: token.value.slice(equals + 1) }),
+  };
+}
+
+function lintSvcb(record: ZoneRecord): readonly ZoneDiagnostic[] {
+  const diagnostics: ZoneDiagnostic[] = [];
+  const priority = record.rdata[0];
+  const target = record.rdata[1];
+  if (record.rdata.length < 2 || !integer(priority, 0, 65_535) || target === undefined) {
+    return [
+      item(
+        record,
+        'svcb-malformed',
+        'error',
+        `${record.type} requires a 0–65535 priority, target name, and optional SvcParams.`,
+      ),
+    ];
+  }
+  const targetNotice = targetWarning(record, target);
+  if (targetNotice !== null) diagnostics.push(targetNotice);
+
+  const parsed: ParsedSvcParam[] = [];
+  for (const token of record.rdata.slice(2)) {
+    const parameter = parsedSvcParam(token);
+    if (parameter === null) {
+      diagnostics.push(
+        item(
+          record,
+          'svcb-key-invalid',
+          'error',
+          `SvcParam ${token.value} does not begin with a registered name or keyNNNN value.`,
+          token,
+        ),
+      );
+    } else parsed.push(parameter);
+  }
+
+  const seen = new Set<string>();
+  for (const parameter of parsed) {
+    if (seen.has(parameter.identity))
+      diagnostics.push(
+        item(
+          record,
+          'svcb-key-duplicate',
+          'error',
+          `SvcParam ${parameter.key} is repeated.`,
+          parameter.token,
+        ),
+      );
+    seen.add(parameter.identity);
+    if (parameter.keyNumber === null)
+      diagnostics.push(
+        item(
+          record,
+          'svcb-key-unregistered',
+          'warning',
+          `SvcParam ${parameter.key} is not in the bundled registry view; use its keyNNNN form or confirm the current registration.`,
+          parameter.token,
+        ),
+      );
+    if (parameter.key === 'no-default-alpn' || parameter.key === 'ohttp') {
+      if (parameter.value !== undefined && parameter.value !== '')
+        diagnostics.push(
+          item(
+            record,
+            'svcb-empty-required',
+            'error',
+            `${parameter.key} must have an empty value.`,
+            parameter.token,
+          ),
+        );
+    } else if (parameter.keyNumber !== null && parameter.value === undefined)
+      diagnostics.push(
+        item(
+          record,
+          'svcb-value-required',
+          'error',
+          `${parameter.key} requires a value.`,
+          parameter.token,
+        ),
+      );
+    if (
+      parameter.key === 'port' &&
+      (parameter.value === undefined ||
+        !/^\d+$/u.test(parameter.value) ||
+        Number(parameter.value) < 1 ||
+        Number(parameter.value) > 65_535)
+    )
+      diagnostics.push(
+        item(
+          record,
+          'svcb-port-invalid',
+          'error',
+          'port must be from 1 through 65535.',
+          parameter.token,
+        ),
+      );
+    if (parameter.key === 'alpn' && parameter.value !== undefined) {
+      const protocols = parameter.value.split(',');
+      if (
+        protocols.some((protocol) => protocol === '') ||
+        new Set(protocols).size !== protocols.length
+      )
+        diagnostics.push(
+          item(
+            record,
+            'svcb-alpn-invalid',
+            'error',
+            'alpn requires unique, non-empty comma-separated protocol identifiers.',
+            parameter.token,
+          ),
+        );
+    }
+    if (
+      parameter.key === 'ech' &&
+      (parameter.value === undefined || !isValidEchConfigList(parameter.value))
+    )
+      diagnostics.push(
+        item(
+          record,
+          'svcb-ech-invalid',
+          'error',
+          'ech must contain a structurally valid Base64-encoded ECHConfigList.',
+          parameter.token,
+        ),
+      );
+    if (parameter.key === 'ipv4hint' || parameter.key === 'ipv6hint') {
+      const family = parameter.key === 'ipv4hint' ? 'ipv4' : 'ipv6';
+      if (
+        parameter.value === undefined ||
+        parameter.value.split(',').some((address) => {
+          try {
+            return ipaddr.parse(address).kind() !== family;
+          } catch {
+            return true;
+          }
+        })
+      )
+        diagnostics.push(
+          item(
+            record,
+            'svcb-hint-invalid',
+            'error',
+            `${parameter.key} must contain comma-separated ${family === 'ipv4' ? 'IPv4' : 'IPv6'} addresses.`,
+            parameter.token,
+          ),
+        );
+    }
+  }
+
+  const numbered = parsed.flatMap((parameter) =>
+    parameter.keyNumber === null ? [] : [parameter.keyNumber],
+  );
+  if (numbered.some((number, index) => index > 0 && number < (numbered[index - 1] ?? 0)))
+    diagnostics.push(
+      item(
+        record,
+        'svcb-parameter-order',
+        'warning',
+        'SvcParams are not in canonical increasing key order.',
+      ),
+    );
+
+  const mandatory = parsed.find((parameter) => parameter.key === 'mandatory');
+  if (mandatory !== undefined) {
+    const required = (mandatory.value ?? '').split(',').filter(Boolean);
+    const identities = required.map((key) => {
+      const number = svcbKeyNumber(key.toLowerCase());
+      return number === null ? key.toLowerCase() : `key${String(number)}`;
+    });
+    if (
+      required.length === 0 ||
+      new Set(identities).size !== identities.length ||
+      identities.includes('key0') ||
+      identities.some((identity) => !seen.has(identity))
+    )
+      diagnostics.push(
+        item(
+          record,
+          'svcb-mandatory-inconsistent',
+          'error',
+          'mandatory must list unique other keys that also appear in this record.',
+          mandatory.token,
+        ),
+      );
+  }
+  if (seen.has('key2') && !seen.has('key1'))
+    diagnostics.push(
+      item(
+        record,
+        'svcb-no-default-without-alpn',
+        'error',
+        'no-default-alpn requires an alpn parameter in the same record.',
+      ),
+    );
+
+  const priorityValue = Number(priority?.value);
+  if (priorityValue === 0 && parsed.length > 0)
+    diagnostics.push(
+      item(
+        record,
+        'svcb-alias-parameters',
+        'error',
+        'AliasMode priority 0 records must not contain SvcParams.',
+      ),
+    );
+  if (priorityValue === 0 && target.value === '.')
+    diagnostics.push(
+      item(
+        record,
+        'svcb-alias-root-target',
+        'error',
+        'AliasMode priority 0 requires a non-root target name.',
+        target,
+      ),
+    );
+  return diagnostics;
 }
 
 function lintRecord(record: ZoneRecord, options: ZoneParseOptions): readonly ZoneDiagnostic[] {
@@ -195,7 +450,7 @@ function lintRecord(record: ZoneRecord, options: ZoneParseOptions): readonly Zon
   if (record.type === 'CAA') {
     const tag = record.rdata[1]?.value.toLowerCase();
     if (
-      record.rdata.length < 3 ||
+      record.rdata.length !== 3 ||
       !integer(record.rdata[0], 0, 255) ||
       tag === undefined ||
       !/^[a-z0-9]+$/u.test(tag)
@@ -210,9 +465,183 @@ function lintRecord(record: ZoneRecord, options: ZoneParseOptions): readonly Zon
       );
   }
 
+  if (record.type === 'DNSKEY') {
+    const publicKey = record.rdata
+      .slice(3)
+      .map((token) => token.value)
+      .join('');
+    if (
+      record.rdata.length < 4 ||
+      !integer(record.rdata[0], 0, 65_535) ||
+      record.rdata[1]?.value !== '3' ||
+      !integer(record.rdata[2], 0, 255) ||
+      decodeBase64(publicKey) === null
+    )
+      diagnostics.push(
+        item(
+          record,
+          'dnskey-malformed',
+          'error',
+          'DNSKEY requires flags 0–65535, protocol 3, an algorithm 0–255, and non-empty Base64 key material.',
+        ),
+      );
+  }
+
+  if (record.type === 'DS') {
+    const digestType = record.rdata[2];
+    const digestOctets = hexadecimalOctets(
+      record.rdata
+        .slice(3)
+        .map((token) => token.value)
+        .join(''),
+    );
+    const expected =
+      digestType?.value === '1'
+        ? 20
+        : digestType?.value === '2'
+          ? 32
+          : digestType?.value === '4'
+            ? 48
+            : undefined;
+    if (
+      record.rdata.length < 4 ||
+      !integer(record.rdata[0], 0, 65_535) ||
+      !integer(record.rdata[1], 0, 255) ||
+      !integer(digestType, 0, 255) ||
+      digestOctets === null ||
+      (expected !== undefined && digestOctets !== expected)
+    )
+      diagnostics.push(
+        item(
+          record,
+          'ds-malformed',
+          'error',
+          'DS requires a key tag, algorithm, digest type, and a hexadecimal digest of the required length.',
+        ),
+      );
+  }
+
+  if (record.type === 'SSHFP') {
+    const fingerprintType = record.rdata[1];
+    const octets = hexadecimalOctets(
+      record.rdata
+        .slice(2)
+        .map((token) => token.value)
+        .join(''),
+    );
+    const expected =
+      fingerprintType?.value === '1' ? 20 : fingerprintType?.value === '2' ? 32 : null;
+    if (
+      record.rdata.length < 3 ||
+      !integer(record.rdata[0], 1, 6) ||
+      !integer(fingerprintType, 1, 2) ||
+      octets === null ||
+      expected === null ||
+      octets !== expected
+    )
+      diagnostics.push(
+        item(
+          record,
+          'sshfp-malformed',
+          'error',
+          'SSHFP requires an algorithm 1–6, fingerprint type 1 or 2, and a matching-length hexadecimal fingerprint.',
+        ),
+      );
+  }
+
+  if (record.type === 'TLSA') {
+    const matchingType = record.rdata[2];
+    const octets = hexadecimalOctets(
+      record.rdata
+        .slice(3)
+        .map((token) => token.value)
+        .join(''),
+    );
+    const expected =
+      matchingType?.value === '1' ? 32 : matchingType?.value === '2' ? 64 : undefined;
+    if (
+      record.rdata.length < 4 ||
+      !integer(record.rdata[0], 0, 3) ||
+      !integer(record.rdata[1], 0, 1) ||
+      !integer(matchingType, 0, 2) ||
+      octets === null ||
+      (expected !== undefined && octets !== expected)
+    )
+      diagnostics.push(
+        item(
+          record,
+          'tlsa-malformed',
+          'error',
+          'TLSA requires valid usage, selector, matching type, and hexadecimal association data of the required length.',
+        ),
+      );
+  }
+
+  if (record.type === 'HTTPS' || record.type === 'SVCB') diagnostics.push(...lintSvcb(record));
+
+  if (record.type === 'NAPTR') {
+    const flags = record.rdata[2];
+    const service = record.rdata[3];
+    const expression = record.rdata[4];
+    const replacement = record.rdata[5];
+    if (
+      record.rdata.length !== 6 ||
+      !integer(record.rdata[0], 0, 65_535) ||
+      !integer(record.rdata[1], 0, 65_535) ||
+      flags?.quoted !== true ||
+      service?.quoted !== true ||
+      expression?.quoted !== true ||
+      !/^[A-Za-z0-9]*$/u.test(flags.value)
+    )
+      diagnostics.push(
+        item(
+          record,
+          'naptr-malformed',
+          'error',
+          'NAPTR requires order, preference, three quoted strings, and one replacement name.',
+        ),
+      );
+    if (expression !== undefined && expression.value !== '' && replacement?.value !== '.')
+      diagnostics.push(
+        item(
+          record,
+          'naptr-regexp-replacement',
+          'error',
+          'A NAPTR record with a regular expression must use . as its replacement.',
+          replacement,
+        ),
+      );
+    const warning = targetWarning(record, replacement);
+    if (warning !== null) diagnostics.push(warning);
+  }
+
+  if (record.type === 'URI') {
+    const target = record.rdata[2];
+    if (
+      record.rdata.length !== 3 ||
+      !integer(record.rdata[0], 0, 65_535) ||
+      !integer(record.rdata[1], 0, 65_535) ||
+      target?.quoted !== true ||
+      !absoluteUri(target.value)
+    )
+      diagnostics.push(
+        item(
+          record,
+          'uri-malformed',
+          'error',
+          'URI requires priority and weight values from 0–65535 plus one quoted absolute URI.',
+          target,
+        ),
+      );
+  }
+
   if (record.type === 'SOA') {
-    const numeric = record.rdata.slice(2);
-    if (record.rdata.length !== 7 || numeric.some((token) => parseTtl(token.value) === null))
+    const timings = record.rdata.slice(3);
+    if (
+      record.rdata.length !== 7 ||
+      !integer(record.rdata[2], 0, 0xffff_ffff) ||
+      timings.some((token) => parseTtl(token.value) === null)
+    )
       diagnostics.push(
         item(
           record,

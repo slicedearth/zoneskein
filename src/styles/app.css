@@ -921,6 +921,109 @@ summary {
   border-bottom: 0;
 }
 
+.change-plan-summary > .empty-note {
+  margin: 0;
+}
+
+.change-timing-grid {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  background: var(--bg);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.change-timing-grid div {
+  display: grid;
+  min-width: 0;
+  padding: 0.85rem 1rem;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  gap: 0.35rem;
+}
+
+.change-timing-grid div:nth-child(2n) {
+  border-right: 0;
+}
+
+.change-timing-grid div:nth-last-child(-n + 2) {
+  border-bottom: 0;
+}
+
+.change-timing-grid span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 720;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.change-timing-grid strong {
+  overflow-wrap: anywhere;
+}
+
+.inline-details {
+  margin-top: 0.7rem;
+  color: var(--muted);
+}
+
+.inline-details summary {
+  color: var(--accent-strong);
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.inline-details p,
+.inline-details ul {
+  margin-bottom: 0;
+}
+
+.rollout-phases {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  counter-reset: rollout;
+  list-style: none;
+  gap: 0.8rem;
+}
+
+.rollout-phases > li {
+  position: relative;
+  padding: 1rem 1rem 1rem 3.3rem;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  background: var(--bg);
+  counter-increment: rollout;
+}
+
+.rollout-phases > li::before {
+  position: absolute;
+  top: 1rem;
+  left: 1rem;
+  display: grid;
+  width: 1.55rem;
+  height: 1.55rem;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #071512;
+  content: counter(rollout);
+  font-size: 0.75rem;
+  font-weight: 850;
+  place-items: center;
+}
+
+.rollout-phases h4 {
+  margin: 0 0 0.55rem;
+}
+
+.rollout-phases ul {
+  margin: 0;
+  padding-left: 1.15rem;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
 .dependency-flow {
   display: grid;
   gap: 0.5rem;
@@ -1036,6 +1139,21 @@ summary {
   font-size: 0.82rem;
   line-height: 1.6;
   tab-size: 2;
+}
+
+.record-studio-form .record-studio-wide {
+  grid-column: 1 / -1;
+}
+
+.record-studio-wide textarea {
+  min-height: 8rem;
+  resize: vertical;
+  font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace;
+  line-height: 1.5;
+}
+
+.record-studio-output-grid > * {
+  min-width: 0;
 }
 
 .field-help {
@@ -1392,12 +1510,31 @@ summary {
     grid-column: auto;
   }
 
+  .record-studio-form .record-studio-wide {
+    grid-column: auto;
+  }
+
   .diff-form .zone-source {
     grid-column: auto;
   }
 
   .metadata-grid {
     grid-template-columns: 1fr;
+  }
+
+  .change-timing-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .change-timing-grid div,
+  .change-timing-grid div:nth-child(2n),
+  .change-timing-grid div:nth-last-child(-n + 2) {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .change-timing-grid div:last-child {
+    border-bottom: 0;
   }
 
   .comparison-grid {

@@ -21,6 +21,9 @@ const DnssecPage = lazy(() =>
 const LookupPage = lazy(() =>
   import('./routes/LookupPage').then((module) => ({ default: module.LookupPage })),
 );
+const RecordStudioPage = lazy(() =>
+  import('./routes/RecordStudioPage').then((module) => ({ default: module.RecordStudioPage })),
+);
 const SpfPage = lazy(() =>
   import('./routes/SpfPage').then((module) => ({ default: module.SpfPage })),
 );
@@ -89,6 +92,7 @@ export function App() {
           <a href={href('dnssec/')}>DNSSEC</a>
           <a href={href('spf/')}>SPF</a>
           <a href={href('zone-lint/')}>Zone lint</a>
+          <a href={href('studio/')}>Record studio</a>
           <a href={href('diff/')}>Diff</a>
           <a href={href('dmarc/')}>DMARC</a>
           <a href={href('dkim/')}>DKIM</a>
@@ -127,6 +131,8 @@ export function App() {
             <DmarcPage />
           ) : route === 'diff' ? (
             <DiffPage />
+          ) : route === 'studio' ? (
+            <RecordStudioPage />
           ) : route === 'zone-lint' ? (
             <ZoneLintPage />
           ) : route === 'spf' ? (
@@ -155,6 +161,7 @@ export function App() {
               <div className="secondary-tools" aria-label="Additional tools">
                 <span>Also included</span>
                 <a href={href('lookup/')}>Record explorer</a>
+                <a href={href('studio/')}>Record studio</a>
                 <a href={href('dmarc/')}>DMARC</a>
                 <a href={href('dkim/')}>DKIM</a>
                 <a href={href('caa/')}>CAA</a>
