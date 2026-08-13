@@ -1,4 +1,5 @@
 import { validateDnsName } from './names';
+import { reachableAnswerRecords } from './answer-chain';
 import { parseRecordView } from './records';
 import { DnsQueryError, type DnsRecord, type DnsRecordType, type DnsResolver } from './types';
 import { DnsQueryRun } from '../doh/query-run';
@@ -36,7 +37,11 @@ export async function queryPolicyRecords(
       { name: parsed.value, type },
       { checkingDisabled: false, dnssecOk: true },
     );
-    const records = response.message.answers.filter((record) => record.type === type);
+    const bound =
+      response.message.responseCode === 'NOERROR'
+        ? reachableAnswerRecords(parsed.value.ascii, response.message.answers, type)
+        : { aliases: [], ignoredRecords: 0, records: [] };
+    const records = bound.records;
     const ttlValues = records.map((record) => record.ttl);
     const values =
       type === 'TXT'
@@ -49,6 +54,7 @@ export async function queryPolicyRecords(
         : [];
     return {
       answers: response.message.answers,
+      ...(bound.error === undefined ? {} : { error: bound.error }),
       messageBytes: response.message.messageBytes,
       records,
       responseCode: response.message.responseCode,

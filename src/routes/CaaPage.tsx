@@ -3,57 +3,23 @@ import { useMemo, useRef, useState } from 'react';
 import { CopyButton } from '../components/CopyButton';
 import { StatusBadge } from '../components/StatusBadge';
 import { ToolIntro } from '../components/ToolIntro';
-import {
-  buildCaaRecord,
-  caaParentNames,
-  parseCaaPolicy,
-  type CaaInput,
-} from '../core/caa/parser';
+import { discoverCaaPolicy, type CaaDiscoveryReport } from '../core/caa/discovery';
+import { buildCaaRecord, caaParentNames, parseCaaPolicy } from '../core/caa/parser';
 import { validateDnsName } from '../core/dns/names';
 import { queryPolicyRecords } from '../core/dns/policy-query';
-import type { DnsRecord, ResolverId } from '../core/dns/types';
+import type { ResolverId } from '../core/dns/types';
 import { DnsQueryRun } from '../core/doh/query-run';
 import { RESOLVERS } from '../core/doh/resolvers';
 import { WireDnsResolver } from '../core/doh/wire-resolver';
 
 const RESOLVER_IDS = Object.keys(RESOLVERS) as ResolverId[];
 
-function caaInput(record: DnsRecord): CaaInput | null {
-  if (record.data === null || typeof record.data !== 'object') return null;
-  const value = record.data as Record<string, unknown>;
-  const tag = value['tag'];
-  const content = value['value'];
-  const flags = value['flags'];
-  const critical = value['issuerCritical'];
-  if (typeof tag !== 'string' || typeof content !== 'string') return null;
-  return {
-    flags: typeof flags === 'number' ? flags : critical === true ? 128 : 0,
-    tag,
-    value: content,
-  };
-}
-
-interface CaaReport {
-  readonly errors: readonly string[];
-  readonly queried: readonly string[];
-  readonly records: readonly CaaInput[];
-  readonly source?: string;
-  readonly ttl?: number;
-}
-
-function cnameTarget(records: readonly DnsRecord[]): string | null {
-  const record = records.find((item) => item.type === 'CNAME');
-  return record !== undefined && typeof record.data === 'string'
-    ? record.data.toLowerCase().replace(/\.$/u, '')
-    : null;
-}
-
 export function CaaPage() {
   const [domain, setDomain] = useState('');
   const [resolverId, setResolverId] = useState<ResolverId>('google');
   const [state, setState] = useState<'idle' | 'loading' | 'complete' | 'cancelled'>('idle');
   const [error, setError] = useState('');
-  const [report, setReport] = useState<CaaReport | null>(null);
+  const [report, setReport] = useState<CaaDiscoveryReport | null>(null);
   const [issuer, setIssuer] = useState('letsencrypt.org');
   const [tag, setTag] = useState<'issue' | 'issuewild' | 'issuemail'>('issue');
   const [accountUri, setAccountUri] = useState('');
@@ -92,57 +58,17 @@ export function CaaPage() {
     setReport(null);
     setState('loading');
     const resolver = new WireDnsResolver(RESOLVERS[resolverId]);
-    const queried: string[] = [];
-    const errors: string[] = [];
-    let selected: CaaReport | undefined;
-    parentWalk: for (const name of caaParentNames(parsed.value.ascii)) {
-      let current = name;
-      const aliases = new Set<string>();
-      for (let aliasDepth = 0; aliasDepth <= 8; aliasDepth += 1) {
-        queried.push(current);
-        const result = await queryPolicyRecords(resolver, run, current, 'CAA');
-        const queryError =
-          result.error ??
-          (result.responseCode === 'NOERROR' || result.responseCode === 'NXDOMAIN'
-            ? undefined
-            : `resolver returned ${result.responseCode}`);
-        if (queryError !== undefined) {
-          errors.push(`${current}: ${queryError}`);
-          break parentWalk;
-        }
-        const records = result.records.flatMap((record) => {
-          const value = caaInput(record);
-          return value === null ? [] : [value];
-        });
-        if (records.length > 0) {
-          const source = result.records[0]?.owner.replace(/\.$/u, '') ?? current;
-          selected = {
-            errors,
-            queried,
-            records,
-            source,
-            ...(result.ttl === undefined ? {} : { ttl: result.ttl }),
-          };
-          break parentWalk;
-        }
-        const target = cnameTarget(result.answers);
-        if (target === null) break;
-        if (aliases.has(target) || target === current) {
-          errors.push(`${current}: CNAME cycle encountered during CAA discovery.`);
-          break;
-        }
-        aliases.add(current);
-        current = target;
-        if (aliasDepth === 8) errors.push(`${name}: CNAME chain exceeded eight aliases.`);
-      }
-      if (run.cancelled) break;
-    }
+    const discovered = await discoverCaaPolicy(
+      caaParentNames(parsed.value.ascii),
+      (name) => queryPolicyRecords(resolver, run, name, 'CAA'),
+      () => run.cancelled,
+    );
     if (activeRun.current !== run) return;
     if (run.cancelled) {
       setState('cancelled');
       return;
     }
-    setReport(selected ?? { errors, queried, records: [] });
+    setReport(discovered);
     setState('complete');
   }
 
@@ -162,10 +88,10 @@ export function CaaPage() {
         eyebrow="CAA inspection and authoring"
         title="See where certificate policy is inherited."
       >
-        Follow a bounded CNAME chain, walk from the requested name towards its parents, stop at
-        the first observed CAA RRset, explain critical properties, and author a generic issue or
-        issue, issuewild, or issuemail record locally, including standardised CA account and
-        validation-method constraints.
+        Ask a recursive resolver to process aliases, then walk the original requested name
+        towards its parents and stop at the first observed CAA RRset. Explain critical
+        properties and author issue, issuewild, or issuemail records locally, including
+        standardised CA account and validation-method constraints.
       </ToolIntro>
       <form className="workbench-form" onSubmit={(event) => void inspect(event)}>
         <div className="field-group field-wide">
@@ -257,7 +183,7 @@ export function CaaPage() {
             <dl className="metadata-grid">
               <div>
                 <dt>Requested</dt>
-                <dd>{domain}</dd>
+                <dd>{report.requested}</dd>
               </div>
               <div>
                 <dt>Policy source</dt>
@@ -266,10 +192,13 @@ export function CaaPage() {
               <div>
                 <dt>Inheritance</dt>
                 <dd>
-                  {report.source !== undefined &&
-                  report.source !== domain.toLowerCase().replace(/\.$/u, '')
-                    ? 'Inherited'
-                    : 'Direct or none'}
+                  {report.foundFor === undefined
+                    ? 'None observed'
+                    : report.foundFor === report.requested
+                      ? report.source === report.requested
+                        ? 'Direct'
+                        : 'Direct question, alias-resolved'
+                      : `Inherited from ${report.foundFor}`}
                 </dd>
               </div>
               <div>
@@ -351,6 +280,15 @@ export function CaaPage() {
               This is recursive-resolver evidence. CAA narrows which certificate authorities may
               issue; it does not authenticate a certificate request or ensure issuance.
             </p>
+            {report.aliases.length === 0 ? null : (
+              <ul>
+                {report.aliases.map((alias, index) => (
+                  <li key={`${alias.type}-${alias.owner}-${alias.target}-${String(index)}`}>
+                    {alias.type}: <code>{alias.owner}</code> → <code>{alias.target}</code>
+                  </li>
+                ))}
+              </ul>
+            )}
           </details>
         </section>
       )}
