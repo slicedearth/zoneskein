@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+
+# Builds and generated output
+dist/
+coverage/
+.vite/
+*.tsbuildinfo
+
+# Browser and test output
+playwright-report/
+test-results/
+blob-report/
+
+# Local configuration and Netlify state
+.env
+.env.*
+!.env.example
+.netlify/
+
+# Editors
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+*.swo
+*~
+
+# Operating systems
+.DS_Store
+Thumbs.db
+
+# Local certificates and logs
+*.log
+*.pem
+
