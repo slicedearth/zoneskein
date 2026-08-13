@@ -13,6 +13,8 @@ Contributions should preserve ZoneSkein’s static, privacy-conscious, bounded d
 ## Development
 
 ```sh
+npm install --global npm@12.0.2
+npm --version
 npm ci
 npm run format:check
 npm run lint

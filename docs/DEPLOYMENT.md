@@ -19,8 +19,9 @@ The committed `netlify.toml` uses:
 ```
 
 Node.js 24.19.0 is pinned consistently in `netlify.toml`, `.nvmrc`, and the
-quality workflow. Production dependencies and build tools are locked by
-`package-lock.json`.
+quality workflow. npm 12.0.2 is pinned through Netlify's `NPM_VERSION`, the
+package-manager declaration, and an explicit continuous-integration setup
+step. Production dependencies and build tools are locked by `package-lock.json`.
 
 ## Deploy from a repository
 
@@ -28,7 +29,7 @@ quality workflow. Production dependencies and build tools are locked by
 2. Confirm the build command and publish directory from `netlify.toml`.
 3. Do not configure a functions directory.
 4. Deploy without application environment variables.
-5. Open `/`, `/lookup/`, `/dnssec/`, `/spf/`, `/zone-lint/`, `/diff/`, `/dmarc/`, `/dkim/`, `/caa/`, `/snapshots/`, and `/about/` directly.
+5. Open `/`, `/lookup/`, `/dnssec/`, `/spf/`, `/zone-lint/`, `/studio/`, `/diff/`, `/dmarc/`, `/dkim/`, `/caa/`, `/snapshots/`, and `/about/` directly.
 6. Refresh each route and confirm the application loads.
 7. Run a manual resolver smoke check from a supported browser.
 
