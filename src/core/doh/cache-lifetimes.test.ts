@@ -24,9 +24,12 @@ function record(type: string, ttl: number, section: DnsSection, data: unknown = 
 
 interface ResponseOptions {
   readonly answers?: readonly DnsRecord[];
+  readonly authenticatedData?: boolean;
   readonly authorities?: readonly DnsRecord[];
+  readonly extendedError?: boolean;
   readonly negativeCacheTtl?: number;
   readonly receivedAt?: string;
+  readonly responseCode?: string;
 }
 
 function response(options: ResponseOptions): DnsResponse {
@@ -39,7 +42,7 @@ function response(options: ResponseOptions): DnsResponse {
       answers: options.answers ?? [],
       authorities: options.authorities ?? [],
       flags: {
-        authenticatedData: false,
+        authenticatedData: options.authenticatedData ?? false,
         authoritativeAnswer: false,
         checkingDisabled: false,
         recursionAvailable: true,
@@ -48,12 +51,25 @@ function response(options: ResponseOptions): DnsResponse {
       },
       id: 0,
       messageBytes: 0,
+      ...(options.extendedError === true
+        ? {
+            edns: {
+              dnssecOk: true,
+              extendedErrors: [{ code: 6, name: 'DNSSEC Bogus' }],
+              extendedResponseCode: 0,
+              udpPayloadSize: 1232,
+              version: 0,
+            },
+          }
+        : {}),
       ...(options.negativeCacheTtl === undefined
         ? {}
         : { negativeCacheTtl: options.negativeCacheTtl }),
       questions: [{ class: 'IN', name: 'example.com.', type: 'A' }],
       raw: new Uint8Array(),
-      responseCode: options.negativeCacheTtl === undefined ? 'NOERROR' : 'NXDOMAIN',
+      responseCode:
+        options.responseCode ??
+        (options.negativeCacheTtl === undefined ? 'NOERROR' : 'NXDOMAIN'),
     },
     queryTimeMs: 1,
     question: { name: parsed.value, type: 'A' },
@@ -74,11 +90,21 @@ function expectLifetime(
     expect(cache.get('fixture')).toBeNull();
     return;
   }
-  expect(cache.get('fixture')).toBe(value);
+  const initial = cache.get('fixture');
+  expect(initial !== null && 'response' in initial ? initial.response : null).toBe(value);
   clock = now + lifetimeSeconds * 1000 - 1;
-  expect(cache.get('fixture')).toBe(value);
+  const beforeExpiry = cache.get('fixture');
+  expect(
+    beforeExpiry !== null && 'response' in beforeExpiry ? beforeExpiry.response : null,
+  ).toBe(value);
   clock += 1;
   expect(cache.get('fixture')).toBeNull();
+}
+
+function expectClassification(value: DnsResponse, classification: string) {
+  const cache = new DnsMemoryCache(() => RECEIVED_MILLISECONDS);
+  cache.set('fixture', value);
+  expect(cache.get('fixture')).toMatchObject({ classification });
 }
 
 describe('DNS cache lifetime caps', () => {
@@ -91,22 +117,40 @@ describe('DNS cache lifetime caps', () => {
     );
   });
 
-  it('also caps a complete response by its shortest authority TTL', () => {
+  it('does not let unrelated authority TTLs shorten a positive answer', () => {
     expectLifetime(
       response({
         answers: [record('A', 60, 'answer')],
         authorities: [record('NS', 13, 'authority')],
       }),
-      13,
+      60,
     );
   });
 
-  it.each([
-    ['NSEC', 7],
-    ['NSEC3', 8],
-    ['RRSIG', 9],
-  ])('caps a denial response by its %s TTL', (type, ttl) => {
-    expectLifetime(response({ authorities: [record(type, ttl, 'authority')] }), ttl);
+  it('caps a resolver-authenticated negative by its signed denial evidence', () => {
+    const value = response({
+      authenticatedData: true,
+      authorities: [
+        record('SOA', 60, 'authority'),
+        record('NSEC', 7, 'authority'),
+        record('RRSIG', 9, 'authority', {
+          expiration: RECEIVED_SECONDS + 30,
+          originalTTL: 11,
+        }),
+      ],
+      negativeCacheTtl: 60,
+    });
+    expectClassification(value, 'resolver-ad-negative');
+    expectLifetime(value, 7);
+  });
+
+  it('uses only the derived RFC 2308 TTL for an ordinary negative', () => {
+    const value = response({
+      authorities: [record('SOA', 60, 'authority'), record('NS', 2, 'authority')],
+      negativeCacheTtl: 9,
+    });
+    expectClassification(value, 'ordinary-negative');
+    expectLifetime(value, 9);
   });
 
   it('caps an RRset by the RRSIG Original TTL', () => {
@@ -167,5 +211,26 @@ describe('DNS cache lifetime caps', () => {
   it('subtracts response age from the remaining record TTL', () => {
     const receivedAt = new Date(RECEIVED_MILLISECONDS - 10_000).toISOString();
     expectLifetime(response({ answers: [record('A', 60, 'answer')], receivedAt }), 50);
+  });
+
+  it.each(['SERVFAIL', 'REFUSED', 'FORMERR'])(
+    'uses short failure caching for %s without inheriting authority TTLs',
+    (responseCode) => {
+      const value = response({
+        authorities: [record('SOA', 86_400, 'authority')],
+        responseCode,
+      });
+      expectClassification(value, 'resolution-failure');
+      expectLifetime(value, 5);
+    },
+  );
+
+  it('does not let Extended DNS Error evidence override a useful NOERROR answer', () => {
+    const value = response({
+      answers: [record('A', 86_400, 'answer')],
+      extendedError: true,
+    });
+    expectClassification(value, 'positive');
+    expectLifetime(value, 86_400);
   });
 });

@@ -178,16 +178,24 @@ export class WireDnsResolver implements DnsResolver {
   async query(question: DnsQuestion, options: DnsQueryOptions): Promise<DnsResponse> {
     const key = cacheKey(this.definition, question, options);
     const cached = this.#cache.get(key);
-    if (cached !== null) return { ...cached, cache: 'hit' };
+    if (cached !== null) {
+      if ('error' in cached) throw cached.error;
+      return { ...cached.response, cache: 'hit' };
+    }
 
     const active = this.#inFlight.get(key);
     if (active !== undefined) return { ...(await active), cache: 'shared' };
 
     const promise = this.#request(question, options).finally(() => this.#inFlight.delete(key));
     this.#inFlight.set(key, promise);
-    const response = await promise;
-    this.#cache.set(key, response);
-    return response;
+    try {
+      const response = await promise;
+      this.#cache.set(key, response);
+      return response;
+    } catch (cause) {
+      if (cause instanceof DnsQueryError) this.#cache.setFailure(key, cause);
+      throw cause;
+    }
   }
 
   async #request(question: DnsQuestion, options: DnsQueryOptions): Promise<DnsResponse> {
@@ -289,7 +297,7 @@ export class WireDnsResolver implements DnsResolver {
       }
       throw new DnsQueryError(
         'transport-error',
-        cause instanceof Error ? cause.message : 'The DNS request failed.',
+        'The DNS request failed before a valid resolver response was received.',
       );
     } finally {
       composed.dispose();

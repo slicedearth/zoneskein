@@ -2,6 +2,7 @@ import { encode } from '@dnsquery/dns-packet';
 import { describe, expect, it, vi } from 'vitest';
 
 import { validateDnsName } from '../dns/names';
+import { DnsQueryError } from '../dns/types';
 import { DnsMemoryCache } from './cache';
 import { resolverById } from './resolvers';
 import { Semaphore } from './semaphore';
@@ -26,6 +27,39 @@ function answerResponse(status = 200): Response {
   return new Response(buffer, {
     headers: { 'Content-Type': 'application/dns-message' },
     status,
+  });
+}
+
+function resolutionFailureResponse(responseCode: 'FORMERR' | 'REFUSED' | 'SERVFAIL'): Response {
+  const responseCodes = { FORMERR: 1, REFUSED: 5, SERVFAIL: 2 } as const;
+  const body = encode({
+    authorities: [
+      {
+        class: 'IN',
+        data: {
+          expire: 604_800,
+          minimum: 86_400,
+          mname: 'ns1.example.com.',
+          refresh: 3_600,
+          retry: 600,
+          rname: 'hostmaster.example.com.',
+          serial: 1,
+        },
+        name: 'example.com.',
+        ttl: 86_400,
+        type: 'SOA',
+      },
+    ],
+    flags: 0x8180 | responseCodes[responseCode],
+    id: 0,
+    questions: [{ class: 'IN', name: 'example.com.', type: 'A' }],
+    type: 'response',
+  });
+  const buffer = new ArrayBuffer(body.byteLength);
+  new Uint8Array(buffer).set(body);
+  return new Response(buffer, {
+    headers: { 'Content-Type': 'application/dns-message' },
+    status: 200,
   });
 }
 
@@ -98,6 +132,141 @@ describe('wire DoH resolver', () => {
       resolver.query(question(), { checkingDisabled: false, dnssecOk: false }),
     ).rejects.toMatchObject({ code: 'rate-limited', retryAfterMs: 12_000 });
     expect(imposeCooldown).toHaveBeenCalledWith('quad9', 12_000);
+  });
+
+  it('recovers from a transient SERVFAIL without inheriting its authority TTL', async () => {
+    let now = Date.now();
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(resolutionFailureResponse('SERVFAIL'))
+      .mockResolvedValueOnce(answerResponse());
+    const resolver = new WireDnsResolver(resolverById('google'), {
+      ...testDependencies(fetchMock),
+      cache: new DnsMemoryCache(() => now),
+    });
+    const options = { checkingDisabled: false, dnssecOk: true };
+
+    await expect(resolver.query(question(), options)).resolves.toMatchObject({
+      cache: 'miss',
+      message: { responseCode: 'SERVFAIL' },
+    });
+    await expect(resolver.query(question(), options)).resolves.toMatchObject({
+      cache: 'hit',
+      message: { responseCode: 'SERVFAIL' },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    now += 5_000;
+    await expect(resolver.query(question(), options)).resolves.toMatchObject({
+      cache: 'miss',
+      message: { responseCode: 'NOERROR' },
+    });
+    await expect(resolver.query(question(), options)).resolves.toMatchObject({
+      cache: 'hit',
+      message: { responseCode: 'NOERROR' },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('briefly caches HTTP failures and retries after the bounded backoff', async () => {
+    let now = Date.now();
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response('', { status: 503 }))
+      .mockResolvedValueOnce(answerResponse());
+    const resolver = new WireDnsResolver(resolverById('google'), {
+      ...testDependencies(fetchMock),
+      cache: new DnsMemoryCache(() => now),
+    });
+    const options = { checkingDisabled: false, dnssecOk: false };
+
+    await expect(resolver.query(question(), options)).rejects.toMatchObject({
+      code: 'http-error',
+    });
+    await expect(resolver.query(question(), options)).rejects.toMatchObject({
+      code: 'http-error',
+      retryAfterMs: 5_000,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    now += 5_000;
+    await expect(resolver.query(question(), options)).resolves.toMatchObject({
+      cache: 'miss',
+      message: { responseCode: 'NOERROR' },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('sanitises cached transport failures and recovers after the bounded backoff', async () => {
+    let now = Date.now();
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(
+        new Error('private-query.example.test appeared in transport state'),
+      )
+      .mockResolvedValueOnce(answerResponse());
+    const resolver = new WireDnsResolver(resolverById('cloudflare'), {
+      ...testDependencies(fetchMock),
+      cache: new DnsMemoryCache(() => now),
+    });
+    const options = { checkingDisabled: false, dnssecOk: false };
+
+    const firstFailure = await resolver
+      .query(question(), options)
+      .catch((cause: unknown) => cause);
+    expect(firstFailure).toBeInstanceOf(DnsQueryError);
+    if (!(firstFailure instanceof DnsQueryError))
+      throw new Error('Expected a DNS query error.');
+    expect(firstFailure.code).toBe('transport-error');
+    expect(firstFailure.message).not.toContain('private-query.example.test');
+
+    const cachedFailure = await resolver
+      .query(question(), options)
+      .catch((cause: unknown) => cause);
+    expect(cachedFailure).toBeInstanceOf(DnsQueryError);
+    if (!(cachedFailure instanceof DnsQueryError))
+      throw new Error('Expected a DNS query error.');
+    expect(cachedFailure.code).toBe('transport-error');
+    expect(cachedFailure.message).not.toContain('private-query.example.test');
+    expect(cachedFailure.retryAfterMs).toBe(5_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    now += 5_000;
+    await expect(resolver.query(question(), options)).resolves.toMatchObject({
+      cache: 'miss',
+      message: { responseCode: 'NOERROR' },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not turn user cancellation into cached resolution failure state', async () => {
+    let requests = 0;
+    const fetchMock = vi.fn<typeof fetch>((_input, init) => {
+      requests += 1;
+      if (requests > 1) return Promise.resolve(answerResponse());
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener(
+          'abort',
+          () => reject(new DOMException('Aborted', 'AbortError')),
+          { once: true },
+        );
+      });
+    });
+    const resolver = new WireDnsResolver(resolverById('google'), testDependencies(fetchMock));
+    const controller = new AbortController();
+    const pending = resolver.query(question(), {
+      checkingDisabled: false,
+      dnssecOk: false,
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ code: 'aborted' });
+    await expect(
+      resolver.query(question(), { checkingDisabled: false, dnssecOk: false }),
+    ).resolves.toMatchObject({ cache: 'miss' });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('aborts a stalled request after eight seconds', async () => {
