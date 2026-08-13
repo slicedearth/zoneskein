@@ -10,24 +10,43 @@ interface SnapshotButtonProps {
 }
 
 export function SnapshotButton({ content, title, tool }: SnapshotButtonProps) {
-  const [message, setMessage] = useState('Save snapshot');
+  const [state, setState] = useState<'idle' | 'disabled' | 'saved' | 'failed'>('idle');
 
   async function save() {
     if (!snapshotsEnabled()) {
-      setMessage('Enable snapshots first');
+      setState('disabled');
       return;
     }
     try {
       await saveSnapshot({ content, title, tool });
-      setMessage('Saved locally');
+      setState('saved');
     } catch {
-      setMessage('Save failed');
+      setState('failed');
     }
   }
 
+  const visible =
+    state === 'disabled'
+      ? 'Enable snapshots first'
+      : state === 'saved'
+        ? 'Saved locally'
+        : state === 'failed'
+          ? 'Save failed'
+          : 'Save snapshot';
   return (
-    <button className="quiet-button" type="button" onClick={() => void save()}>
-      {message}
-    </button>
+    <span>
+      <button className="quiet-button" type="button" onClick={() => void save()}>
+        {visible}
+      </button>
+      <span className="visually-hidden" role="status" aria-live="polite">
+        {state === 'disabled'
+          ? 'Local snapshots are disabled.'
+          : state === 'saved'
+            ? 'Snapshot saved locally.'
+            : state === 'failed'
+              ? 'Snapshot could not be saved.'
+              : ''}
+      </span>
+    </span>
   );
 }

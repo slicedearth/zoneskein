@@ -29,8 +29,17 @@ export function CopyButton({ label = 'Copy', text }: CopyButtonProps) {
 
   const visible = state === 'copied' ? 'Copied' : state === 'failed' ? 'Copy failed' : label;
   return (
-    <button className="quiet-button" type="button" onClick={() => void copy()}>
-      {visible}
-    </button>
+    <span>
+      <button className="quiet-button" type="button" onClick={() => void copy()}>
+        {visible}
+      </button>
+      <span className="visually-hidden" role="status" aria-live="polite">
+        {state === 'copied'
+          ? `${label} succeeded.`
+          : state === 'failed'
+            ? `${label} failed.`
+            : ''}
+      </span>
+    </span>
   );
 }
