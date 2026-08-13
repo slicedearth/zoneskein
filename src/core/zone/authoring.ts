@@ -1,6 +1,10 @@
 import ipaddr from 'ipaddr.js';
 
 import { validateDnsName } from '../dns/names';
+import {
+  isDeprecatedDsDigestForAuthoring,
+  isDeprecatedSha1DnssecAlgorithm,
+} from '../dnssec/algorithm-policy';
 import { parseTtl } from './parser';
 import { canonicalSvcbKey, decodeBase64, isValidEchConfigList, svcbKeyNumber } from './svcb';
 
@@ -488,6 +492,22 @@ function makeRdata(
           'warning',
         ),
       );
+    if (algorithm !== null && isDeprecatedSha1DnssecAlgorithm(algorithm))
+      diagnostics.push(
+        diagnostic(
+          'ds-algorithm-deprecated',
+          'algorithm',
+          'RFC 9905 prohibits creating DS records with RSA/SHA-1 algorithms 5 or 7.',
+        ),
+      );
+    if (digestType !== null && isDeprecatedDsDigestForAuthoring(digestType))
+      diagnostics.push(
+        diagnostic(
+          'ds-digest-deprecated',
+          'digestType',
+          'RFC 9905 prohibits creating new DS records with SHA-1 digest type 1.',
+        ),
+      );
     const digest = hex(field(draft, 'digest'), 'digest', diagnostics, expected);
     return keyTag === null || algorithm === null || digestType === null || digest === null
       ? null
@@ -501,6 +521,14 @@ function makeRdata(
     if (protocol !== null && protocol !== 3)
       diagnostics.push(
         diagnostic('dnskey-protocol-invalid', 'protocol', 'DNSKEY protocol must be 3.'),
+      );
+    if (algorithm !== null && isDeprecatedSha1DnssecAlgorithm(algorithm))
+      diagnostics.push(
+        diagnostic(
+          'dnskey-algorithm-deprecated',
+          'algorithm',
+          'RFC 9905 prohibits creating DNSKEY and RRSIG records with RSA/SHA-1 algorithms 5 or 7.',
+        ),
       );
     return flags === null || protocol !== 3 || algorithm === null || publicKey === null
       ? null

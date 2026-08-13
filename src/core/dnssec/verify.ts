@@ -1,6 +1,7 @@
 import { toType } from '@dnsquery/dns-packet/types.js';
 
 import type { DnsRecord } from '../dns/types';
+import { canVerifyRrsigAlgorithm } from './algorithm-policy';
 import { parseDnskey, parseRrsig } from './records';
 import type { DnskeyInfo, RrsigInfo, SignatureVerification } from './types';
 import { boundCanonicalRdata } from './wire-evidence';
@@ -350,7 +351,7 @@ function bitLength(bytes: Uint8Array): number {
 }
 
 function browserAlgorithmSupported(algorithm: number): boolean {
-  return [5, 7, 8, 10, 13, 14, 15].includes(algorithm);
+  return canVerifyRrsigAlgorithm(algorithm);
 }
 
 async function importVerificationKey(key: DnskeyInfo): Promise<CryptoKey | null> {

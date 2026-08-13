@@ -30,10 +30,10 @@ function buffer(bytes: Uint8Array): ArrayBuffer {
   return value;
 }
 
-async function testKey(owner: string): Promise<TestKey> {
+async function testKey(owner: string, algorithm: 5 | 7 | 8 = 8): Promise<TestKey> {
   const generated = await crypto.subtle.generateKey(
     {
-      hash: 'SHA-256',
+      hash: algorithm === 8 ? 'SHA-256' : 'SHA-1',
       modulusLength: 1024,
       name: 'RSASSA-PKCS1-v1_5',
       publicExponent: new Uint8Array([1, 0, 1]),
@@ -51,7 +51,7 @@ async function testKey(owner: string): Promise<TestKey> {
   publicKey.set(exponent, 1);
   publicKey.set(modulus, 1 + exponent.length);
   const rawRdata = new Uint8Array(4 + publicKey.length);
-  rawRdata.set([1, 1, 3, 8]);
+  rawRdata.set([1, 1, 3, algorithm]);
   rawRdata.set(publicKey, 4);
   const dnskey: DnsRecord = {
     class: 'IN',
@@ -106,12 +106,17 @@ async function signature(
   return { ...unsigned, data: { ...data, signature: signed } };
 }
 
-function dsRecord(owner: string, key: DnskeyInfo, digest: Uint8Array): DnsRecord {
+function dsRecord(
+  owner: string,
+  key: DnskeyInfo,
+  digest: Uint8Array,
+  digestType: 1 | 2 | 4 = 2,
+): DnsRecord {
   const rawRdata = new Uint8Array(4 + digest.length);
   rawRdata[0] = key.keyTag >>> 8;
   rawRdata[1] = key.keyTag & 0xff;
   rawRdata[2] = key.algorithm;
-  rawRdata[3] = 2;
+  rawRdata[3] = digestType;
   rawRdata.set(digest, 4);
   return {
     class: 'IN',
@@ -292,6 +297,121 @@ describe('independent DNSSEC chain validation', () => {
     expect(report.evidence).toHaveLength(3);
     expect(report.steps[1]?.dsMatches.some((match) => match.matches)).toBe(true);
   });
+
+  it.each([5, 7] as const)(
+    'treats an authenticated algorithm %s DS-only delegation as insecure without querying child keys',
+    async (algorithm) => {
+      const data = await fixtures();
+      const legacyChild = await testKey('test.', algorithm);
+      const digest = await dnskeyDigest('test.', legacyChild.dnskey.rawRdata, 2);
+      const legacyDs = dsRecord('test.', legacyChild.info, digest);
+      const dsSignature = await signature('test.', 'DS', [legacyDs], data.root);
+      const legacyDsResponse = response('test.', 'DS', [legacyDs, dsSignature]);
+      const query: DnssecChainQuery = (owner, type) => {
+        if (owner === '.' && type === 'DNSKEY') return Promise.resolve(data.rootResponse);
+        if (owner === 'test.' && type === 'DS') return Promise.resolve(legacyDsResponse);
+        return Promise.reject(new Error(`Unexpected ${owner} ${type} question.`));
+      };
+
+      const report = await validateDnssecChain('test.', query, {
+        matchTrustAnchors: anchorMatcher(data.root),
+        now: NOW_MILLISECONDS,
+      });
+
+      expect(report.state).toBe('insecure');
+      expect(report.explanation).toMatch(/RFC 9905/iu);
+      expect(report.steps.at(-1)).toMatchObject({ state: 'insecure', zone: 'test.' });
+      expect(report.evidence.map((item) => item.type)).toEqual(['DNSKEY', 'DS']);
+    },
+  );
+
+  it.each(['deprecated-first', 'deprecated-last'] as const)(
+    'does not downgrade through a matching RSA/SHA-1 DS when an acceptable DS is %s and mismatched',
+    async (ordering) => {
+      const data = await fixtures();
+      const legacyChild = await testKey('test.', 5);
+      const legacyDigest = await dnskeyDigest('test.', legacyChild.dnskey.rawRdata, 2);
+      const legacyDs = dsRecord('test.', legacyChild.info, legacyDigest);
+      const mismatchedModernRdata = legacyDs.rawRdata.slice();
+      mismatchedModernRdata[2] = 8;
+      const mismatchedModernDs = { ...legacyDs, rawRdata: mismatchedModernRdata };
+      const dsRecords =
+        ordering === 'deprecated-first'
+          ? [legacyDs, mismatchedModernDs]
+          : [mismatchedModernDs, legacyDs];
+      const dsSignature = await signature('test.', 'DS', dsRecords, data.root);
+      const childSignature = await signature(
+        'test.',
+        'DNSKEY',
+        [legacyChild.dnskey],
+        legacyChild,
+      );
+
+      const report = await validateFixture(data, {
+        child: response('test.', 'DNSKEY', [legacyChild.dnskey, childSignature]),
+        ds: response('test.', 'DS', [...dsRecords, dsSignature]),
+      });
+
+      expect(report.state).toBe('bogus');
+      expect(report.explanation).toMatch(/acceptable/iu);
+      expect(report.steps.at(-1)?.dsMatches).toEqual([]);
+    },
+  );
+
+  it('retains SHA-1 digest type 1 for an otherwise acceptable DS trust path', async () => {
+    const data = await fixtures();
+    const digest = await dnskeyDigest('test.', data.child.dnskey.rawRdata, 1);
+    const sha1DigestDs = dsRecord('test.', data.child.info, digest, 1);
+    const dsSignature = await signature('test.', 'DS', [sha1DigestDs], data.root);
+
+    const report = await validateFixture(data, {
+      ds: response('test.', 'DS', [sha1DigestDs, dsSignature]),
+    });
+
+    expect(report.state).toBe('secure');
+    expect(report.steps.at(-1)?.dsMatches).toEqual([
+      expect.objectContaining({ digestType: 1, matches: true }),
+    ]);
+  });
+
+  it.each([5, 7] as const)(
+    'retains legacy algorithm %s RRSIG verification below a modern DS trust path',
+    async (algorithm) => {
+      const data = await fixtures();
+      const legacySigner = await testKey('test.', algorithm);
+      const keys = [data.child.dnskey, legacySigner.dnskey];
+      const keySignature = await signature('test.', 'DNSKEY', keys, data.child);
+      const address: DnsRecord = {
+        class: 'IN',
+        data: '192.0.2.1',
+        owner: 'test.',
+        rawRdata: new Uint8Array([192, 0, 2, 1]),
+        section: 'answer',
+        ttl: 300,
+        type: 'A',
+        typeCode: 1,
+      };
+      const addressSignature = await signature('test.', 'A', [address], legacySigner);
+      const addressResponse = response('test.', 'A', [address, addressSignature]);
+      const query: DnssecChainQuery = (owner, type) => {
+        if (owner === 'test.' && type === 'DNSKEY')
+          return Promise.resolve(response('test.', 'DNSKEY', [...keys, keySignature]));
+        if (owner === 'test.' && type === 'A') return Promise.resolve(addressResponse);
+        return fixtureQuery(data)(owner, type);
+      };
+
+      const report = await validateDnssecChain('test.', query, {
+        matchTrustAnchors: anchorMatcher(data.root),
+        now: NOW_MILLISECONDS,
+        rrsetType: 'A',
+      });
+
+      expect(report.state).toBe('secure');
+      expect(report.application?.verifications).toEqual([
+        expect.objectContaining({ algorithm, status: 'verified' }),
+      ]);
+    },
+  );
 
   it('continues a secure chain into an exact positive application RRset', async () => {
     const data = await fixtures();

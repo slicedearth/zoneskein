@@ -1,4 +1,5 @@
 import type { DnskeyInfo, DsInfo, DsMatch } from './types';
+import { canValidateDsDigestType } from './algorithm-policy';
 import { DnssecWorkBudget } from './work-budget';
 
 function canonicalNameWire(name: string): Uint8Array {
@@ -63,7 +64,7 @@ export async function compareDsToDnskeys(
   const matches: DsMatch[] = [];
   const digests = new Map<DnskeyInfo['record'], Map<number, Promise<Uint8Array>>>();
   for (const ds of dsRecords) {
-    if (ds.digestType !== 1 && ds.digestType !== 2 && ds.digestType !== 4) continue;
+    if (!canValidateDsDigestType(ds.digestType)) continue;
     for (const dnskey of keys) {
       if (dnskey.keyTag !== ds.keyTag || dnskey.algorithm !== ds.algorithm) continue;
       let byType = digests.get(dnskey.record);

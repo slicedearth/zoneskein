@@ -185,4 +185,48 @@ describe('DNS record authoring', () => {
       expect.arrayContaining([expect.objectContaining({ code: 'dnskey-protocol-invalid' })]),
     );
   });
+
+  it.each([5, 7])('blocks deprecated algorithm %s DNSSEC authoring', (algorithm) => {
+    const ds = authorRecord(
+      draft('DS', {
+        algorithm: String(algorithm),
+        digest: 'AA'.repeat(32),
+        digestType: '2',
+        keyTag: '123',
+      }),
+    );
+    const dnskey = authorRecord(
+      draft('DNSKEY', {
+        algorithm: String(algorithm),
+        flags: '257',
+        protocol: '3',
+        publicKey: 'AAAA',
+      }),
+    );
+
+    expect(ds).toMatchObject({ valid: false });
+    expect(ds.diagnostics).toContainEqual(
+      expect.objectContaining({ code: 'ds-algorithm-deprecated', severity: 'error' }),
+    );
+    expect(dnskey).toMatchObject({ valid: false });
+    expect(dnskey.diagnostics).toContainEqual(
+      expect.objectContaining({ code: 'dnskey-algorithm-deprecated', severity: 'error' }),
+    );
+  });
+
+  it('blocks new SHA-1 DS digest authoring independently of the signing algorithm', () => {
+    const result = authorRecord(
+      draft('DS', {
+        algorithm: '8',
+        digest: 'AA'.repeat(20),
+        digestType: '1',
+        keyTag: '123',
+      }),
+    );
+
+    expect(result).toMatchObject({ valid: false });
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({ code: 'ds-digest-deprecated', severity: 'error' }),
+    );
+  });
 });

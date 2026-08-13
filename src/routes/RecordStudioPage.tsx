@@ -150,12 +150,12 @@ const FIELD_DEFINITIONS: Readonly<Record<AuthoringRecordType, readonly FieldDefi
       suggestions: ['8', '13', '14', '15'],
     },
     {
-      help: '2 is SHA-256 and 4 is SHA-384. SHA-1 value 1 is retained for inspection.',
+      help: '2 is SHA-256 and 4 is SHA-384. RFC 9905 prohibits creating new SHA-1 value 1 records.',
       inputMode: 'numeric',
       label: 'Digest type',
       name: 'digestType',
       placeholder: '2',
-      suggestions: ['2', '4', '1'],
+      suggestions: ['2', '4'],
     },
     {
       help: 'Hexadecimal digest without separators.',

@@ -1,5 +1,10 @@
 import type { DnsExtendedError, DnsRecordType, DnsResponse } from '../dns/types';
 import {
+  canEstablishDsTrustPath,
+  canValidateDsDigestType,
+  isDeprecatedSha1DnssecAlgorithm,
+} from './algorithm-policy';
+import {
   validateApplicationRrset,
   type DnssecApplicationResult,
   type DnssecApplicationType,
@@ -129,8 +134,6 @@ function failureState(verifications: readonly SignatureVerification[]): DnssecCh
     ? 'unsupported'
     : 'bogus';
 }
-
-const SUPPORTED_SIGNING_ALGORITHMS = new Set([5, 7, 8, 10, 13, 14, 15]);
 
 function anchorIsCurrent(match: RootTrustAnchorMatch, now: number): boolean {
   return (
@@ -545,6 +548,26 @@ export async function validateDnssecChain(
     }
     authenticatedGroups.push(dsVerifications);
 
+    const acceptableDsRecords = dsRecords.filter((ds) => canEstablishDsTrustPath(ds.algorithm));
+    if (
+      acceptableDsRecords.length === 0 &&
+      dsRecords.every((ds) => isDeprecatedSha1DnssecAlgorithm(ds.algorithm))
+    ) {
+      const explanation = `The authenticated DS RRset for ${zone} contains only RSA/SHA-1 algorithms 5 or 7, which RFC 9905 requires validators to treat as an insecure delegation.`;
+      steps.push({
+        dnskeys: [],
+        dnskeyVerifications: [],
+        ds: dsRecords,
+        dsMatches: [],
+        dsVerifications,
+        explanation,
+        state: 'insecure',
+        validatedAt: new Date(currentTime()).toISOString(),
+        zone,
+      });
+      return finishAuthenticated('insecure', explanation);
+    }
+
     const keyResponse = await ask(zone, 'DNSKEY');
     if (keyResponse === undefined)
       return finish('incomplete', `The DNSKEY RRset for ${zone} could not be retrieved.`);
@@ -571,21 +594,20 @@ export async function validateDnssecChain(
     });
     if (dnskeys.length !== typedKeyRecords.length)
       return finish('bogus', `The DNSKEY RRset for ${zone} contains malformed DNSKEY RDATA.`);
-    const matches = await compareDsToDnskeys(zone, dsRecords, dnskeys, budget);
+    const matches = await compareDsToDnskeys(zone, acceptableDsRecords, dnskeys, budget);
     const matchingKeys = matches
       .filter((match) => match.matches)
       .map((match) => match.dnskey)
       .filter((key, index, values) => values.indexOf(key) === index);
     if (matchingKeys.length === 0) {
       if (budget.exhausted) return finish('incomplete', budget.explanation);
-      const supportedPath = dsRecords.some(
-        (ds) =>
-          [1, 2, 4].includes(ds.digestType) && SUPPORTED_SIGNING_ALGORITHMS.has(ds.algorithm),
+      const supportedPath = acceptableDsRecords.some((ds) =>
+        canValidateDsDigestType(ds.digestType),
       );
       const state: DnssecChainState = supportedPath ? 'bogus' : 'unsupported';
       const explanation = supportedPath
-        ? 'No child DNSKEY matches any supported, locally authenticated parent DS record.'
-        : 'The authenticated DS RRset has no signing-algorithm and digest combination available to this browser validator.';
+        ? 'No child DNSKEY matches any acceptable, locally authenticated parent DS record.'
+        : 'The authenticated DS RRset has no acceptable signing-algorithm and digest combination available to this browser validator.';
       steps.push({
         dnskeys,
         dnskeyVerifications: [],
