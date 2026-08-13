@@ -1,0 +1,67 @@
+name: Release artefacts
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@e51e5fe84fc33b4c73ebe40526b2694712b5b858 # post-v7.0.0 security fix
+        with:
+          cache: npm
+          node-version: 24.19.0
+      - run: npm install --global npm@12.0.2
+      - run: npm ci
+      - run: npm audit --audit-level=high
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run check
+      - run: npm run test:coverage
+      - run: npm run build
+      - name: Create bounded release files
+        env:
+          ARCHIVE_FILE: zoneskein-static.tar.gz
+          SBOM_FILE: zoneskein.cdx.json
+        run: |
+          npm sbom --sbom-format=cyclonedx > "$SBOM_FILE"
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          tar --sort=name --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0 --numeric-owner --pax-option=delete=atime,delete=ctime -czf "$ARCHIVE_FILE" -C dist .
+          sha256sum "$ARCHIVE_FILE" "$SBOM_FILE" > SHA256SUMS
+          test "$(wc -c < "$ARCHIVE_FILE")" -le 4194304
+          test "$(wc -c < "$SBOM_FILE")" -le 4194304
+          jq -e '.bomFormat == "CycloneDX" and (.components | type == "array")' "$SBOM_FILE" >/dev/null
+      - name: Attest release provenance
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          subject-path: zoneskein-static.tar.gz
+      - name: Attest release SBOM
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          sbom-path: zoneskein.cdx.json
+          subject-path: zoneskein-static.tar.gz
+      - name: Upload release files
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          if-no-files-found: error
+          name: zoneskein-release-${{ github.run_id }}
+          path: |
+            zoneskein-static.tar.gz
+            zoneskein.cdx.json
+            SHA256SUMS
+          retention-days: 90

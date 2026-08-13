@@ -24,7 +24,7 @@ npm run build
 npm run test:e2e
 ```
 
-Add focused unit tests for parsers, protocol transformations, bounds, and negative cases. Browser tests should mock DNS-over-HTTPS and cover only critical workflows.
+Add focused unit tests for parsers, protocol transformations, bounds, and negative cases. Browser tests should mock DNS-over-HTTPS and cover only critical workflows. The browser gate runs those workflows in Chromium, Firefox, WebKit, and a mobile Chromium viewport.
 
 ## Protocol changes
 

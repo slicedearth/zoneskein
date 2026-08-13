@@ -8,7 +8,8 @@
   "packageManager": "npm@12.0.2",
   "scripts": {
     "dev": "vite",
-    "build": "node ./node_modules/typescript7/bin/tsc -b && vite build",
+    "build": "node ./node_modules/typescript7/bin/tsc -b && vite build && node scripts/verify-build.ts",
+    "check:build": "node scripts/verify-build.ts",
     "preview": "vite preview",
     "check": "node ./node_modules/typescript7/bin/tsc -b --pretty false",
     "check:dnssec-anchors": "node scripts/check-root-anchors.ts",

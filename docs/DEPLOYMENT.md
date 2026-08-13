@@ -7,6 +7,7 @@ ZoneSkein produces a static `dist` directory with:
 - one application entry point and code-split route assets;
 - `_redirects` for direct-route fallback;
 - `_headers` for Netlify security headers;
+- no production source maps;
 - no function or edge-function bundle;
 - no server endpoint, credential, or environment-specific API URL.
 
@@ -22,6 +23,16 @@ Node.js 24.19.0 is pinned consistently in `netlify.toml`, `.nvmrc`, and the
 quality workflow. npm 12.0.2 is pinned through Netlify's `NPM_VERSION`, the
 package-manager declaration, and an explicit continuous-integration setup
 step. Production dependencies and build tools are locked by `package-lock.json`.
+
+The build finishes by verifying the output allowlist, file and asset-size bounds,
+legal-file copies, resolver/CSP alignment, SPA rewrite, static-only Netlify
+configuration, and SHA-256 hashes of the entry assets. A mismatch fails the build.
+
+Version tags matching `v*` run the same checked build and produce a deterministic
+static archive, CycloneDX software bill of materials, and SHA-256 checksum file.
+The release workflow uploads those bounded files for 90 days and records separate
+GitHub attestations for build provenance and the SBOM. This workflow does not
+deploy the site or create a GitHub release.
 
 ## Deploy from a repository
 

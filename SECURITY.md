@@ -31,4 +31,4 @@ Security fixes are made on the current `main` branch. There is no separate long-
 
 ## Deployment responsibilities
 
-Deployers should preserve the committed Netlify headers, keep dependencies current, review lockfile changes, run all quality gates, and verify live response headers after each deployment. A custom domain should use HTTPS and an appropriate DNS configuration.
+Deployers should preserve the committed Netlify headers, keep dependencies current, review lockfile changes, run all quality gates, and retain the build artefact verifier. Production builds omit source maps and fail when output files, sizes, legal assets, redirects, or resolver/CSP origins depart from the static contract. Tagged release archives are accompanied by checksums, a CycloneDX SBOM, and GitHub build/SBOM attestations; these artefacts do not replace verification of the separately deployed Netlify output. Verify live response headers after each deployment. A custom domain should use HTTPS and an appropriate DNS configuration.
