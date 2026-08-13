@@ -52,9 +52,10 @@ export function AboutPage() {
           <div>
             <strong>DNSSEC</strong>
             <span>
-              Independent root-to-name validation, exact DS and DNSKEY RRsets, selected
-              exact-positive application RRsets, SHA-1/SHA-256/SHA-384 DS matching,
-              authenticated denial, explicit Opt-Out uncertainty, and replayable wire evidence.
+              Independent root-to-answer validation, exact DS and DNSKEY RRsets, selected
+              positive and negative application answers, wildcard and alias proofs,
+              SHA-1/SHA-256/SHA-384 DS matching, explicit Opt-Out uncertainty, and replayable
+              wire evidence.
             </span>
           </div>
           <div>
@@ -121,7 +122,10 @@ export function AboutPage() {
               are used. The local snapshot preference contains no query. A bounded anonymous
               rate ledger stores only opaque request metadata, never questions or answers.
               Manual snapshots remain in IndexedDB. Explicit share links put report data in the
-              URL fragment; browser history and every recipient can still see it.
+              URL fragment; browser history and every recipient can still see it. DNSSEC
+              evidence bundles contain complete raw packets, decoded questions, resolver
+              endpoints, and capture times, so copying, snapshotting, or sharing them exposes
+              those details to the selected destination or recipient.
             </p>
           </div>
           <div>
@@ -148,9 +152,10 @@ export function AboutPage() {
             bursts, but a modified client can bypass it. It is not an enforcement boundary.
           </li>
           <li>
-            DNSSEC validates the delegation path and selected exact-positive application RRsets
-            from bundled IANA root trust anchors. Complete NXDOMAIN, application NODATA,
-            wildcard-denial, and CNAME or DNAME target-continuation proofs remain incomplete.
+            DNSSEC validates supported delegation, positive, NODATA, NXDOMAIN, wildcard, and
+            bounded alias-continuation proof paths from bundled IANA root trust anchors. It is a
+            selected-type validator, not a general recursive resolver, and NSEC3 Opt-Out cannot
+            prove whether a covered delegation exists.
           </li>
           <li>
             SPF snapshots are withheld for macros, exists, ptr, cycles, unresolved dependencies,

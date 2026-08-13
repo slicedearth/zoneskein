@@ -11,7 +11,7 @@ It is not a subdomain scanner, reconnaissance platform, monitoring service, DNS 
 - DNS record explorer with A, AAAA, CNAME, MX, NS, TXT, SOA, CAA, SRV, PTR, DS, DNSKEY, RRSIG, NSEC, NSEC3, TLSA, HTTPS, and SVCB support.
 - RFC 8484 wire-format DNS-over-HTTPS to fixed Google Public DNS, Cloudflare 1.1.1.1, and Quad9 endpoints, using the browser-compatible GET or POST method each endpoint supports.
 - Side-by-side recursive-resolver comparison, exact DNS message sizes, EDNS Extended DNS Error explanations, RFC 2308 negative-cache TTLs, normalised record fields, PTR conversion, and plain, BIND, JSON, or Markdown exports.
-- Independent DNSSEC chain and exact-positive RRset validation from bundled IANA root trust anchors, with authenticated DS and DNSKEY RRsets, selected application RRsets, SHA-1/SHA-256/SHA-384 DS matching, exact NSEC/NSEC3 delegation proofs, explicit NSEC3 Opt-Out uncertainty, and browser-supported RSA, ECDSA, and Ed25519 verification.
+- Independent DNSSEC validation from bundled IANA root trust anchors, with authenticated DS and DNSKEY chains, positive and negative selected application answers, wildcard proofs, bounded CNAME/DNAME/SVCB/HTTPS alias continuation, SHA-1/SHA-256/SHA-384 DS matching, explicit NSEC3 Opt-Out uncertainty, and browser-supported RSA, ECDSA, and Ed25519 verification.
 - Ordered SPF lexer and parser, recursive include/redirect graph, path-aware ten-term and void-lookup analysis, A/MX expansion, cycle detection, and guarded point-in-time snapshots with provenance.
 - Sender-context SPF evaluation for a supplied SMTP client IP, MAIL FROM identity, HELO/EHLO domain, and optional receiver name, with ordered mechanism evaluation, bounded macro expansion and DNS work, publisher explanations, and a replayable evidence trace.
 - Recoverable zone-snippet parser and linter for common records, directives, inherited owners, multiline records, TXT chunks, and cross-record conflicts.
@@ -103,7 +103,7 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 ZoneSkein reports evidence conservatively:
 
 - recursive answers are point-in-time observations, not authoritative answers or proof of global propagation;
-- DNSSEC validates the delegation chain and selected exact-positive application RRsets from bundled IANA root trust anchors at one common instant. Complete NXDOMAIN, application NODATA, wildcard-denial, and CNAME or DNAME target-continuation proofs remain incomplete; an NSEC3 Opt-Out interval cannot authenticate whether a covered delegation exists;
+- DNSSEC validates supported delegation, positive, NODATA, NXDOMAIN, wildcard, and alias-continuation proof paths from bundled IANA root trust anchors at one common instant. It is still a bounded selected-type validator rather than a general recursive resolver, and an NSEC3 Opt-Out interval cannot authenticate whether a covered delegation exists;
 - SPF flattening is a time-bound snapshot and is withheld whenever preserving the effective pass set would require guessing or sender context;
 - the zone parser is a practical subset, not a complete BIND or provider-specific parser;
 - DMARC policy publication does not prove alignment. Alignment mode evaluates supplied prior SPF and DKIM authentication results; DKIM message mode verifies supported signatures but does not establish DMARC alignment, ARC handling, reputation, or delivery; CAA publication does not guarantee issuance.

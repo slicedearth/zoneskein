@@ -5,10 +5,12 @@ All notable changes to ZoneSkein are documented here.
 ## Unreleased
 
 - Corrected DNSSEC algorithm policy for RFC 9905: legacy RSA/SHA-1 signatures remain verifiable, but algorithm 5 or 7 DS records can no longer establish a secure delegation.
+- Completed bounded DNSSEC validation for application NODATA, NXDOMAIN, wildcard-positive and wildcard-NODATA proof sets, RFC 9824 compact denial, and authenticated CNAME, DNAME, SVCB, and HTTPS alias continuation.
 - Added fail-closed parser, diagnostic, record, change, and finding limits to Change Lab and replaced repeated dense-record scans with indexed comparison.
 - Separated positive, negative, and resolution-failure cache lifetimes so transient failures receive only a bounded five-second to five-minute backoff.
 - Made local snapshot erasure cross-tab aware and delayed the disabled/erased confirmation until IndexedDB deletion succeeds.
 - Added a checked, source-map-free static build artefact; tagged archive, CycloneDX SBOM, checksum, and provenance generation; enforced coverage and dependency/security scanning; and Chromium, Firefox, WebKit, and mobile Chromium browser coverage.
+- Added deterministic bounded property tests for DNS wire, zone parsing, and semantic comparison, plus automated WCAG route, reflow, keyboard, forced-colours, and reduced-motion checks.
 
 ## 0.1.0 — 2026-08-13
 

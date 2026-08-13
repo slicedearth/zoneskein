@@ -16,7 +16,7 @@ Application, protocol, test, and build-configuration source is strict TypeScript
 
 - `dns` validates names, models questions and responses, encodes or decodes DNS wire messages, parses record views, and formats exports;
 - `doh` owns fixed resolver definitions, timeouts, caching, deduplication, concurrency, rate limiting, cooldowns, cancellation, and per-run budgets;
-- `dnssec` anchors trust in a bundled IANA root set, validates exact DS and DNSKEY RRsets, compares DS digests, evaluates bounded authenticated-denial proofs, and verifies selected exact-positive application RRsets from losslessly bound raw-wire evidence;
+- `dnssec` anchors trust in a bundled IANA root set, validates DS and DNSKEY chains, compares DS digests, evaluates bounded NSEC/NSEC3 denial proofs, follows authenticated aliases, and verifies selected positive or negative application results from losslessly bound raw-wire evidence;
 - `spf` lexes and parses ordered terms, resolves bounded dependency graphs, measures worst-case paths, constructs guarded snapshots, and evaluates bounded sender context with macro and DNS evidence;
 - `zone` tokenises and lints recoverable zone snippets and serialises supported authoring records;
 - `diff` normalises records, classifies semantic changes, and derives bounded preflight, risk, timing, rollback, and staged-rollout guidance;
