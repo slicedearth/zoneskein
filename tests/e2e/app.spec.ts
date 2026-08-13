@@ -184,4 +184,11 @@ test('local snapshots require opt-in and a separate save', async ({ page }) => {
 
   await expect(page.getByText('Snapshot saved in this browser.')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Local test report' })).toBeVisible();
+  await page.getByRole('button', { name: 'Disable and erase all' }).click();
+
+  await expect(
+    page.getByText('Local snapshots and the opt-in preference were erased.'),
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Enable local snapshots' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Local test report' })).toHaveCount(0);
 });

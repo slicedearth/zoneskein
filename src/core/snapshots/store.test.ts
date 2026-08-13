@@ -100,6 +100,51 @@ describe('explicit local snapshots', () => {
     expect(await listSnapshots()).toEqual([]);
   });
 
+  it('keeps the opt-in preference until a blocked database deletion completes', async () => {
+    enableSnapshots();
+    await saveSnapshot({ content: 'record', title: 'Lookup', tool: 'lookup' });
+    const blockingDatabase = await openSnapshotDatabase();
+    let blocked = false;
+
+    const erasure = disableAndEraseSnapshots(() => {
+      blocked = true;
+      expect(snapshotsEnabled()).toBe(true);
+      blockingDatabase.close();
+    });
+
+    await erasure;
+    expect(blocked).toBe(true);
+    expect(snapshotsEnabled()).toBe(false);
+    expect(await storedRowCount()).toBe(0);
+  });
+
+  it('reports a storage-denied opt-in without claiming snapshots are enabled', () => {
+    const deniedStorage = memoryStorage();
+    deniedStorage.setItem = () => {
+      throw new DOMException('Denied', 'SecurityError');
+    };
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: deniedStorage,
+    });
+
+    expect(() => enableSnapshots()).toThrow('Browser storage did not allow local snapshots.');
+    expect(snapshotsEnabled()).toBe(false);
+  });
+
+  it('treats a storage-denied preference read as disabled', () => {
+    const deniedStorage = memoryStorage();
+    deniedStorage.getItem = () => {
+      throw new DOMException('Denied', 'SecurityError');
+    };
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: deniedStorage,
+    });
+
+    expect(snapshotsEnabled()).toBe(false);
+  });
+
   it('round-trips bounded state through a URL fragment', () => {
     const input = { content: 'v=spf1 -all', title: 'SPF report', tool: 'spf' } as const;
     const fragment = snapshotFragment(input);

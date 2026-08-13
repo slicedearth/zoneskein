@@ -9,6 +9,7 @@ import {
 
 const DATABASE_NAME = 'zoneskein-snapshots-v1';
 const ENABLED_KEY = 'zoneskein-snapshots-enabled';
+const CONTROL_CHANNEL_NAME = 'zoneskein-snapshots-control-v1';
 const MAX_SNAPSHOTS = 100;
 export const MAX_SNAPSHOT_CONTENT_OCTETS = 262_144;
 const MAX_TITLE_CHARACTERS = 80;
@@ -46,6 +47,14 @@ interface SnapshotDatabase extends DBSchema {
   };
 }
 
+type SnapshotControlMessage =
+  { action: 'close-databases'; version: 1 } | { action: 'state-changed'; version: 1 };
+
+const activeDatabases = new Set<IDBPDatabase<SnapshotDatabase>>();
+const stateListeners = new Set<() => void>();
+let controlChannel: BroadcastChannel | null | undefined;
+let storageListenerInstalled = false;
+
 function storage(): Storage | null {
   try {
     return typeof window === 'undefined' ? null : window.localStorage;
@@ -54,13 +63,79 @@ function storage(): Storage | null {
   }
 }
 
-function database(): Promise<IDBPDatabase<SnapshotDatabase>> {
-  return openDB<SnapshotDatabase>(DATABASE_NAME, 1, {
+function closeDatabase(db: IDBPDatabase<SnapshotDatabase>): void {
+  if (!activeDatabases.delete(db)) return;
+  db.close();
+}
+
+function closeActiveDatabases(): void {
+  for (const db of activeDatabases) closeDatabase(db);
+}
+
+function isControlMessage(value: unknown): value is SnapshotControlMessage {
+  if (value === null || typeof value !== 'object') return false;
+  const candidate = value as { action?: unknown; version?: unknown };
+  return (
+    candidate.version === 1 &&
+    (candidate.action === 'close-databases' || candidate.action === 'state-changed')
+  );
+}
+
+function notifyStateListeners(): void {
+  for (const listener of stateListeners) listener();
+}
+
+function ensureControlChannel(): BroadcastChannel | null {
+  if (controlChannel !== undefined) return controlChannel;
+  if (typeof window === 'undefined' || typeof window.BroadcastChannel === 'undefined') {
+    controlChannel = null;
+    return null;
+  }
+  try {
+    controlChannel = new window.BroadcastChannel(CONTROL_CHANNEL_NAME);
+    controlChannel.addEventListener('message', (event: MessageEvent<unknown>) => {
+      if (!isControlMessage(event.data)) return;
+      if (event.data.action === 'close-databases') closeActiveDatabases();
+      else notifyStateListeners();
+    });
+    return controlChannel;
+  } catch {
+    controlChannel = null;
+    return null;
+  }
+}
+
+function publishControlMessage(message: SnapshotControlMessage): void {
+  try {
+    ensureControlChannel()?.postMessage(message);
+  } catch {
+    // Cross-tab coordination is best effort; IndexedDB still reports blocked deletion.
+  }
+}
+
+function ensureStorageListener(): void {
+  if (storageListenerInstalled || typeof window === 'undefined') return;
+  window.addEventListener('storage', (event) => {
+    if (event.key === ENABLED_KEY) notifyStateListeners();
+  });
+  storageListenerInstalled = true;
+}
+
+async function database(): Promise<IDBPDatabase<SnapshotDatabase>> {
+  ensureControlChannel();
+  const holder: { opened?: IDBPDatabase<SnapshotDatabase> } = {};
+  const opened = await openDB<SnapshotDatabase>(DATABASE_NAME, 1, {
+    blocking() {
+      if (holder.opened !== undefined) closeDatabase(holder.opened);
+    },
     upgrade(db) {
       const store = db.createObjectStore('snapshots', { keyPath: 'id' });
       store.createIndex('createdAt', 'createdAt');
     },
   });
+  holder.opened = opened;
+  activeDatabases.add(opened);
+  return opened;
 }
 
 function isTool(value: unknown): value is SnapshotTool {
@@ -194,44 +269,88 @@ function base64UrlToBytes(value: string): Uint8Array | null {
 }
 
 export function snapshotsEnabled(): boolean {
-  return storage()?.getItem(ENABLED_KEY) === 'true';
+  const target = storage();
+  if (target === null) return false;
+  try {
+    return target.getItem(ENABLED_KEY) === 'true';
+  } catch {
+    return false;
+  }
 }
 
 export function enableSnapshots(): void {
-  storage()?.setItem(ENABLED_KEY, 'true');
+  const target = storage();
+  if (target === null) throw new Error('Browser storage is unavailable.');
+  try {
+    target.setItem(ENABLED_KEY, 'true');
+  } catch {
+    throw new Error('Browser storage did not allow local snapshots.');
+  }
+  notifyStateListeners();
+  publishControlMessage({ action: 'state-changed', version: 1 });
 }
 
-export async function disableAndEraseSnapshots(): Promise<void> {
-  storage()?.removeItem(ENABLED_KEY);
-  await deleteDB(DATABASE_NAME);
+export function subscribeSnapshotState(listener: () => void): () => void {
+  ensureControlChannel();
+  ensureStorageListener();
+  stateListeners.add(listener);
+  return () => stateListeners.delete(listener);
+}
+
+export async function disableAndEraseSnapshots(onBlocked?: () => void): Promise<void> {
+  closeActiveDatabases();
+  publishControlMessage({ action: 'close-databases', version: 1 });
+  await deleteDB(DATABASE_NAME, {
+    blocked() {
+      onBlocked?.();
+    },
+  });
+
+  const target = storage();
+  if (target === null)
+    throw new Error(
+      'Snapshots were erased, but browser storage was unavailable to clear the opt-in preference.',
+    );
+  try {
+    target.removeItem(ENABLED_KEY);
+  } catch {
+    throw new Error(
+      'Snapshots were erased, but the browser did not allow the opt-in preference to be cleared.',
+    );
+  }
+  notifyStateListeners();
+  publishControlMessage({ action: 'state-changed', version: 1 });
 }
 
 export async function saveSnapshot(input: SnapshotInput): Promise<SnapshotRecord> {
   if (!snapshotsEnabled()) throw new Error('Enable local snapshots before saving.');
   const validated = validateInput(input);
   const db = await database();
-  const record: SnapshotRecord = {
-    ...validated,
-    createdAt: new Date().toISOString(),
-    id: crypto.randomUUID(),
-    schemaVersion: 1,
-  };
-  const transaction = db.transaction('snapshots', 'readwrite');
-  await transaction.store.put(record);
-  const index = transaction.store.index('createdAt');
-  const count = await transaction.store.count();
-  if (count > MAX_SNAPSHOTS) {
-    let cursor = await index.openCursor();
-    let excess = count - MAX_SNAPSHOTS;
-    while (cursor !== null && excess > 0) {
-      await cursor.delete();
-      excess -= 1;
-      cursor = await cursor.continue();
+  try {
+    const record: SnapshotRecord = {
+      ...validated,
+      createdAt: new Date().toISOString(),
+      id: crypto.randomUUID(),
+      schemaVersion: 1,
+    };
+    const transaction = db.transaction('snapshots', 'readwrite');
+    await transaction.store.put(record);
+    const index = transaction.store.index('createdAt');
+    const count = await transaction.store.count();
+    if (count > MAX_SNAPSHOTS) {
+      let cursor = await index.openCursor();
+      let excess = count - MAX_SNAPSHOTS;
+      while (cursor !== null && excess > 0) {
+        await cursor.delete();
+        excess -= 1;
+        cursor = await cursor.continue();
+      }
     }
+    await transaction.done;
+    return record;
+  } finally {
+    closeDatabase(db);
   }
-  await transaction.done;
-  db.close();
-  return record;
 }
 
 export async function listSnapshots(): Promise<readonly SnapshotRecord[]> {
@@ -269,15 +388,18 @@ export async function listSnapshots(): Promise<readonly SnapshotRecord[]> {
         right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id),
     );
   } finally {
-    db.close();
+    closeDatabase(db);
   }
 }
 
 export async function deleteSnapshot(id: string): Promise<void> {
   if (!snapshotsEnabled()) throw new Error('Local snapshots are disabled.');
   const db = await database();
-  await db.delete('snapshots', id);
-  db.close();
+  try {
+    await db.delete('snapshots', id);
+  } finally {
+    closeDatabase(db);
+  }
 }
 
 export function snapshotFragment(input: SnapshotInput): string {

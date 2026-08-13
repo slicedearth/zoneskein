@@ -12,6 +12,7 @@ import {
   snapshotFragment,
   snapshotFromFragment,
   snapshotsEnabled,
+  subscribeSnapshotState,
 } from '../core/snapshots/store';
 import {
   SNAPSHOT_TOOLS,
@@ -28,6 +29,7 @@ export function SnapshotsPage() {
   const [content, setContent] = useState('');
   const [message, setMessage] = useState('');
   const [shareLink, setShareLink] = useState('');
+  const [storageBusy, setStorageBusy] = useState(false);
   const [imported] = useState<SnapshotInput | null>(() =>
     snapshotFromFragment(window.location.hash),
   );
@@ -39,26 +41,64 @@ export function SnapshotsPage() {
   useEffect(() => {
     let active = true;
     if (enabled) {
-      void listSnapshots().then((values) => {
-        if (active) setRecords(values);
-      });
+      void listSnapshots()
+        .then((values) => {
+          if (active) setRecords(values);
+        })
+        .catch((cause: unknown) => {
+          if (active)
+            setMessage(
+              cause instanceof Error ? cause.message : 'Local snapshots could not be loaded.',
+            );
+        });
     }
     return () => {
       active = false;
     };
   }, [enabled]);
 
+  useEffect(
+    () =>
+      subscribeSnapshotState(() => {
+        const nextEnabled = snapshotsEnabled();
+        setEnabled(nextEnabled);
+        if (!nextEnabled) setRecords([]);
+      }),
+    [],
+  );
+
   function enable() {
-    enableSnapshots();
-    setEnabled(true);
-    setMessage('Local snapshot storage is enabled on this browser.');
+    try {
+      enableSnapshots();
+      setEnabled(true);
+      setMessage('Local snapshot storage is enabled on this browser.');
+    } catch (cause) {
+      setMessage(
+        cause instanceof Error ? cause.message : 'Local snapshots could not be enabled.',
+      );
+    }
   }
 
   async function disable() {
-    await disableAndEraseSnapshots();
-    setEnabled(false);
-    setRecords([]);
-    setMessage('Local snapshots and the opt-in preference were erased.');
+    setStorageBusy(true);
+    setMessage('Erasing local snapshots…');
+    try {
+      await disableAndEraseSnapshots(() => {
+        setMessage(
+          'Erasure is waiting for another ZoneSkein tab to release local snapshot storage.',
+        );
+      });
+      setEnabled(false);
+      setRecords([]);
+      setMessage('Local snapshots and the opt-in preference were erased.');
+    } catch (cause) {
+      setEnabled(snapshotsEnabled());
+      setMessage(
+        cause instanceof Error ? cause.message : 'Local snapshots could not be erased.',
+      );
+    } finally {
+      setStorageBusy(false);
+    }
   }
 
   async function save(input: SnapshotInput) {
@@ -103,8 +143,13 @@ export function SnapshotsPage() {
           </p>
         </div>
         {enabled ? (
-          <button className="danger-button" type="button" onClick={() => void disable()}>
-            Disable and erase all
+          <button
+            className="danger-button"
+            type="button"
+            disabled={storageBusy}
+            onClick={() => void disable()}
+          >
+            {storageBusy ? 'Erasing…' : 'Disable and erase all'}
           </button>
         ) : (
           <button className="primary-button" type="button" onClick={enable}>
@@ -256,8 +301,17 @@ export function SnapshotsPage() {
                       type="button"
                       onClick={() => {
                         void (async () => {
-                          await deleteSnapshot(record.id);
-                          await refresh();
+                          try {
+                            await deleteSnapshot(record.id);
+                            await refresh();
+                            setMessage('Snapshot deleted from this browser.');
+                          } catch (cause) {
+                            setMessage(
+                              cause instanceof Error
+                                ? cause.message
+                                : 'Snapshot could not be deleted.',
+                            );
+                          }
                         })();
                       }}
                     >
