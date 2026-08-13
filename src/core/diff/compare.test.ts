@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseZoneSnippet } from '../zone/parser';
+import { parseZoneSnippet, ZONE_ANALYSIS_LIMITS } from '../zone/parser';
+import type { ZoneDocument, ZoneRecord } from '../zone/types';
 import {
   compareZoneDocuments,
   isDefinitiveDnsObservation,
@@ -92,5 +93,63 @@ describe('semantic DNS change comparison', () => {
 
     expect(report.changes.map((item) => item.category)).toEqual(['removed', 'added']);
     expect(report.changes[0]?.owner).toBe('a\\046b.example.com.');
+  });
+
+  it('returns no partial change set when either parsed input is incomplete', () => {
+    const oversized = Array.from(
+      { length: ZONE_ANALYSIS_LIMITS.records + 1 },
+      (_, index) => `record-${String(index)} IN A 192.0.2.1`,
+    ).join('\n');
+    const report = compareZoneDocuments(parseZoneSnippet(oversized), parseZoneSnippet(''));
+
+    expect(report).toMatchObject({ changes: [], guidance: [], status: 'incomplete' });
+    expect(report.incompleteReasons.join(' ')).toMatch(/record safety limit/iu);
+  });
+
+  it('returns no prefix when the complete change set would exceed its output limit', () => {
+    const before = Array.from(
+      { length: ZONE_ANALYSIS_LIMITS.records },
+      (_, index) => `old-${String(index)} IN A 192.0.2.1`,
+    ).join('\n');
+    const after = Array.from(
+      { length: ZONE_ANALYSIS_LIMITS.records },
+      (_, index) => `new-${String(index)} IN A 192.0.2.2`,
+    ).join('\n');
+    const report = compare(before, after);
+
+    expect(report).toMatchObject({ changes: [], guidance: [], status: 'incomplete' });
+    expect(report.incompleteReasons.join(' ')).toMatch(/change safety limit/iu);
+  });
+
+  it('keeps dense unmatched RRset comparison near-linear', () => {
+    let propertyReads = 0;
+    const record = (value: string): ZoneRecord => ({
+      className: 'IN',
+      column: 1,
+      get owner() {
+        propertyReads += 1;
+        return 'example.com.';
+      },
+      line: 1,
+      original: `@ IN TXT "${value}"`,
+      ownerToken: '@',
+      rdata: [{ column: 10, line: 1, quoted: true, raw: `"${value}"`, value }],
+      ttl: 300,
+      get type() {
+        propertyReads += 1;
+        return 'TXT';
+      },
+    });
+    const document = (prefix: string): ZoneDocument => ({
+      diagnostics: [],
+      records: Array.from({ length: 512 }, (_, index) => record(`${prefix}-${String(index)}`)),
+      source: '',
+    });
+
+    const report = compareZoneDocuments(document('before'), document('after'));
+
+    expect(report.status).toBe('complete');
+    expect(report.changes).toHaveLength(1024);
+    expect(propertyReads).toBeLessThan(50_000);
   });
 });

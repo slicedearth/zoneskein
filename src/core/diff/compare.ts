@@ -1,12 +1,20 @@
 import ipaddr from 'ipaddr.js';
 
+import { ZONE_ANALYSIS_LIMITS } from '../zone/parser';
 import type { ZoneDocument, ZoneRecord } from '../zone/types';
 import type { DiffReport, DnsChange } from './types';
 
 interface IndexedRecord {
   readonly index: number;
+  readonly mxExchange?: string;
+  readonly pair: string;
   readonly record: ZoneRecord;
   readonly semantic: string;
+}
+
+interface RecordQueue {
+  next: number;
+  readonly records: IndexedRecord[];
 }
 
 function absoluteTarget(value: string, origin: string | undefined): string {
@@ -67,15 +75,19 @@ function semanticRdata(record: ZoneRecord, origin: string | undefined): string {
 }
 
 function indexed(document: ZoneDocument): IndexedRecord[] {
-  return document.records.map((record, index) => ({
-    index,
-    record,
-    semantic: semanticRdata(record, document.origin),
-  }));
-}
-
-function pairKey(record: IndexedRecord): string {
-  return `${record.record.owner}|${record.record.type}`;
+  return document.records.map((record, index) => {
+    const semantic = semanticRdata(record, document.origin);
+    const separator = semantic.indexOf(' ');
+    return {
+      index,
+      ...(record.type === 'MX'
+        ? { mxExchange: separator < 0 ? '' : semantic.slice(separator + 1) }
+        : {}),
+      pair: `${record.owner}|${record.type}`,
+      record,
+      semantic,
+    };
+  });
 }
 
 function disruptive(type: string, category: DnsChange['category']): boolean {
@@ -102,8 +114,80 @@ function change(
   };
 }
 
-function mxExchange(record: IndexedRecord): string {
-  return record.semantic.split(' ').slice(1).join(' ');
+function keyedQueues(
+  records: readonly IndexedRecord[],
+  key: (record: IndexedRecord) => string,
+): Map<string, RecordQueue> {
+  const queues = new Map<string, RecordQueue>();
+  for (const record of records) {
+    const identity = key(record);
+    const queue = queues.get(identity);
+    if (queue === undefined) queues.set(identity, { next: 0, records: [record] });
+    else queue.records.push(record);
+  }
+  return queues;
+}
+
+function takeQueued(
+  queues: ReadonlyMap<string, RecordQueue>,
+  identity: string,
+  used: ReadonlySet<number>,
+): IndexedRecord | undefined {
+  const queue = queues.get(identity);
+  if (queue === undefined) return undefined;
+  while (queue.next < queue.records.length) {
+    const candidate = queue.records[queue.next];
+    queue.next += 1;
+    if (candidate !== undefined && !used.has(candidate.index)) return candidate;
+  }
+  return undefined;
+}
+
+function exactKey(record: IndexedRecord): string {
+  return JSON.stringify([record.pair, record.semantic, record.record.ttl ?? null]);
+}
+
+function semanticKey(record: IndexedRecord): string {
+  return JSON.stringify([record.pair, record.semantic]);
+}
+
+function mxKey(record: IndexedRecord): string {
+  return JSON.stringify([record.pair, record.mxExchange ?? '']);
+}
+
+function incompleteReport(reasons: readonly string[]): DiffReport {
+  return {
+    changes: [],
+    guidance: [],
+    incompleteReasons: [...new Set(reasons)],
+    status: 'incomplete',
+  };
+}
+
+function completeReport(changes: readonly DnsChange[]): DiffReport {
+  return {
+    changes,
+    guidance: guidanceFor(changes),
+    incompleteReasons: [],
+    status: 'complete',
+  };
+}
+
+function documentResourceReason(document: ZoneDocument, label: string): string | null {
+  if (document.incomplete !== undefined) return `${label}: ${document.incomplete.message}`;
+  if (document.source.length > ZONE_ANALYSIS_LIMITS.characters)
+    return `${label} exceeds the ${String(ZONE_ANALYSIS_LIMITS.characters)}-character safety limit.`;
+  if (document.records.length > ZONE_ANALYSIS_LIMITS.records)
+    return `${label} exceeds the ${String(ZONE_ANALYSIS_LIMITS.records)}-record safety limit.`;
+  if (document.diagnostics.length > ZONE_ANALYSIS_LIMITS.diagnostics)
+    return `${label} exceeds the ${String(ZONE_ANALYSIS_LIMITS.diagnostics)}-diagnostic safety limit.`;
+  let tokens = 0;
+  for (const record of document.records) {
+    tokens += record.rdata.length;
+    if (tokens > ZONE_ANALYSIS_LIMITS.tokens)
+      return `${label} exceeds the ${String(ZONE_ANALYSIS_LIMITS.tokens)}-token safety limit.`;
+  }
+  return null;
 }
 
 function guidanceFor(changes: readonly DnsChange[]): readonly string[] {
@@ -145,9 +229,10 @@ export function omitIncompleteRecordTypes(
   report: DiffReport,
   incompleteTypes: readonly string[],
 ): DiffReport {
+  if (report.status === 'incomplete') return report;
   const excluded = new Set(incompleteTypes.map((type) => type.toUpperCase()));
   const changes = report.changes.filter((change) => !excluded.has(change.type.toUpperCase()));
-  return { changes, guidance: guidanceFor(changes) };
+  return completeReport(changes);
 }
 
 export function isDefinitiveDnsObservation(responseCode: string): boolean {
@@ -155,120 +240,150 @@ export function isDefinitiveDnsObservation(responseCode: string): boolean {
 }
 
 export function compareZoneDocuments(before: ZoneDocument, after: ZoneDocument): DiffReport {
+  const inputReasons = [
+    documentResourceReason(before, 'Earlier snapshot'),
+    documentResourceReason(after, 'Later snapshot'),
+  ].flatMap((reason) => (reason === null ? [] : [reason]));
+  if (inputReasons.length > 0) return incompleteReport(inputReasons);
+
   const left = indexed(before);
   const right = indexed(after);
   const leftUsed = new Set<number>();
   const rightUsed = new Set<number>();
   const changes: DnsChange[] = [];
+  const exactRight = keyedQueues(right, exactKey);
+  const semanticRight = keyedQueues(right, semanticKey);
+  const mxRight = keyedQueues(
+    right.filter((record) => record.record.type === 'MX'),
+    mxKey,
+  );
+  const append = (value: DnsChange): boolean => {
+    if (changes.length >= ZONE_ANALYSIS_LIMITS.changes) return false;
+    changes.push(value);
+    return true;
+  };
+  const changeLimit = () =>
+    incompleteReport([
+      `Comparison exceeded the ${String(ZONE_ANALYSIS_LIMITS.changes)}-change safety limit. No partial change set was retained.`,
+    ]);
 
   for (const prior of left) {
-    const exact = right.find(
-      (candidate) =>
-        !rightUsed.has(candidate.index) &&
-        pairKey(candidate) === pairKey(prior) &&
-        candidate.semantic === prior.semantic &&
-        candidate.record.ttl === prior.record.ttl,
-    );
+    const exact = takeQueued(exactRight, exactKey(prior), rightUsed);
     if (exact === undefined) continue;
     leftUsed.add(prior.index);
     rightUsed.add(exact.index);
     if (prior.record.original.trim() !== exact.record.original.trim()) {
-      changes.push(
-        change(
-          'formatting-only',
-          prior.record,
-          exact.record,
-          'Presentation changed while owner, type, TTL, and semantic RDATA remained equivalent.',
-        ),
-      );
+      if (
+        !append(
+          change(
+            'formatting-only',
+            prior.record,
+            exact.record,
+            'Presentation changed while owner, type, TTL, and semantic RDATA remained equivalent.',
+          ),
+        )
+      )
+        return changeLimit();
     }
   }
 
-  for (const prior of left.filter((record) => !leftUsed.has(record.index))) {
-    const sameValue = right.find(
-      (candidate) =>
-        !rightUsed.has(candidate.index) &&
-        pairKey(candidate) === pairKey(prior) &&
-        candidate.semantic === prior.semantic,
-    );
+  for (const prior of left) {
+    if (leftUsed.has(prior.index)) continue;
+    const sameValue = takeQueued(semanticRight, semanticKey(prior), rightUsed);
     if (sameValue === undefined) continue;
     leftUsed.add(prior.index);
     rightUsed.add(sameValue.index);
-    changes.push(
-      change(
-        'ttl-only',
-        prior.record,
-        sameValue.record,
-        `TTL changed from ${String(prior.record.ttl ?? 'unspecified')} to ${String(sameValue.record.ttl ?? 'unspecified')}.`,
-      ),
-    );
+    if (
+      !append(
+        change(
+          'ttl-only',
+          prior.record,
+          sameValue.record,
+          `TTL changed from ${String(prior.record.ttl ?? 'unspecified')} to ${String(sameValue.record.ttl ?? 'unspecified')}.`,
+        ),
+      )
+    )
+      return changeLimit();
   }
 
-  for (const prior of left.filter(
-    (record) => !leftUsed.has(record.index) && record.record.type === 'MX',
-  )) {
-    const priority = right.find(
-      (candidate) =>
-        !rightUsed.has(candidate.index) &&
-        pairKey(candidate) === pairKey(prior) &&
-        mxExchange(candidate) === mxExchange(prior),
-    );
+  for (const prior of left) {
+    if (leftUsed.has(prior.index) || prior.record.type !== 'MX') continue;
+    const priority = takeQueued(mxRight, mxKey(prior), rightUsed);
     if (priority === undefined) continue;
     leftUsed.add(prior.index);
     rightUsed.add(priority.index);
-    changes.push(
-      change(
-        'priority-changed',
-        prior.record,
-        priority.record,
-        `MX preference changed for ${mxExchange(prior)}.`,
-      ),
-    );
+    if (
+      !append(
+        change(
+          'priority-changed',
+          prior.record,
+          priority.record,
+          `MX preference changed for ${prior.mxExchange ?? ''}.`,
+        ),
+      )
+    )
+      return changeLimit();
   }
 
-  const groups = new Set([
-    ...left.filter((record) => !leftUsed.has(record.index)).map(pairKey),
-    ...right.filter((record) => !rightUsed.has(record.index)).map(pairKey),
-  ]);
-  for (const key of groups) {
-    const remainingLeft = left.filter(
-      (record) => !leftUsed.has(record.index) && pairKey(record) === key,
-    );
-    const remainingRight = right.filter(
-      (record) => !rightUsed.has(record.index) && pairKey(record) === key,
-    );
-    if (remainingLeft.length === 1 && remainingRight.length === 1) {
-      const prior = remainingLeft[0];
-      const next = remainingRight[0];
+  const groups = new Map<
+    string,
+    { readonly left: IndexedRecord[]; readonly right: IndexedRecord[] }
+  >();
+  const group = (identity: string) => {
+    const existing = groups.get(identity);
+    if (existing !== undefined) return existing;
+    const created = { left: [], right: [] };
+    groups.set(identity, created);
+    return created;
+  };
+  for (const record of left)
+    if (!leftUsed.has(record.index)) group(record.pair).left.push(record);
+  for (const record of right)
+    if (!rightUsed.has(record.index)) group(record.pair).right.push(record);
+  for (const records of groups.values()) {
+    if (records.left.length === 1 && records.right.length === 1) {
+      const prior = records.left[0];
+      const next = records.right[0];
       if (prior === undefined || next === undefined) continue;
       leftUsed.add(prior.index);
       rightUsed.add(next.index);
-      changes.push(
-        change(
-          'value-changed',
-          prior.record,
-          next.record,
-          'The record value changed after semantic normalisation.',
-        ),
-      );
+      if (
+        !append(
+          change(
+            'value-changed',
+            prior.record,
+            next.record,
+            'The record value changed after semantic normalisation.',
+          ),
+        )
+      )
+        return changeLimit();
     }
   }
 
-  for (const prior of left.filter((record) => !leftUsed.has(record.index))) {
-    changes.push(
-      change(
-        'removed',
-        prior.record,
-        undefined,
-        'The record is absent from the proposed snapshot.',
-      ),
-    );
+  for (const prior of left) {
+    if (leftUsed.has(prior.index)) continue;
+    if (
+      !append(
+        change(
+          'removed',
+          prior.record,
+          undefined,
+          'The record is absent from the proposed snapshot.',
+        ),
+      )
+    )
+      return changeLimit();
   }
-  for (const next of right.filter((record) => !rightUsed.has(record.index))) {
-    changes.push(
-      change('added', undefined, next.record, 'The record is new in the proposed snapshot.'),
-    );
+  for (const next of right) {
+    if (rightUsed.has(next.index)) continue;
+    if (
+      !append(
+        change('added', undefined, next.record, 'The record is new in the proposed snapshot.'),
+      )
+    )
+      return changeLimit();
   }
 
-  return { changes, guidance: guidanceFor(changes) };
+  return completeReport(changes);
 }

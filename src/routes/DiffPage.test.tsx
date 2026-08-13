@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { DnsQueryError } from '../core/dns/types';
 import { WireDnsResolver } from '../core/doh/wire-resolver';
+import { ZONE_ANALYSIS_LIMITS } from '../core/zone/parser';
 import { DiffPage } from './DiffPage';
 
 function dnsResponse(
@@ -35,7 +36,7 @@ function selectOnlyA(domain = 'change.example'): void {
   });
 }
 
-describe('DNS Change Lab current snapshot binding', () => {
+describe('DNS Change Lab', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
@@ -156,5 +157,24 @@ describe('DNS Change Lab current snapshot binding', () => {
     expect(await screen.findByText('The current-DNS query was cancelled.')).toBeVisible();
     expect(screen.queryByText(/Comparison found/u)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
+  });
+
+  it('reports a local resource limit without rendering a partial comparison', () => {
+    const oversized = Array.from(
+      { length: ZONE_ANALYSIS_LIMITS.records + 1 },
+      (_, index) => `record-${String(index)} IN A 192.0.2.1`,
+    ).join('\n');
+    render(<DiffPage />);
+    fireEvent.change(screen.getByLabelText('Current or earlier snapshot'), {
+      target: { value: oversized },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Compare snapshots' }));
+
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      /Comparison incomplete.*record safety/iu,
+    );
+    expect(screen.getByText('Comparison stopped at a local resource limit.')).toBeVisible();
+    expect(screen.queryByText('Change set')).not.toBeInTheDocument();
   });
 });

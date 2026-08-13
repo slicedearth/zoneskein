@@ -16,6 +16,8 @@ export interface DnsChange {
 export interface DiffReport {
   readonly changes: readonly DnsChange[];
   readonly guidance: readonly string[];
+  readonly incompleteReasons: readonly string[];
+  readonly status: 'complete' | 'incomplete';
 }
 
 export type ChangeRisk = 'information' | 'low' | 'moderate' | 'high' | 'critical';
@@ -50,7 +52,9 @@ export interface RolloutPhase {
 export interface DnsChangePlan {
   readonly findings: readonly ChangePreflightFinding[];
   readonly impacts: readonly ChangeImpact[];
+  readonly incompleteReasons: readonly string[];
   readonly phases: readonly RolloutPhase[];
   readonly risk: ChangeRisk;
+  readonly status: 'complete' | 'incomplete';
   readonly timing: ChangeTiming;
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { lintZoneSnippet } from './lint';
-import { parseZoneSnippet } from './parser';
+import { parseZoneSnippet, ZONE_ANALYSIS_LIMITS } from './parser';
 
 describe('zone-snippet parser', () => {
   it('handles comments, directives, multiline records, relative names, and owner inheritance', () => {
@@ -91,6 +91,67 @@ www 300 IN A 192.0.2.10 ; deployed address
       }),
     ]);
   });
+
+  it('accepts exact parser work boundaries and fails closed beyond them', () => {
+    const exactRecords = Array.from(
+      { length: ZONE_ANALYSIS_LIMITS.records },
+      (_, index) => `record-${String(index)} IN A 192.0.2.1`,
+    ).join('\n');
+    const withinRecordLimit = parseZoneSnippet(exactRecords, { origin: 'example.com' });
+    const beyondRecordLimit = parseZoneSnippet(`${exactRecords}\noverflow IN A 192.0.2.2`, {
+      origin: 'example.com',
+    });
+
+    expect(withinRecordLimit.incomplete).toBeUndefined();
+    expect(withinRecordLimit.records).toHaveLength(ZONE_ANALYSIS_LIMITS.records);
+    expect(beyondRecordLimit).toMatchObject({
+      incomplete: { limit: ZONE_ANALYSIS_LIMITS.records, resource: 'records' },
+      records: [],
+    });
+    expect(beyondRecordLimit.diagnostics.at(-1)).toMatchObject({
+      rule: 'parser-resource-limit',
+      severity: 'error',
+    });
+
+    const exactTokenFields = Array.from(
+      { length: ZONE_ANALYSIS_LIMITS.tokens - 3 },
+      () => 'x',
+    ).join(' ');
+    const withinTokenLimit = parseZoneSnippet(`@ IN TXT ${exactTokenFields}`);
+    const beyondTokenLimit = parseZoneSnippet(`@ IN TXT ${exactTokenFields} overflow`);
+
+    expect(withinTokenLimit.incomplete).toBeUndefined();
+    expect(withinTokenLimit.records).toHaveLength(1);
+    expect(beyondTokenLimit).toMatchObject({
+      incomplete: { limit: ZONE_ANALYSIS_LIMITS.tokens, resource: 'tokens' },
+      records: [],
+    });
+  });
+
+  it('bounds parser diagnostics and logical statements without retaining prefixes', () => {
+    const exactDiagnostics = ')'.repeat(ZONE_ANALYSIS_LIMITS.diagnostics);
+    const withinDiagnosticLimit = parseZoneSnippet(exactDiagnostics);
+    const beyondDiagnosticLimit = parseZoneSnippet(`${exactDiagnostics})`);
+
+    expect(withinDiagnosticLimit.incomplete).toBeUndefined();
+    expect(withinDiagnosticLimit.diagnostics).toHaveLength(ZONE_ANALYSIS_LIMITS.diagnostics);
+    expect(beyondDiagnosticLimit).toMatchObject({
+      incomplete: { limit: ZONE_ANALYSIS_LIMITS.diagnostics, resource: 'diagnostics' },
+      records: [],
+    });
+    expect(beyondDiagnosticLimit.diagnostics).toHaveLength(ZONE_ANALYSIS_LIMITS.diagnostics);
+    expect(beyondDiagnosticLimit.diagnostics.at(-1)?.rule).toBe('parser-resource-limit');
+
+    const exactStatements = Array.from(
+      { length: ZONE_ANALYSIS_LIMITS.statements },
+      () => '$TTL 300',
+    ).join('\n');
+    expect(parseZoneSnippet(exactStatements).incomplete).toBeUndefined();
+    expect(parseZoneSnippet(`${exactStatements}\n$TTL 60`)).toMatchObject({
+      incomplete: { limit: ZONE_ANALYSIS_LIMITS.statements, resource: 'statements' },
+      records: [],
+    });
+  });
 });
 
 describe('zone-snippet lint rules', () => {
@@ -175,6 +236,32 @@ service IN HTTPS 0 . alpn="h2" key1="h3"
     );
   });
 
+  it('rejects deprecated SHA-1 DNSSEC authoring while retaining syntactically valid input', () => {
+    const document = lintZoneSnippet(`
+key5 IN DNSKEY 257 3 5 AAAA
+key7 IN DNSKEY 257 3 7 AAAA
+@ IN DS 12345 5 2 ${'AA'.repeat(32)}
+@ IN DS 12345 8 1 ${'BB'.repeat(20)}
+@ IN RRSIG A 5 2 300 1800003600 1799996400 12345 example. AAAA
+`);
+
+    expect(document.records).toHaveLength(5);
+    expect(document.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          rule: 'dnskey-algorithm-deprecated',
+          severity: 'error',
+        }),
+        expect.objectContaining({ rule: 'ds-algorithm-deprecated', severity: 'error' }),
+        expect.objectContaining({ rule: 'ds-digest-deprecated', severity: 'error' }),
+        expect.objectContaining({ rule: 'rrsig-algorithm-deprecated', severity: 'error' }),
+      ]),
+    );
+    expect(
+      document.diagnostics.filter((item) => item.rule === 'dnskey-algorithm-deprecated'),
+    ).toHaveLength(2);
+  });
+
   it('validates NAPTR and URI presentation fields', () => {
     const document = lintZoneSnippet(`
 naptr IN NAPTR 100 10 "u" "E2U+sip" "!^.*$!sip:info@example.com!" target.example.
@@ -193,22 +280,23 @@ uri IN URI 10 1 relative/path
     expect(document.diagnostics.map((item) => item.rule)).toContain('svcb-parameter-order');
   });
 
-  it('bounds same-owner record processing without quadratic array rebuilding', () => {
+  it('fails closed when a zone exceeds the shared record limit', () => {
     const source = Array.from(
-      { length: 4097 },
+      { length: ZONE_ANALYSIS_LIMITS.records + 1 },
       (_, index) => `@ IN TXT "value-${String(index)}"`,
     ).join('\n');
 
     const document = lintZoneSnippet(source, { origin: 'example.com' });
 
-    expect(document.records).toHaveLength(4097);
-    expect(document.diagnostics).toContainEqual(
-      expect.objectContaining({
-        line: 4097,
-        rule: 'lint-record-limit',
-        severity: 'warning',
-      }),
-    );
+    expect(document.records).toEqual([]);
+    expect(document.incomplete).toMatchObject({
+      limit: ZONE_ANALYSIS_LIMITS.records,
+      resource: 'records',
+    });
+    expect(document.diagnostics.at(-1)).toMatchObject({
+      rule: 'parser-resource-limit',
+      severity: 'error',
+    });
   });
 
   it('caps emitted diagnostics for adversarial repeated invalid records', () => {

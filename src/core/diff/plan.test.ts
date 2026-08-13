@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseZoneSnippet } from '../zone/parser';
+import { parseZoneSnippet, ZONE_ANALYSIS_LIMITS } from '../zone/parser';
 import { compareZoneDocuments } from './compare';
 import { planDnsChanges } from './plan';
 
@@ -91,5 +91,41 @@ describe('DNS change planning', () => {
     const report = plan('@ 300 IN TXT "hello"', '@    300 IN TXT "hello"');
     expect(report.risk).toBe('information');
     expect(report.impacts).toEqual([expect.objectContaining({ risk: 'information' })]);
+  });
+
+  it('accepts the exact finding limit and fails closed beyond it', () => {
+    const source = (count: number) =>
+      Array.from(
+        { length: count },
+        (_, index) => `record-${String(index)} IN TYPE${String(index)} value`,
+      ).join('\n');
+    const exactSource = source(ZONE_ANALYSIS_LIMITS.findings);
+    const exactBefore = parseZoneSnippet(exactSource, { origin: 'example.com' });
+    const exactAfter = parseZoneSnippet(exactSource, { origin: 'example.com' });
+    const exact = planDnsChanges(
+      exactBefore,
+      exactAfter,
+      compareZoneDocuments(exactBefore, exactAfter),
+    );
+
+    expect(exact.status).toBe('complete');
+    expect(exact.findings).toHaveLength(ZONE_ANALYSIS_LIMITS.findings);
+
+    const overSource = source(ZONE_ANALYSIS_LIMITS.findings + 1);
+    const overBefore = parseZoneSnippet(overSource, { origin: 'example.com' });
+    const overAfter = parseZoneSnippet(overSource, { origin: 'example.com' });
+    const over = planDnsChanges(
+      overBefore,
+      overAfter,
+      compareZoneDocuments(overBefore, overAfter),
+    );
+
+    expect(over).toMatchObject({
+      findings: [],
+      impacts: [],
+      phases: [],
+      status: 'incomplete',
+    });
+    expect(over.incompleteReasons.join(' ')).toMatch(/finding safety limit/iu);
   });
 });

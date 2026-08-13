@@ -1,8 +1,12 @@
 import ipaddr from 'ipaddr.js';
 
 import { validateDnsName } from '../dns/names';
+import {
+  isDeprecatedDsDigestForAuthoring,
+  isDeprecatedSha1DnssecAlgorithm,
+} from '../dnssec/algorithm-policy';
 import { parseSpfRecord } from '../spf/parser';
-import { parseTtl, parseZoneSnippet } from './parser';
+import { parseTtl, parseZoneSnippet, ZONE_ANALYSIS_LIMITS } from './parser';
 import { canonicalSvcbKey, decodeBase64, isValidEchConfigList, svcbKeyNumber } from './svcb';
 import type {
   ZoneDiagnostic,
@@ -14,8 +18,8 @@ import type {
 
 const encoder = new TextEncoder();
 const DNSSEC_COMPATIBLE_WITH_CNAME = new Set(['CNAME', 'RRSIG', 'NSEC', 'NSEC3']);
-const MAX_LINT_RECORDS = 4096;
-const MAX_LINT_DIAGNOSTICS = 4096;
+const MAX_LINT_RECORDS = ZONE_ANALYSIS_LIMITS.records;
+const MAX_LINT_DIAGNOSTICS = ZONE_ANALYSIS_LIMITS.diagnostics;
 const MAX_RDATA_FIELDS_PER_RECORD = 256;
 
 function item(
@@ -499,9 +503,35 @@ function lintRecord(record: ZoneRecord, options: ZoneParseOptions): readonly Zon
           'DNSKEY requires flags 0–65535, protocol 3, an algorithm 0–255, and non-empty Base64 key material.',
         ),
       );
+    const algorithm = Number(record.rdata[2]?.value);
+    if (Number.isInteger(algorithm) && isDeprecatedSha1DnssecAlgorithm(algorithm))
+      diagnostics.push(
+        item(
+          record,
+          'dnskey-algorithm-deprecated',
+          'error',
+          'RFC 9905 prohibits creating DNSKEY and RRSIG records with RSA/SHA-1 algorithms 5 or 7.',
+          record.rdata[2],
+        ),
+      );
+  }
+
+  if (record.type === 'RRSIG') {
+    const algorithm = Number(record.rdata[1]?.value);
+    if (Number.isInteger(algorithm) && isDeprecatedSha1DnssecAlgorithm(algorithm))
+      diagnostics.push(
+        item(
+          record,
+          'rrsig-algorithm-deprecated',
+          'error',
+          'RFC 9905 prohibits creating RRSIG records with RSA/SHA-1 algorithms 5 or 7.',
+          record.rdata[1],
+        ),
+      );
   }
 
   if (record.type === 'DS') {
+    const algorithm = Number(record.rdata[1]?.value);
     const digestType = record.rdata[2];
     const digestOctets = hexadecimalOctets(
       record.rdata
@@ -531,6 +561,30 @@ function lintRecord(record: ZoneRecord, options: ZoneParseOptions): readonly Zon
           'ds-malformed',
           'error',
           'DS requires a key tag, algorithm, digest type, and a hexadecimal digest of the required length.',
+        ),
+      );
+    if (Number.isInteger(algorithm) && isDeprecatedSha1DnssecAlgorithm(algorithm))
+      diagnostics.push(
+        item(
+          record,
+          'ds-algorithm-deprecated',
+          'error',
+          'RFC 9905 prohibits creating DS records with RSA/SHA-1 algorithms 5 or 7.',
+          record.rdata[1],
+        ),
+      );
+    const digestTypeNumber = Number(digestType?.value);
+    if (
+      Number.isInteger(digestTypeNumber) &&
+      isDeprecatedDsDigestForAuthoring(digestTypeNumber)
+    )
+      diagnostics.push(
+        item(
+          record,
+          'ds-digest-deprecated',
+          'error',
+          'RFC 9905 prohibits creating new DS records with SHA-1 digest type 1.',
+          digestType,
         ),
       );
   }
@@ -721,6 +775,7 @@ function normalizedRdata(record: ZoneRecord): string | null {
 
 export function lintZoneSnippet(source: string, options: ZoneParseOptions = {}): ZoneDocument {
   const document = parseZoneSnippet(source, options);
+  if (document.incomplete !== undefined) return document;
   let diagnosticsTruncated = document.diagnostics.length >= MAX_LINT_DIAGNOSTICS;
   const diagnostics: ZoneDiagnostic[] = document.diagnostics.slice(0, MAX_LINT_DIAGNOSTICS - 1);
   const addDiagnostic = (diagnostic: ZoneDiagnostic) => {

@@ -1,4 +1,5 @@
 import { lintZoneSnippet } from '../zone/lint';
+import { ZONE_ANALYSIS_LIMITS } from '../zone/parser';
 import type { ZoneDocument, ZoneRecord } from '../zone/types';
 import type {
   ChangeImpact,
@@ -23,6 +24,36 @@ const RISK_ORDER: Readonly<Record<ChangeRisk, number>> = {
   high: 3,
   critical: 4,
 };
+
+class FindingCollector {
+  readonly values: ChangePreflightFinding[] = [];
+  incompleteReason: string | undefined;
+  readonly #seen = new Set<string>();
+
+  add(value: ChangePreflightFinding): boolean {
+    const identity = JSON.stringify([value.code, value.message]);
+    if (this.#seen.has(identity)) return true;
+    if (this.values.length >= ZONE_ANALYSIS_LIMITS.findings) {
+      this.incompleteReason = `Change planning exceeded the ${String(ZONE_ANALYSIS_LIMITS.findings)}-finding safety limit. No partial plan was retained.`;
+      return false;
+    }
+    this.#seen.add(identity);
+    this.values.push(value);
+    return true;
+  }
+}
+
+function incompletePlan(reasons: readonly string[]): DnsChangePlan {
+  return {
+    findings: [],
+    impacts: [],
+    incompleteReasons: [...new Set(reasons)],
+    phases: [],
+    risk: 'high',
+    status: 'incomplete',
+    timing: {},
+  };
+}
 
 function greatestRisk(values: readonly ChangeRisk[]): ChangeRisk {
   return values.reduce<ChangeRisk>(
@@ -148,19 +179,24 @@ function serialAdvances(before: number, after: number): boolean {
 function preflight(
   before: ZoneDocument,
   after: ZoneDocument,
-): readonly ChangePreflightFinding[] {
-  const findings: ChangePreflightFinding[] = [];
+  findings: FindingCollector,
+): string | null {
   const linted = lintZoneSnippet(
     after.source,
     after.origin === undefined ? {} : { origin: after.origin },
   );
+  if (linted.incomplete !== undefined)
+    return `Proposed snapshot linting is incomplete: ${linted.incomplete.message}`;
   for (const item of linted.diagnostics) {
     if (item.severity === 'information') continue;
-    findings.push({
-      code: `zone-${item.rule}`,
-      message: `Proposed line ${String(item.line)}:${String(item.column)} — ${item.message}`,
-      risk: item.severity === 'error' ? 'high' : 'moderate',
-    });
+    if (
+      !findings.add({
+        code: `zone-${item.rule}`,
+        message: `Proposed line ${String(item.line)}:${String(item.column)} — ${item.message}`,
+        risk: item.severity === 'error' ? 'high' : 'moderate',
+      })
+    )
+      return findings.incompleteReason ?? 'Change planning exceeded its finding safety limit.';
   }
   const owners = new Set(after.records.map((record) => record.owner.toLowerCase()));
   for (const record of after.records) {
@@ -171,11 +207,16 @@ function preflight(
       (dependency === after.origin || dependency.endsWith(`.${after.origin}`)) &&
       !owners.has(dependency)
     )
-      findings.push({
-        code: 'internal-target-not-in-snapshot',
-        message: `${record.owner} ${record.type} points to in-zone target ${dependency}, but the proposed snippet contains no record at that owner. Confirm it exists outside this partial snapshot before publishing.`,
-        risk: record.type === 'CNAME' || record.type === 'MX' ? 'high' : 'moderate',
-      });
+      if (
+        !findings.add({
+          code: 'internal-target-not-in-snapshot',
+          message: `${record.owner} ${record.type} points to in-zone target ${dependency}, but the proposed snippet contains no record at that owner. Confirm it exists outside this partial snapshot before publishing.`,
+          risk: record.type === 'CNAME' || record.type === 'MX' ? 'high' : 'moderate',
+        })
+      )
+        return (
+          findings.incompleteReason ?? 'Change planning exceeded its finding safety limit.'
+        );
   }
   const beforeSerial = serial(before);
   const afterSerial = serial(after);
@@ -184,26 +225,25 @@ function preflight(
     afterSerial !== null &&
     !serialAdvances(beforeSerial, afterSerial)
   )
-    findings.push({
-      code: 'soa-serial-not-increased',
-      message: `The proposed SOA serial ${String(afterSerial)} does not advance from ${String(beforeSerial)} under DNS serial-number arithmetic. Authoritative secondaries may not load the change.`,
-      risk: 'high',
-    });
-  return findings.filter(
-    (item, index, values) =>
-      values.findIndex(
-        (candidate) => candidate.code === item.code && candidate.message === item.message,
-      ) === index,
-  );
+    if (
+      !findings.add({
+        code: 'soa-serial-not-increased',
+        message: `The proposed SOA serial ${String(afterSerial)} does not advance from ${String(beforeSerial)} under DNS serial-number arithmetic. Authoritative secondaries may not load the change.`,
+        risk: 'high',
+      })
+    )
+      return findings.incompleteReason ?? 'Change planning exceeded its finding safety limit.';
+  return null;
 }
 
 function maximumPreviousTtl(report: DiffReport): number | undefined {
-  const values = report.changes.flatMap((change) =>
-    changeRisk(change) === 'information' || change.before?.ttl === undefined
-      ? []
-      : [change.before.ttl],
-  );
-  return values.length === 0 ? undefined : Math.max(...values);
+  let maximum: number | undefined;
+  for (const change of report.changes) {
+    const ttl = change.before?.ttl;
+    if (changeRisk(change) === 'information' || ttl === undefined) continue;
+    maximum = maximum === undefined ? ttl : Math.max(maximum, ttl);
+  }
+  return maximum;
 }
 
 function phases(report: DiffReport, previousTtl: number | undefined): readonly RolloutPhase[] {
@@ -290,39 +330,71 @@ export function planDnsChanges(
   report: DiffReport,
   options: ChangePlanOptions = {},
 ): DnsChangePlan {
+  if (report.status === 'incomplete') return incompletePlan(report.incompleteReasons);
+  const inputReasons = [
+    before.incomplete === undefined
+      ? null
+      : `Earlier snapshot is incomplete: ${before.incomplete.message}`,
+    after.incomplete === undefined
+      ? null
+      : `Later snapshot is incomplete: ${after.incomplete.message}`,
+  ].flatMap((reason) => (reason === null ? [] : [reason]));
+  if (inputReasons.length > 0) return incompletePlan(inputReasons);
+  if (report.changes.length > ZONE_ANALYSIS_LIMITS.changes)
+    return incompletePlan([
+      `Change planning received more than ${String(ZONE_ANALYSIS_LIMITS.changes)} classified changes.`,
+    ]);
+
   const now = options.now ?? new Date();
   const plannedAt = options.plannedAt;
-  const impacts = report.changes.map(impact);
-  const findings = [...preflight(before, after)];
+  const findings = new FindingCollector();
   if (options.incompleteTypes !== undefined && options.incompleteTypes.length > 0)
-    findings.unshift({
-      code: 'current-observation-incomplete',
-      message: `Current ${[...new Set(options.incompleteTypes)].join(', ')} data could not be observed. Changes for those record types were omitted instead of being guessed.`,
-      risk: 'high',
-    });
+    if (
+      !findings.add({
+        code: 'current-observation-incomplete',
+        message: `Current ${[...new Set(options.incompleteTypes)].join(', ')} data could not be observed. Changes for those record types were omitted instead of being guessed.`,
+        risk: 'high',
+      })
+    )
+      return incompletePlan([
+        findings.incompleteReason ?? 'Change planning exceeded its finding safety limit.',
+      ]);
+  const preflightIncomplete = preflight(before, after, findings);
+  if (preflightIncomplete !== null) return incompletePlan([preflightIncomplete]);
+  const impacts = report.changes.map(impact);
   const previousTtlSeconds = maximumPreviousTtl(report);
   if (
     plannedAt !== undefined &&
     previousTtlSeconds !== undefined &&
     plannedAt.getTime() < now.getTime() + previousTtlSeconds * 1000
   )
-    findings.push({
-      code: 'change-window-too-soon',
-      message: `The planned change is sooner than the largest observed prior TTL horizon of ${String(previousTtlSeconds)} seconds. A TTL lowered now cannot make already cached answers expire by that time.`,
-      risk: 'high',
-    });
+    if (
+      !findings.add({
+        code: 'change-window-too-soon',
+        message: `The planned change is sooner than the largest observed prior TTL horizon of ${String(previousTtlSeconds)} seconds. A TTL lowered now cannot make already cached answers expire by that time.`,
+        risk: 'high',
+      })
+    )
+      return incompletePlan([
+        findings.incompleteReason ?? 'Change planning exceeded its finding safety limit.',
+      ]);
   if (
     report.changes.some(
       (change) => changeRisk(change) === 'high' || changeRisk(change) === 'critical',
     ) &&
     previousTtlSeconds === undefined
   )
-    findings.push({
-      code: 'previous-ttl-unknown',
-      message:
-        'At least one high-impact change lacks a prior TTL in the supplied snapshot. Recover that TTL before assigning a rollback horizon.',
-      risk: 'high',
-    });
+    if (
+      !findings.add({
+        code: 'previous-ttl-unknown',
+        message:
+          'At least one high-impact change lacks a prior TTL in the supplied snapshot. Recover that TTL before assigning a rollback horizon.',
+        risk: 'high',
+      })
+    )
+      return incompletePlan([
+        findings.incompleteReason ?? 'Change planning exceeded its finding safety limit.',
+      ]);
   const preparationDeadline =
     plannedAt === undefined || previousTtlSeconds === undefined
       ? undefined
@@ -331,23 +403,25 @@ export function planDnsChanges(
     previousTtlSeconds === undefined
       ? undefined
       : new Date(now.getTime() + previousTtlSeconds * 1000).toISOString();
-  const newTtls = report.changes.flatMap((change) =>
-    change.after?.ttl === undefined ? [] : [change.after.ttl],
-  );
-  const rollbackSeconds = Math.max(previousTtlSeconds ?? 0, ...newTtls, 0);
+  let rollbackSeconds = previousTtlSeconds ?? 0;
+  for (const change of report.changes)
+    if (change.after?.ttl !== undefined)
+      rollbackSeconds = Math.max(rollbackSeconds, change.after.ttl);
   const rollbackBase = plannedAt ?? now;
   const rollbackCacheHorizon =
     rollbackSeconds === 0
       ? undefined
       : new Date(rollbackBase.getTime() + rollbackSeconds * 1000).toISOString();
   return {
-    findings,
+    findings: findings.values,
     impacts,
+    incompleteReasons: [],
     phases: phases(report, previousTtlSeconds),
     risk: greatestRisk([
       ...impacts.map((item) => item.risk),
-      ...findings.map((item) => item.risk),
+      ...findings.values.map((item) => item.risk),
     ]),
+    status: 'complete',
     timing: {
       ...(plannedAt === undefined ? {} : { plannedAt: plannedAt.toISOString() }),
       ...(previousTtlSeconds === undefined ? {} : { previousTtlSeconds }),

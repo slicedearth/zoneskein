@@ -31,9 +31,18 @@ export interface ZoneRecord {
 
 export interface ZoneDocument {
   readonly diagnostics: readonly ZoneDiagnostic[];
+  readonly incomplete?: ZoneResourceLimit;
   readonly origin?: string;
   readonly records: readonly ZoneRecord[];
   readonly source: string;
+}
+
+export type ZoneResource = 'characters' | 'diagnostics' | 'records' | 'statements' | 'tokens';
+
+export interface ZoneResourceLimit {
+  readonly limit: number;
+  readonly message: string;
+  readonly resource: ZoneResource;
 }
 
 export interface ZoneParseOptions {

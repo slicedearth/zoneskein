@@ -18,11 +18,10 @@ import { DnsQueryError, type DnsRecordType, type ResolverId } from '../core/dns/
 import { DnsQueryRun } from '../core/doh/query-run';
 import { RESOLVERS } from '../core/doh/resolvers';
 import { WireDnsResolver } from '../core/doh/wire-resolver';
-import { parseZoneSnippet } from '../core/zone/parser';
+import { parseZoneSnippet, ZONE_ANALYSIS_LIMITS } from '../core/zone/parser';
 import type { ZoneDocument, ZoneRecord } from '../core/zone/types';
 
 type DiffMode = 'pasted' | 'current';
-const MAX_ZONE_CHARACTERS = 262_144;
 const CURRENT_TYPES = [
   'A',
   'AAAA',
@@ -121,7 +120,9 @@ export function DiffPage() {
   const [plannedAt, setPlannedAt] = useState('');
   const [resolverId, setResolverId] = useState<ResolverId>('google');
   const [types, setTypes] = useState(DEFAULT_CURRENT_TYPES);
-  const [state, setState] = useState<'idle' | 'loading' | 'complete' | 'cancelled'>('idle');
+  const [state, setState] = useState<
+    'idle' | 'loading' | 'complete' | 'cancelled' | 'incomplete'
+  >('idle');
   const [error, setError] = useState('');
   const [display, setDisplay] = useState<DisplayReport | null>(null);
   const activeRun = useRef<DnsQueryRun | null>(null);
@@ -135,10 +136,19 @@ export function DiffPage() {
     });
   }
 
+  function stopIncomplete(reasons: readonly string[]) {
+    setDisplay(null);
+    setError(
+      `Comparison incomplete. ${reasons.join(' ')} No partial change set or plan was produced.`,
+    );
+    setState('incomplete');
+  }
+
   async function compare(event: React.SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
     setError('');
     setDisplay(null);
+    setState('idle');
     activeRun.current?.cancel();
     const plannedDate = plannedAt === '' ? undefined : new Date(plannedAt);
     if (plannedDate !== undefined && Number.isNaN(plannedDate.getTime())) {
@@ -150,13 +160,22 @@ export function DiffPage() {
       const prior = parseZoneSnippet(before, parseOptions);
       const next = parseZoneSnippet(after, parseOptions);
       const report = compareZoneDocuments(prior, next);
+      if (report.status === 'incomplete') {
+        stopIncomplete(report.incompleteReasons);
+        return;
+      }
+      const plan = planDnsChanges(prior, next, report, {
+        ...(plannedDate === undefined ? {} : { plannedAt: plannedDate }),
+      });
+      if (plan.status === 'incomplete') {
+        stopIncomplete(plan.incompleteReasons);
+        return;
+      }
       setDisplay({
         after: next,
         before: prior,
         partialErrors: [],
-        plan: planDnsChanges(prior, next, report, {
-          ...(plannedDate === undefined ? {} : { plannedAt: plannedDate }),
-        }),
+        plan,
         report,
       });
       setState('complete');
@@ -233,15 +252,24 @@ export function DiffPage() {
       compareZoneDocuments(prior, next),
       incompleteTypes,
     );
+    if (report.status === 'incomplete') {
+      stopIncomplete(report.incompleteReasons);
+      return;
+    }
+    const plan = planDnsChanges(prior, next, report, {
+      incompleteTypes,
+      ...(plannedDate === undefined ? {} : { plannedAt: plannedDate }),
+    });
+    if (plan.status === 'incomplete') {
+      stopIncomplete(plan.incompleteReasons);
+      return;
+    }
     setDisplay({
       after: next,
       before: prior,
       currentSnapshot,
       partialErrors,
-      plan: planDnsChanges(prior, next, report, {
-        incompleteTypes,
-        ...(plannedDate === undefined ? {} : { plannedAt: plannedDate }),
-      }),
+      plan,
       report,
     });
     setState('complete');
@@ -296,7 +324,7 @@ export function DiffPage() {
                 value={before}
                 onChange={(event) => setBefore(event.currentTarget.value)}
                 rows={14}
-                maxLength={MAX_ZONE_CHARACTERS}
+                maxLength={ZONE_ANALYSIS_LIMITS.characters}
                 spellCheck={false}
               />
             </div>
@@ -307,7 +335,7 @@ export function DiffPage() {
                 value={after}
                 onChange={(event) => setAfter(event.currentTarget.value)}
                 rows={14}
-                maxLength={MAX_ZONE_CHARACTERS}
+                maxLength={ZONE_ANALYSIS_LIMITS.characters}
                 spellCheck={false}
               />
             </div>
@@ -372,7 +400,7 @@ export function DiffPage() {
                 value={after}
                 onChange={(event) => setAfter(event.currentTarget.value)}
                 rows={14}
-                maxLength={MAX_ZONE_CHARACTERS}
+                maxLength={ZONE_ANALYSIS_LIMITS.characters}
                 spellCheck={false}
               />
             </div>
@@ -412,6 +440,7 @@ export function DiffPage() {
       </form>
       <div className="run-status" aria-live="polite">
         {state === 'cancelled' ? 'The current-DNS query was cancelled.' : null}
+        {state === 'incomplete' ? 'Comparison stopped at a local resource limit.' : null}
         {state === 'complete' && display !== null
           ? `Comparison found ${String(display.report.changes.length)} classified changes.`
           : null}
