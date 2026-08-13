@@ -126,6 +126,29 @@ function sameDnsName(left: string, right: string): boolean {
   return left.toLowerCase().replace(/\.$/u, '') === right.toLowerCase().replace(/\.$/u, '');
 }
 
+function canonicalQuestionWire(question: DnsQuestion): Uint8Array {
+  const labels = question.name.ascii === '' ? [] : question.name.ascii.split('.');
+  const length = labels.reduce((total, label) => total + label.length + 1, 1);
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const label of labels) {
+    bytes[offset] = label.length;
+    offset += 1;
+    for (let index = 0; index < label.length; index += 1) {
+      const code = label.charCodeAt(index);
+      if (code > 0x7f) throw new Error('A validated DNS question must use ASCII labels.');
+      bytes[offset] = code >= 0x41 && code <= 0x5a ? code + 0x20 : code;
+      offset += 1;
+    }
+  }
+  return bytes;
+}
+
+function equalWireName(left: Uint8Array | undefined, right: Uint8Array): boolean {
+  if (left?.length !== right.length) return false;
+  return left.every((byte, index) => byte === right[index]);
+}
+
 export interface WireResolverDependencies {
   readonly cache?: DnsMemoryCache;
   readonly fetch?: typeof fetch;
@@ -231,10 +254,12 @@ export class WireDnsResolver implements DnsResolver {
         );
       }
       const decodedQuestion = message.questions[0];
+      const expectedQuestionWire = canonicalQuestionWire(question);
       if (
         message.id !== 0 ||
         message.questions.length !== 1 ||
         decodedQuestion?.class.toUpperCase() !== 'IN' ||
+        !equalWireName(decodedQuestion.canonicalNameWire, expectedQuestionWire) ||
         !sameDnsName(decodedQuestion.name, question.name.absolute) ||
         decodedQuestion.type !== question.type ||
         message.flags.truncated

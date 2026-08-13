@@ -14,6 +14,7 @@ const KNOWN_TYPES = new Set([
   'CAA',
   'CNAME',
   'DNSKEY',
+  'DNAME',
   'DS',
   'HTTPS',
   'MX',
@@ -403,7 +404,7 @@ export function parseZoneSnippet(source: string, options: ZoneParseOptions = {})
 
     let index = 0;
     const omittedOwner = statement.leadingWhitespace || isRecordPreamble(first.value);
-    const ownerToken = omittedOwner ? '' : first.value;
+    const ownerToken = omittedOwner ? '' : first.raw;
     let owner: string;
     if (omittedOwner) {
       if (previousOwner === undefined) {
@@ -419,7 +420,7 @@ export function parseZoneSnippet(source: string, options: ZoneParseOptions = {})
         owner = '@';
       } else owner = previousOwner;
     } else {
-      owner = absoluteOwner(first.value, origin);
+      owner = absoluteOwner(first.raw, origin);
       previousOwner = owner;
       index += 1;
     }

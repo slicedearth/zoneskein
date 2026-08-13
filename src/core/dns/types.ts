@@ -51,6 +51,7 @@ export interface DnsFlags {
 }
 
 export interface DnsRecord {
+  readonly canonicalOwnerWire?: Uint8Array;
   readonly class: string;
   readonly data: unknown;
   readonly owner: string;
@@ -85,6 +86,7 @@ export interface DnsMessage {
   readonly messageBytes: number;
   readonly negativeCacheTtl?: number;
   readonly questions: readonly {
+    readonly canonicalNameWire?: Uint8Array;
     readonly class: string;
     readonly name: string;
     readonly type: string;

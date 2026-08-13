@@ -1,4 +1,4 @@
-import { encode, type Packet } from '@dnsquery/dns-packet';
+import { DNSSEC_OK, decode, encode, type Packet } from '@dnsquery/dns-packet';
 import { describe, expect, it } from 'vitest';
 
 import { validateDnsName } from './names';
@@ -8,6 +8,39 @@ function name(value: string) {
   const result = validateDnsName(value);
   if (!result.ok) throw new Error(result.error.message);
   return result.value;
+}
+
+interface DecodedOpt {
+  readonly flags?: number;
+  readonly options?: readonly DecodedOption[];
+  readonly type: 'OPT';
+  readonly udpPayloadSize?: number;
+}
+
+interface DecodedOption {
+  readonly code?: number | string;
+  readonly family?: number;
+  readonly ip?: string;
+  readonly scopePrefixLength?: number;
+  readonly sourcePrefixLength?: number;
+  readonly type?: string;
+}
+
+function queryOpt(bytes: Uint8Array): DecodedOpt {
+  const answer = decode(bytes).additionals?.find((item) => item.type === 'OPT');
+  if (answer === undefined) throw new Error('Expected one OPT record.');
+  return answer;
+}
+
+function expectZeroPrefixEcs(opt: DecodedOpt): void {
+  const clientSubnet = opt.options?.find(
+    (option) => option.code === 8 || option.type === 'CLIENT_SUBNET',
+  );
+  expect(opt.udpPayloadSize).toBe(1232);
+  expect(clientSubnet?.family).toBe(1);
+  expect(clientSubnet?.ip).toBe('0.0.0.0');
+  expect(clientSubnet?.scopePrefixLength).toBe(0);
+  expect(clientSubnet?.sourcePrefixLength).toBe(0);
 }
 
 describe('DNS wire messages', () => {
@@ -21,6 +54,20 @@ describe('DNS wire messages', () => {
     expect(bytes[1]).toBe(0);
     expect(bytes.length).toBeGreaterThan(40);
     expect(bytes.length).toBeLessThan(512);
+    const opt = queryOpt(bytes);
+    expect((opt.flags ?? 0) & DNSSEC_OK).toBe(DNSSEC_OK);
+    expectZeroPrefixEcs(opt);
+  });
+
+  it('adds zero-prefix ECS without setting DO on an SPF-style query', () => {
+    const bytes = encodeDnsQuery(
+      { name: name('sender.example'), type: 'TXT' },
+      { checkingDisabled: false, dnssecOk: false },
+    );
+    const opt = queryOpt(bytes);
+
+    expect((opt.flags ?? 0) & DNSSEC_OK).toBe(0);
+    expectZeroPrefixEcs(opt);
   });
 
   it('decodes flags, exact wire size, TXT chunks, and raw RDATA', () => {

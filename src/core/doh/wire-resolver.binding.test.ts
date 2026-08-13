@@ -7,8 +7,8 @@ import { resolverById } from './resolvers';
 import { Semaphore } from './semaphore';
 import { WireDnsResolver } from './wire-resolver';
 
-function question() {
-  const parsed = validateDnsName('example.com');
+function question(value = 'example.com') {
+  const parsed = validateDnsName(value);
   if (!parsed.ok) throw new Error(parsed.error.message);
   return { name: parsed.value, type: 'A' as const };
 }
@@ -36,6 +36,12 @@ function wireResponse(value: Packet): Response {
   });
 }
 
+function rawWireResponse(bytes: Uint8Array): Response {
+  return new Response(arrayBuffer(bytes), {
+    headers: { 'Content-Type': 'application/dns-message' },
+  });
+}
+
 function resolver(response: Response) {
   const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(response);
   return new WireDnsResolver(resolverById('google'), {
@@ -46,9 +52,9 @@ function resolver(response: Response) {
   });
 }
 
-async function expectInvalidResponse(response: Response) {
+async function expectInvalidResponse(response: Response, dnsQuestion = question()) {
   await expect(
-    resolver(response).query(question(), { checkingDisabled: true, dnssecOk: true }),
+    resolver(response).query(dnsQuestion, { checkingDisabled: true, dnssecOk: true }),
   ).rejects.toMatchObject({ code: 'invalid-response' });
 }
 
@@ -83,6 +89,65 @@ describe('wire DoH response binding', () => {
 
   it('rejects a response carrying the TC flag', async () => {
     await expectInvalidResponse(wireResponse(packet({ flags: 0x8380 })));
+  });
+
+  it('rejects a lax UTF-8 question collision at the raw-wire boundary', async () => {
+    const bytes = Uint8Array.from([
+      0, 0, 0x81, 0x80, 0, 1, 0, 1, 0, 0, 0, 0, 8, 0xc1, 0xa5, 0x78, 0x61, 0x6d, 0x70, 0x6c,
+      0x65, 3, 0x63, 0x6f, 0x6d, 0, 0, 1, 0, 1, 0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 192,
+      0, 2, 1,
+    ]);
+
+    await expectInvalidResponse(rawWireResponse(bytes));
+  });
+
+  it('rejects a dot inside one raw question label that resembles two labels', async () => {
+    const label = [...new TextEncoder().encode('example.com')];
+    const bytes = Uint8Array.from([
+      0,
+      0,
+      0x81,
+      0x80,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      label.length,
+      ...label,
+      0,
+      0,
+      1,
+      0,
+      1,
+    ]);
+
+    await expectInvalidResponse(rawWireResponse(bytes));
+  });
+
+  it('accepts a valid IDNA A-label question using exact wire binding', async () => {
+    const value = packet({
+      answers: [
+        {
+          class: 'IN',
+          data: '192.0.2.1',
+          name: 'xn--bcher-kva.example.',
+          ttl: 60,
+          type: 'A',
+        },
+      ],
+      questions: [{ class: 'IN', name: 'xn--bcher-kva.example.', type: 'A' }],
+    });
+
+    await expect(
+      resolver(wireResponse(value)).query(question('bücher.example'), {
+        checkingDisabled: true,
+        dnssecOk: true,
+      }),
+    ).resolves.toMatchObject({ message: { responseCode: 'NOERROR' } });
   });
 
   it.each([
