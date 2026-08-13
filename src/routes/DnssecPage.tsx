@@ -5,7 +5,13 @@ import { SnapshotButton } from '../components/SnapshotButton';
 import { StatusBadge } from '../components/StatusBadge';
 import { ToolIntro } from '../components/ToolIntro';
 import { validateDnsName } from '../core/dns/names';
+import { parseRecordView } from '../core/dns/records';
 import type { DnsQuestion, ResolverId, ValidatedDnsName } from '../core/dns/types';
+import {
+  DNSSEC_APPLICATION_TYPES,
+  type DnssecApplicationResult,
+  type DnssecApplicationType,
+} from '../core/dnssec/application';
 import {
   validateDnssecChain,
   type DnssecChainQuery,
@@ -59,6 +65,26 @@ function stateLabel(state: DnssecChainState): string {
 function reportJson(report: DnssecChainReport): string {
   return JSON.stringify(
     {
+      application:
+        report.application === undefined
+          ? undefined
+          : {
+              explanation: report.application.explanation,
+              owner: report.application.owner,
+              records: report.application.records.map((record) => ({
+                class: record.class,
+                data: parseRecordView(record).text,
+                owner: record.owner,
+                rawRdataBase64: bytesBase64(record.rawRdata),
+                section: record.section,
+                ttl: record.ttl,
+                type: record.type,
+              })),
+              state: report.application.state,
+              type: report.application.type,
+              verifications: report.application.verifications,
+              wildcardExpanded: report.application.wildcardExpanded,
+            },
       evidence: report.evidence,
       explanation: report.explanation,
       state: report.state,
@@ -114,6 +140,64 @@ function reportJson(report: DnssecChainReport): string {
     },
     null,
     2,
+  );
+}
+
+function bytesBase64(bytes: Uint8Array): string {
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+function ApplicationDetails({ value }: { readonly value: DnssecApplicationResult }) {
+  return (
+    <article className="result-panel">
+      <div className="result-heading">
+        <h3>
+          {value.owner} {value.type}
+        </h3>
+        <StatusBadge tone={stateTone(value.state)}>{stateLabel(value.state)}</StatusBadge>
+      </div>
+      <p>{value.explanation}</p>
+      <dl className="metadata-grid">
+        <div>
+          <dt>Exact RRset records</dt>
+          <dd>{value.records.length}</dd>
+        </div>
+        <div>
+          <dt>Wildcard expansion</dt>
+          <dd>{value.wildcardExpanded ? 'Detected, proof required' : 'No'}</dd>
+        </div>
+      </dl>
+      {value.records.length === 0 ? null : (
+        <div className="table-scroll">
+          <table>
+            <caption>Positive application RRset</caption>
+            <thead>
+              <tr>
+                <th>Owner</th>
+                <th>TTL</th>
+                <th>Type</th>
+                <th>Data</th>
+              </tr>
+            </thead>
+            <tbody>
+              {value.records.map((record, index) => (
+                <tr key={`${record.owner}-${record.type}-${String(index)}`}>
+                  <td>{record.owner}</td>
+                  <td>{record.ttl}</td>
+                  <td>{record.type}</td>
+                  <td>
+                    <code className="record-value">{parseRecordView(record).text}</code>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <VerificationList values={value.verifications} />
+    </article>
   );
 }
 
@@ -322,6 +406,7 @@ function StepDetails({ step }: { readonly step: DnssecChainStep }) {
 export function DnssecPage() {
   const [input, setInput] = useState('');
   const [resolverId, setResolverId] = useState<ResolverId>('google');
+  const [rrsetType, setRrsetType] = useState<'chain' | DnssecApplicationType>('chain');
   const [state, setState] = useState<'idle' | 'loading' | 'complete' | 'cancelled'>('idle');
   const [error, setError] = useState('');
   const [report, setReport] = useState<DnssecChainReport | null>(null);
@@ -331,6 +416,14 @@ export function DnssecPage() {
     () => new TextEncoder().encode(evidenceBundle).length,
     [evidenceBundle],
   );
+
+  function invalidateResult() {
+    activeRun.current?.cancel();
+    activeRun.current = null;
+    setError('');
+    setReport(null);
+    setState('idle');
+  }
 
   async function submit(event: React.SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -358,6 +451,7 @@ export function DnssecPage() {
     };
     try {
       const next = await validateDnssecChain(parsed.value.absolute, query, {
+        ...(rrsetType === 'chain' ? {} : { rrsetType }),
         signal: run.signal,
       });
       if (activeRun.current !== run) return;
@@ -389,32 +483,60 @@ export function DnssecPage() {
     <div className="tool-page">
       <ToolIntro
         eyebrow="Independent DNSSEC validator"
-        title="Build trust from the root locally."
+        title="Build trust from the root to an RRset locally."
       >
         Validate each DS and DNSKEY RRset from bundled IANA root trust anchors using DNS wire
-        evidence and browser cryptography. Resolver flags remain visible evidence, but they do
-        not decide the local result.
+        evidence and browser cryptography, then optionally verify an exact positive application
+        RRset with the authenticated zone keys. Resolver flags remain visible evidence, but they
+        do not decide the local result.
       </ToolIntro>
       <form className="workbench-form" onSubmit={(event) => void submit(event)}>
         <div className="field-group field-wide">
-          <label htmlFor="dnssec-zone">Zone name</label>
+          <label htmlFor="dnssec-zone">Zone or owner name</label>
           <input
             id="dnssec-zone"
             value={input}
-            onChange={(event) => setInput(event.currentTarget.value)}
+            onChange={(event) => {
+              setInput(event.currentTarget.value);
+              invalidateResult();
+            }}
             placeholder="example.com"
             maxLength={2048}
             autoCapitalize="none"
             autoCorrect="off"
             spellCheck={false}
+            disabled={state === 'loading'}
           />
+        </div>
+        <div className="field-group">
+          <label htmlFor="dnssec-target">Validation target</label>
+          <select
+            id="dnssec-target"
+            value={rrsetType}
+            disabled={state === 'loading'}
+            onChange={(event) => {
+              setRrsetType(event.currentTarget.value as 'chain' | DnssecApplicationType);
+              invalidateResult();
+            }}
+          >
+            <option value="chain">Delegation chain only</option>
+            {DNSSEC_APPLICATION_TYPES.map((type) => (
+              <option key={type} value={type}>
+                {type} RRset
+              </option>
+            ))}
+          </select>
         </div>
         <div className="field-group">
           <label htmlFor="dnssec-resolver">Resolver transport</label>
           <select
             id="dnssec-resolver"
             value={resolverId}
-            onChange={(event) => setResolverId(event.currentTarget.value as ResolverId)}
+            disabled={state === 'loading'}
+            onChange={(event) => {
+              setResolverId(event.currentTarget.value as ResolverId);
+              invalidateResult();
+            }}
           >
             {RESOLVER_IDS.map((id) => (
               <option key={id} value={id}>
@@ -430,7 +552,7 @@ export function DnssecPage() {
         )}
         <div className="form-actions">
           <button className="primary-button" type="submit" disabled={state === 'loading'}>
-            {state === 'loading' ? 'Validating…' : 'Validate DNSSEC chain'}
+            {state === 'loading' ? 'Validating…' : 'Validate DNSSEC'}
           </button>
           {state === 'loading' ? (
             <button
@@ -449,9 +571,11 @@ export function DnssecPage() {
       <div className="run-status" aria-live="polite">
         {state === 'loading'
           ? 'The bounded root-to-name validation chain is in progress.'
-          : state === 'cancelled'
-            ? 'The DNSSEC run was cancelled.'
-            : null}
+          : state === 'complete'
+            ? 'The DNSSEC validation result is ready.'
+            : state === 'cancelled'
+              ? 'The DNSSEC run was cancelled.'
+              : null}
       </div>
 
       {report === null ? null : (
@@ -486,6 +610,9 @@ export function DnssecPage() {
             <p>{report.explanation}</p>
           </article>
           <ChainPath steps={report.steps} />
+          {report.application === undefined ? null : (
+            <ApplicationDetails value={report.application} />
+          )}
           <article className="result-panel">
             <h3>Root trust-anchor provenance</h3>
             <dl className="metadata-grid">
@@ -574,13 +701,17 @@ export function DnssecPage() {
               SHA-1, SHA-256, and SHA-384 DS digests are supported. Exact NSEC and bounded NSEC3
               proofs distinguish exact authenticated insecure delegations from missing evidence.
               NSEC3 Opt-Out is reported separately because it cannot authenticate whether the
-              covered delegation exists.
+              covered delegation exists. When an application type is selected, the exact
+              positive RRset is canonicalised and verified with the authenticated
+              containing-zone keys.
             </p>
             <p>
               Secure means that this exact root-to-name chain validated at the captured time. It
-              does not validate every application RRset, prove service safety, or establish that
-              every recursive resolver sees the same data. Unsupported, incomplete, insecure,
-              Opt-Out, alias-boundary, not-delegated, and bogus outcomes remain distinct.
+              does not prove service safety or establish that every recursive resolver sees the
+              same data. Wildcard-expanded answers, negative answers, NODATA, CNAME and DNAME
+              continuations remain incomplete until their complete denial or alias proof chain
+              is authenticated. Unsupported, incomplete, insecure, Opt-Out, alias-boundary,
+              not-delegated, and bogus outcomes remain distinct.
             </p>
           </details>
         </section>

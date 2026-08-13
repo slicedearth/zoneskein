@@ -1,4 +1,9 @@
 import type { DnsExtendedError, DnsRecordType, DnsResponse } from '../dns/types';
+import {
+  validateApplicationRrset,
+  type DnssecApplicationResult,
+  type DnssecApplicationType,
+} from './application';
 import { compareDsToDnskeys } from './digest';
 import { validateDsDenial, type DsDenialResult } from './denial';
 import { parseDnskey, parseDs, signatureTimeState } from './records';
@@ -9,6 +14,7 @@ import {
 } from './trust-anchors';
 import type { DnskeyInfo, DsInfo, DsMatch, SignatureVerification } from './types';
 import { verifyRrset } from './verify';
+import { boundDenialRecords, boundRrset, wireQuestionMatches } from './wire-evidence';
 import { DnssecWorkBudget } from './work-budget';
 
 export type DnssecChainState =
@@ -34,7 +40,7 @@ export interface DnssecChainEvidence {
   readonly resolverEndpoint?: string;
   readonly resolverId?: string;
   readonly responseCode?: string;
-  readonly type: 'DS' | 'DNSKEY';
+  readonly type: DnsRecordType;
 }
 
 export interface DnssecChainStep {
@@ -52,6 +58,7 @@ export interface DnssecChainStep {
 }
 
 export interface DnssecChainReport {
+  readonly application?: DnssecApplicationResult;
   readonly evidence: readonly DnssecChainEvidence[];
   readonly explanation: string;
   readonly state: DnssecChainState;
@@ -59,18 +66,19 @@ export interface DnssecChainReport {
   readonly target: string;
   readonly trustAnchorSource: typeof ROOT_TRUST_ANCHOR_SOURCE;
   readonly validatedAt: string;
-  readonly validatorVersion: 1;
+  readonly validatorVersion: 2;
 }
 
 export type DnssecChainQuery = (
   absoluteName: string,
-  type: Extract<DnsRecordType, 'DS' | 'DNSKEY'>,
+  type: DnsRecordType,
 ) => Promise<DnsResponse>;
 
 export interface DnssecChainOptions {
   readonly clock?: () => number;
   readonly matchTrustAnchors?: typeof matchRootTrustAnchors;
   readonly now?: number;
+  readonly rrsetType?: DnssecApplicationType;
   readonly signal?: AbortSignal;
 }
 
@@ -98,33 +106,12 @@ function eligibleKeys(keys: readonly DnskeyInfo[]): readonly DnskeyInfo[] {
   );
 }
 
-function exactRrset(
-  records: readonly import('../dns/types').DnsRecord[],
-  owner: string,
-  type: 'DS' | 'DNSKEY',
-): readonly import('../dns/types').DnsRecord[] {
-  const wantedOwner = absolute(owner);
-  return records.filter((record) => {
-    if (
-      record.class.toUpperCase() !== 'IN' ||
-      absolute(record.owner) !== wantedOwner ||
-      (record.type !== type && record.type !== 'RRSIG')
-    )
-      return false;
-    if (record.type === type) return true;
-    return (
-      record.data !== null &&
-      typeof record.data === 'object' &&
-      (record.data as Record<string, unknown>)['typeCovered'] === type
-    );
-  });
-}
-
-function boundResponse(response: DnsResponse, name: string, type: 'DS' | 'DNSKEY'): boolean {
+function boundResponse(response: DnsResponse, name: string, type: DnsRecordType): boolean {
   const decoded = response.message.questions[0];
   return (
     response.message.id === 0 &&
     !response.message.flags.truncated &&
+    wireQuestionMatches(response, name, type) &&
     response.message.questions.length === 1 &&
     decoded?.class.toUpperCase() === 'IN' &&
     absolute(decoded.name) === absolute(name) &&
@@ -186,9 +173,10 @@ export async function validateDnssecChain(
   const steps: DnssecChainStep[] = [];
   const authenticatedGroups: (readonly SignatureVerification[])[] = [];
   let rootAnchorMatches: readonly RootTrustAnchorMatch[] = [];
+  let application: DnssecApplicationResult | undefined;
   let questionsUsed = 0;
 
-  const ask = async (name: string, type: 'DS' | 'DNSKEY'): Promise<DnsResponse | undefined> => {
+  const ask = async (name: string, type: DnsRecordType): Promise<DnsResponse | undefined> => {
     if (questionsUsed >= MAX_CHAIN_QUESTIONS) {
       evidence.push({
         error: `The DNSSEC run reached its ${String(MAX_CHAIN_QUESTIONS)}-question bound.`,
@@ -238,6 +226,7 @@ export async function validateDnssecChain(
     explanation: string,
     validationTime: number,
   ): DnssecChainReport => ({
+    ...(application === undefined ? {} : { application }),
     evidence,
     explanation,
     state,
@@ -245,7 +234,7 @@ export async function validateDnssecChain(
     target,
     trustAnchorSource: ROOT_TRUST_ANCHOR_SOURCE,
     validatedAt: new Date(validationTime).toISOString(),
-    validatorVersion: 1,
+    validatorVersion: 2,
   });
   const finish = (state: DnssecChainState, explanation: string): DnssecChainReport =>
     finishAt(state, explanation, currentTime());
@@ -281,6 +270,36 @@ export async function validateDnssecChain(
     }
     return finishAt(state, explanation, validationTime);
   };
+  const finishApplicationResponse = async (
+    response: DnsResponse,
+    keys: readonly DnskeyInfo[],
+    type: DnssecApplicationType,
+    responseQuestionType: DnsRecordType = type,
+  ): Promise<DnssecChainReport> => {
+    application = await validateApplicationRrset(
+      response,
+      target,
+      type,
+      keys,
+      Math.floor(currentTime() / 1000),
+      budget,
+      responseQuestionType,
+    );
+    if (application.verifications.some((verification) => verification.status === 'verified'))
+      authenticatedGroups.push(application.verifications);
+    return finishAuthenticated(application.state, application.explanation);
+  };
+  const finishWithApplication = async (
+    keys: readonly DnskeyInfo[],
+    chainExplanation: string,
+  ): Promise<DnssecChainReport> => {
+    const type = options.rrsetType;
+    if (type === undefined) return finishAuthenticated('secure', chainExplanation);
+    const response = await ask(target, type);
+    if (response === undefined)
+      return finish('incomplete', `The ${type} RRset for ${target} could not be retrieved.`);
+    return finishApplicationResponse(response, keys, type);
+  };
 
   const rootResponse = await ask('.', 'DNSKEY');
   if (rootResponse === undefined)
@@ -290,7 +309,12 @@ export async function validateDnssecChain(
       'incomplete',
       `The root DNSKEY question returned ${rootResponse.message.responseCode}.`,
     );
-  const rootRecords = exactRrset(rootResponse.message.answers, '.', 'DNSKEY');
+  const rootRecords = boundRrset(rootResponse, 'answer', '.', 'DNSKEY');
+  if (rootRecords === null)
+    return finish(
+      'incomplete',
+      'The root DNSKEY response could not be bound to its wire RRset.',
+    );
   if (
     rootRecords.length > MAX_CHAIN_RRSET_RECORDS ||
     !budget.consume('records', rootRecords.length)
@@ -372,7 +396,7 @@ export async function validateDnssecChain(
     zone: '.',
   });
   if (labels.length === 0)
-    return finishAuthenticated('secure', 'The root DNSKEY RRset validated locally.');
+    return finishWithApplication(trustedKeys, 'The root DNSKEY RRset validated locally.');
 
   const zones = Array.from({ length: labels.length }, (_, index) =>
     absolute(labels.slice(labels.length - 1 - index).join('.')),
@@ -389,7 +413,12 @@ export async function validateDnssecChain(
         'incomplete',
         `The DS question for ${zone} returned ${dsResponse.message.responseCode}.`,
       );
-    const dsRrset = exactRrset(dsResponse.message.answers, zone, 'DS');
+    const dsRrset = boundRrset(dsResponse, 'answer', zone, 'DS');
+    if (dsRrset === null)
+      return finish(
+        'incomplete',
+        `The DS response for ${zone} could not be bound to its wire RRset.`,
+      );
     if (dsRrset.length > MAX_CHAIN_RRSET_RECORDS || !budget.consume('records', dsRrset.length))
       return finish('incomplete', `The DS RRset for ${zone} exceeds the local work bound.`);
     const typedDsRecords = dsRrset.filter((record) => record.type === 'DS');
@@ -400,6 +429,28 @@ export async function validateDnssecChain(
     if (dsRecords.length !== typedDsRecords.length)
       return finish('bogus', `The DS RRset for ${zone} contains malformed DS RDATA.`);
     if (dsRecords.length === 0) {
+      if (
+        zone === target &&
+        options.rrsetType === 'CNAME' &&
+        dsResponse.message.responseCode === 'NOERROR' &&
+        dsResponse.message.answers.some(
+          (record) =>
+            record.class.toUpperCase() === 'IN' &&
+            absolute(record.owner) === target &&
+            record.type === 'CNAME',
+        )
+      )
+        return finishApplicationResponse(dsResponse, trustedKeys, 'CNAME', 'DS');
+      const alias = dsResponse.message.answers.find(
+        (record) =>
+          record.class.toUpperCase() === 'IN' &&
+          (record.type === 'CNAME' || record.type === 'DNAME'),
+      );
+      if (alias !== undefined)
+        return finish(
+          'incomplete',
+          `The delegation probe crossed a ${alias.type} alias; every alias step and the final target must be authenticated before this result can be completed.`,
+        );
       if (dsResponse.message.responseCode === 'NXDOMAIN') {
         const explanation =
           'The parent returned NXDOMAIN; this chain validator does not treat an exact-owner NODATA proof as authenticated non-existence.';
@@ -416,9 +467,15 @@ export async function validateDnssecChain(
         });
         return finish('incomplete', explanation);
       }
+      const denialRecords = boundDenialRecords(dsResponse);
+      if (denialRecords === null)
+        return finish(
+          'incomplete',
+          `The denial response for ${zone} could not be bound to lossless wire names.`,
+        );
       const denial = await validateDsDenial(
         zone,
-        dsResponse.message.authorities,
+        denialRecords,
         trustedKeys,
         Math.floor(currentTime() / 1000),
         budget,
@@ -448,6 +505,11 @@ export async function validateDnssecChain(
           );
         authenticatedGroups.push(...denial.proofVerifications);
         if (denial.state === 'not-delegated' && zone !== target) continue;
+        if (denial.state === 'not-delegated')
+          return finishWithApplication(
+            trustedKeys,
+            `The authenticated containing-zone keys are available for ${target}.`,
+          );
         return finishAuthenticated(denial.state, denial.explanation);
       }
       return finish(denial.state, denial.explanation);
@@ -491,7 +553,12 @@ export async function validateDnssecChain(
         'bogus',
         `The signed delegation exists, but its DNSKEY question returned ${keyResponse.message.responseCode}.`,
       );
-    const keyRecords = exactRrset(keyResponse.message.answers, zone, 'DNSKEY');
+    const keyRecords = boundRrset(keyResponse, 'answer', zone, 'DNSKEY');
+    if (keyRecords === null)
+      return finish(
+        'incomplete',
+        `The DNSKEY response for ${zone} could not be bound to its wire RRset.`,
+      );
     if (
       keyRecords.length > MAX_CHAIN_RRSET_RECORDS ||
       !budget.consume('records', keyRecords.length)
@@ -584,8 +651,8 @@ export async function validateDnssecChain(
       zone,
     });
   }
-  return finishAuthenticated(
-    'secure',
+  return finishWithApplication(
+    trustedKeys,
     `Every delegation from the IANA root trust anchor to ${target} validated locally.`,
   );
 }

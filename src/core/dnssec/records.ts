@@ -27,6 +27,12 @@ function serialBefore(left: number, right: number): boolean {
   return distance !== 0 && distance < 0x8000_0000;
 }
 
+function displayType(type: string): string {
+  if (type === 'UNKNOWN_64') return 'SVCB';
+  if (type === 'UNKNOWN_65') return 'HTTPS';
+  return type.replace('UNKNOWN_', 'TYPE');
+}
+
 export function signatureTimeState(
   inception: number,
   expiration: number,
@@ -148,7 +154,7 @@ export function parseRrsig(
     signature,
     signerName,
     timeState,
-    typeCovered,
+    typeCovered: displayType(typeCovered),
   };
 }
 

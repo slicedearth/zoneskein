@@ -70,7 +70,7 @@ async function testKey(owner: string): Promise<TestKey> {
 
 async function signature(
   owner: string,
-  typeCovered: 'DS' | 'DNSKEY' | 'NSEC' | 'NSEC3',
+  typeCovered: 'A' | 'CNAME' | 'DS' | 'DNSKEY' | 'NSEC' | 'NSEC3',
   records: readonly DnsRecord[],
   signer: TestKey,
   times: { readonly expiration?: number; readonly inception?: number } = {},
@@ -137,7 +137,7 @@ function name(value: string): ValidatedDnsName {
 
 function response(
   owner: string,
-  type: Extract<DnsRecordType, 'DS' | 'DNSKEY'>,
+  type: DnsRecordType,
   answers: readonly DnsRecord[],
   authorities: readonly DnsRecord[] = [],
 ): DnsResponse {
@@ -291,6 +291,120 @@ describe('independent DNSSEC chain validation', () => {
     expect(report.steps.map((step) => step.state)).toEqual(['secure', 'secure']);
     expect(report.evidence).toHaveLength(3);
     expect(report.steps[1]?.dsMatches.some((match) => match.matches)).toBe(true);
+  });
+
+  it('continues a secure chain into an exact positive application RRset', async () => {
+    const data = await fixtures();
+    const address: DnsRecord = {
+      class: 'IN',
+      data: '192.0.2.1',
+      owner: 'test.',
+      rawRdata: new Uint8Array([192, 0, 2, 1]),
+      section: 'answer',
+      ttl: 300,
+      type: 'A',
+      typeCode: 1,
+    };
+    const addressSignature = await signature('test.', 'A', [address], data.child);
+    const addressResponse = response('test.', 'A', [address, addressSignature]);
+    const query: DnssecChainQuery = (owner, type) => {
+      if (owner === 'test.' && type === 'A') return Promise.resolve(addressResponse);
+      return fixtureQuery(data)(owner, type);
+    };
+
+    const report = await validateDnssecChain('test.', query, {
+      matchTrustAnchors: anchorMatcher(data.root),
+      now: NOW_MILLISECONDS,
+      rrsetType: 'A',
+    });
+
+    expect(report.state).toBe('secure');
+    expect(report.application).toMatchObject({ state: 'secure', type: 'A' });
+    expect(report.evidence.map((item) => item.type)).toEqual(['DNSKEY', 'DS', 'DNSKEY', 'A']);
+  });
+
+  it('uses authenticated containing-zone keys for a positive non-apex RRset', async () => {
+    const data = await fixtures();
+    const owner = 'host.test.';
+    const nsec: DnsRecord = {
+      class: 'IN',
+      data: {},
+      owner,
+      rawRdata: new Uint8Array([...canonicalName('zzz.test.'), 0, 1, 0x40]),
+      section: 'authority',
+      ttl: 300,
+      type: 'NSEC',
+      typeCode: 47,
+    };
+    const nsecSignature = await signature(owner, 'NSEC', [nsec], data.child);
+    const denial = response(owner, 'DS', [], [nsec, nsecSignature]);
+    const address: DnsRecord = {
+      class: 'IN',
+      data: '192.0.2.2',
+      owner,
+      rawRdata: new Uint8Array([192, 0, 2, 2]),
+      section: 'answer',
+      ttl: 300,
+      type: 'A',
+      typeCode: 1,
+    };
+    const addressSignature = await signature(owner, 'A', [address], data.child);
+    const addressResponse = response(owner, 'A', [address, addressSignature]);
+    const query: DnssecChainQuery = (queryOwner, type) => {
+      if (queryOwner === owner && type === 'DS') return Promise.resolve(denial);
+      if (queryOwner === owner && type === 'A') return Promise.resolve(addressResponse);
+      return fixtureQuery(data)(queryOwner, type);
+    };
+
+    const report = await validateDnssecChain(owner, query, {
+      matchTrustAnchors: anchorMatcher(data.root),
+      now: NOW_MILLISECONDS,
+      rrsetType: 'A',
+    });
+
+    expect(report.state).toBe('secure');
+    expect(report.steps.at(-1)?.state).toBe('not-delegated');
+    expect(report.application).toMatchObject({ owner, state: 'secure', type: 'A' });
+  });
+
+  it('authenticates an exact CNAME returned while probing the target delegation', async () => {
+    const data = await fixtures();
+    const owner = 'alias.test.';
+    const cname: DnsRecord = {
+      class: 'IN',
+      data: 'target.test.',
+      owner,
+      rawRdata: canonicalName('target.test.'),
+      section: 'answer',
+      ttl: 300,
+      type: 'CNAME',
+      typeCode: 5,
+    };
+    const cnameSignature = await signature(owner, 'CNAME', [cname], data.child);
+    const aliasResponse = response(owner, 'DS', [cname, cnameSignature]);
+    const query: DnssecChainQuery = (queryOwner, type) => {
+      if (queryOwner === owner && type === 'DS') return Promise.resolve(aliasResponse);
+      return fixtureQuery(data)(queryOwner, type);
+    };
+
+    const report = await validateDnssecChain(owner, query, {
+      matchTrustAnchors: anchorMatcher(data.root),
+      now: NOW_MILLISECONDS,
+      rrsetType: 'CNAME',
+    });
+
+    expect(report.state).toBe('secure');
+    expect(report.application).toMatchObject({ owner, state: 'secure', type: 'CNAME' });
+    expect(report.evidence.at(-1)?.type).toBe('DS');
+
+    const continued = await validateDnssecChain(owner, query, {
+      matchTrustAnchors: anchorMatcher(data.root),
+      now: NOW_MILLISECONDS,
+      rrsetType: 'A',
+    });
+    expect(continued).toMatchObject({ state: 'incomplete' });
+    expect(continued.explanation).toMatch(/CNAME alias/iu);
+    expect(continued.application).toBeUndefined();
   });
 
   it('requires every authenticated link to be current at one common validation instant', async () => {

@@ -3,6 +3,7 @@ import { toType } from '@dnsquery/dns-packet/types.js';
 import type { DnsRecord } from '../dns/types';
 import { parseDnskey, parseRrsig } from './records';
 import type { DnskeyInfo, RrsigInfo, SignatureVerification } from './types';
+import { boundCanonicalRdata } from './wire-evidence';
 import { DnssecWorkBudget } from './work-budget';
 
 const MAX_RRSET_RECORDS = 64;
@@ -38,11 +39,14 @@ export function canonicalName(name: string): Uint8Array {
   if (normalized === '') return new Uint8Array([0]);
   const encoder = new TextEncoder();
   const parts: number[] = [];
-  for (const label of normalized.toLowerCase().split('.')) {
+  for (const label of normalized.split('.')) {
     const bytes = encoder.encode(label);
     if (bytes.length === 0 || bytes.length > 63)
       throw new Error('DNS owner name contains an invalid label.');
-    parts.push(bytes.length, ...bytes);
+    parts.push(
+      bytes.length,
+      ...bytes.map((byte) => (byte >= 0x41 && byte <= 0x5a ? byte + 0x20 : byte)),
+    );
   }
   parts.push(0);
   if (parts.length > 255) throw new Error('DNS owner name exceeds the wire-format limit.');
@@ -51,7 +55,10 @@ export function canonicalName(name: string): Uint8Array {
 
 function ownerForSignature(owner: string, labels: number): string | null {
   const ownerLabels = owner.replace(/\.$/u, '').split('.').filter(Boolean);
-  return ownerLabels.length === labels ? owner : null;
+  if (labels > ownerLabels.length) return null;
+  if (ownerLabels.length === labels) return owner;
+  const suffix = ownerLabels.slice(ownerLabels.length - labels).join('.');
+  return suffix === '' ? '*.' : `*.${suffix}.`;
 }
 
 function nameIsAtOrBelow(owner: string, signer: string): boolean {
@@ -78,9 +85,15 @@ function bytesKey(bytes: Uint8Array): string {
   return btoa(value);
 }
 
+function recordTypeCode(type: string): number {
+  if (type === 'SVCB') return 64;
+  if (type === 'HTTPS') return 65;
+  return toType(type);
+}
+
 function signaturePrefix(signature: RrsigInfo): Uint8Array {
   return join([
-    uint16(toType(signature.typeCovered)),
+    uint16(recordTypeCode(signature.typeCovered)),
     new Uint8Array([signature.algorithm, signature.labels]),
     uint32(signature.originalTtl),
     uint32(signature.expiration),
@@ -90,7 +103,140 @@ function signaturePrefix(signature: RrsigInfo): Uint8Array {
   ]);
 }
 
-function canonicalRdata(record: DnsRecord): Uint8Array | null {
+function isObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object';
+}
+
+function integerField(
+  value: Record<string, unknown>,
+  field: string,
+  maximum: number,
+): number | null {
+  const item = value[field];
+  return typeof item === 'number' && Number.isInteger(item) && item >= 0 && item <= maximum
+    ? item
+    : null;
+}
+
+function stringField(value: Record<string, unknown>, field: string): string | null {
+  const item = value[field];
+  return typeof item === 'string' ? item : null;
+}
+
+function canonicalTargetRdata(target: unknown): Uint8Array | null {
+  if (typeof target !== 'string') return null;
+  try {
+    return canonicalName(target);
+  } catch {
+    return null;
+  }
+}
+
+function canonicalMxRdata(data: unknown): Uint8Array | null {
+  if (!isObject(data)) return null;
+  const preference = integerField(data, 'preference', 0xffff);
+  const exchange = stringField(data, 'exchange');
+  if (preference === null || exchange === null) return null;
+  try {
+    return join([uint16(preference), canonicalName(exchange)]);
+  } catch {
+    return null;
+  }
+}
+
+function canonicalSoaRdata(data: unknown): Uint8Array | null {
+  if (!isObject(data)) return null;
+  const mname = stringField(data, 'mname');
+  const rname = stringField(data, 'rname');
+  const serial = integerField(data, 'serial', 0xffff_ffff);
+  const refresh = integerField(data, 'refresh', 0xffff_ffff);
+  const retry = integerField(data, 'retry', 0xffff_ffff);
+  const expire = integerField(data, 'expire', 0xffff_ffff);
+  const minimum = integerField(data, 'minimum', 0xffff_ffff);
+  if (
+    mname === null ||
+    rname === null ||
+    serial === null ||
+    refresh === null ||
+    retry === null ||
+    expire === null ||
+    minimum === null
+  )
+    return null;
+  try {
+    return join([
+      canonicalName(mname),
+      canonicalName(rname),
+      uint32(serial),
+      uint32(refresh),
+      uint32(retry),
+      uint32(expire),
+      uint32(minimum),
+    ]);
+  } catch {
+    return null;
+  }
+}
+
+function canonicalSrvRdata(data: unknown): Uint8Array | null {
+  if (!isObject(data)) return null;
+  const priority = integerField(data, 'priority', 0xffff);
+  const weight = integerField(data, 'weight', 0xffff);
+  const port = integerField(data, 'port', 0xffff);
+  const target = stringField(data, 'target');
+  if (priority === null || weight === null || port === null || target === null) return null;
+  try {
+    return join([uint16(priority), uint16(weight), uint16(port), canonicalName(target)]);
+  } catch {
+    return null;
+  }
+}
+
+function canonicalSvcbRdata(raw: Uint8Array): Uint8Array | null {
+  if (raw.length < 3) return null;
+  const value = raw.slice();
+  let offset = 2;
+  let wireLength = 1;
+  while (offset < value.length) {
+    const length = value[offset];
+    if (length === undefined || length > 63 || (length & 0xc0) !== 0) return null;
+    offset += 1;
+    if (length === 0) return value;
+    if (offset + length > value.length || wireLength + length + 1 > 255) return null;
+    for (let index = offset; index < offset + length; index += 1) {
+      const byte = value[index];
+      if (byte === undefined) return null;
+      if (byte >= 0x41 && byte <= 0x5a) value[index] = byte + 0x20;
+    }
+    wireLength += length + 1;
+    offset += length;
+  }
+  return null;
+}
+
+function validOpaqueRdata(record: DnsRecord): boolean {
+  if (record.type === 'A') return record.rawRdata.length === 4;
+  if (record.type === 'AAAA') return record.rawRdata.length === 16;
+  if (record.type === 'TLSA') return record.rawRdata.length >= 3;
+  if (record.type === 'CAA') {
+    const tagLength = record.rawRdata[1];
+    return tagLength !== undefined && tagLength > 0 && tagLength + 2 <= record.rawRdata.length;
+  }
+  if (record.type === 'TXT') {
+    let offset = 0;
+    while (offset < record.rawRdata.length) {
+      const length = record.rawRdata[offset];
+      if (length === undefined || offset + 1 + length > record.rawRdata.length) return false;
+      offset += length + 1;
+    }
+    return offset === record.rawRdata.length;
+  }
+  return false;
+}
+
+export function canonicalRdata(record: DnsRecord): Uint8Array | null {
+  const bound = boundCanonicalRdata(record);
+  if (bound !== undefined) return bound;
   if (
     record.type === 'DNSKEY' ||
     record.type === 'DS' ||
@@ -98,6 +244,19 @@ function canonicalRdata(record: DnsRecord): Uint8Array | null {
     record.type === 'NSEC3'
   )
     return record.rawRdata;
+  if (validOpaqueRdata(record)) return record.rawRdata;
+  if (
+    record.type === 'CNAME' ||
+    record.type === 'DNAME' ||
+    record.type === 'NS' ||
+    record.type === 'PTR'
+  )
+    return canonicalTargetRdata(record.data);
+  if (record.type === 'MX') return canonicalMxRdata(record.data);
+  if (record.type === 'SOA') return canonicalSoaRdata(record.data);
+  if (record.type === 'SRV') return canonicalSrvRdata(record.data);
+  if (record.type === 'SVCB' || record.type === 'HTTPS')
+    return canonicalSvcbRdata(record.rawRdata);
   return null;
 }
 
@@ -128,7 +287,7 @@ export function rrsetSignedData(
       .map((rdata) =>
         join([
           canonicalName(owner),
-          uint16(toType(signature.typeCovered)),
+          uint16(recordTypeCode(signature.typeCovered)),
           uint16(1),
           uint32(signature.originalTtl),
           uint16(rdata.length),
