@@ -42,7 +42,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ['*.config.ts', 'tests/**/*.ts'],
+    files: ['*.config.ts', 'scripts/**/*.ts', 'tests/**/*.ts'],
     languageOptions: {
       globals: globals.node,
       parserOptions: {
@@ -52,7 +52,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ['eslint.config.js', 'scripts/**/*.mjs'],
+    files: ['eslint.config.js'],
     extends: [tseslint.configs.disableTypeChecked],
     languageOptions: {
       globals: globals.node,

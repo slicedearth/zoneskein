@@ -1,10 +1,11 @@
 import { DNSSEC_OK, decode, encode } from '@dnsquery/dns-packet';
+import type { Answer } from '@dnsquery/dns-packet';
 
 const resolvers = [
   ['Google Public DNS', 'https://dns.google/dns-query', 'GET'],
   ['Cloudflare 1.1.1.1', 'https://cloudflare-dns.com/dns-query', 'POST'],
   ['Quad9', 'https://dns.quad9.net/dns-query', 'GET'],
-];
+] as const;
 
 const query = encode({
   additionals: [
@@ -22,24 +23,28 @@ const query = encode({
       ],
       type: 'OPT',
       udpPayloadSize: 1232,
-    },
+    } as unknown as Answer,
   ],
   flags: 0x0100,
   id: 0,
   questions: [{ class: 'IN', name: 'example.com.', type: 'A' }],
   type: 'query',
 });
+const queryBody = new ArrayBuffer(query.byteLength);
+new Uint8Array(queryBody).set(query);
 
 const encodedQuery = Buffer.from(query).toString('base64url');
 let failed = false;
 for (const [label, endpoint, method] of resolvers) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8_000);
+  const timeout = setTimeout(() => {
+    controller.abort();
+  }, 8_000);
   try {
     const response = await fetch(
       method === 'GET' ? `${endpoint}?dns=${encodedQuery}` : endpoint,
       {
-        ...(method === 'POST' ? { body: query } : {}),
+        ...(method === 'POST' ? { body: queryBody } : {}),
         cache: 'no-store',
         credentials: 'omit',
         headers: {

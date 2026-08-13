@@ -14,9 +14,19 @@ const EXPECTED_SIGNER_EMAIL = 'dnssec@iana.org';
 const EXPECTED_CA_FINGERPRINT =
   'AE:E8:99:06:D7:CC:60:C5:E1:51:F3:BB:92:3A:BF:8A:1B:28:DC:85:5D:5E:21:27:CB:52:4E:AD:4A:AD:60:3D';
 
-async function download(url) {
+interface RootAnchor {
+  readonly algorithm: number;
+  readonly digest: string;
+  readonly digestType: number;
+  readonly id: string;
+  readonly keyTag: number;
+  readonly validFrom: string;
+  readonly validUntil?: string;
+}
+
+async function download(url: string): Promise<Uint8Array> {
   const response = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(15_000) });
-  if (!response.ok) throw new Error(`${url} returned HTTP ${response.status}.`);
+  if (!response.ok) throw new Error(`${url} returned HTTP ${String(response.status)}.`);
   const declaredLength = Number(response.headers.get('Content-Length'));
   if (Number.isFinite(declaredLength) && declaredLength > MAX_DOWNLOAD_BYTES)
     throw new Error(`${url} exceeds the download size bound.`);
@@ -25,7 +35,7 @@ async function download(url) {
   const chunks = [];
   let length = 0;
   try {
-    while (true) {
+    for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       length += value.length;
@@ -47,17 +57,17 @@ async function download(url) {
   return body;
 }
 
-function text(bytes) {
+function text(bytes: Uint8Array): string {
   return new TextDecoder().decode(bytes);
 }
 
-function field(body, name) {
+function field(body: string, name: string): string {
   const match = new RegExp(`<${name}>([^<]+)</${name}>`, 'u').exec(body);
   if (match?.[1] === undefined) throw new Error(`IANA XML is missing ${name}.`);
   return match[1].trim();
 }
 
-function currentAnchors(xml, now = Date.now()) {
+function currentAnchors(xml: string, now = Date.now()): readonly RootAnchor[] {
   return [...xml.matchAll(/<KeyDigest\s+([^>]+)>([\s\S]*?)<\/KeyDigest>/gu)]
     .filter((match) => {
       const until = /validUntil="([^"]+)"/u.exec(match[1] ?? '')?.[1];
@@ -138,7 +148,9 @@ try {
   if (Buffer.compare(verifiedXml, xmlBytes) !== 0)
     throw new Error('OpenSSL did not reproduce the downloaded anchor XML exactly.');
 
-  const committed = JSON.parse(await readFile(committedPath, 'utf8'));
+  const committed = JSON.parse(await readFile(committedPath, 'utf8')) as {
+    readonly anchors: readonly RootAnchor[];
+  };
   const observed = currentAnchors(text(xmlBytes));
   const expected = [...committed.anchors]
     .map(({ algorithm, digest, digestType, id, keyTag, validFrom, validUntil }) => ({
@@ -155,7 +167,9 @@ try {
     process.stderr.write(`${JSON.stringify({ expected, observed }, null, 2)}\n`);
     throw new Error('The verified IANA root trust-anchor set differs from the committed set.');
   }
-  process.stdout.write(`Verified ${observed.length} current IANA root trust anchors.\n`);
+  process.stdout.write(
+    `Verified ${String(observed.length)} current IANA root trust anchors.\n`,
+  );
 } finally {
   await rm(temporary, { force: true, recursive: true });
 }
