@@ -105,6 +105,20 @@ describe('browser DNS rate limiter', () => {
     limiter.close();
   });
 
+  it('keeps direct and relayed Quad9 cooldown buckets separate', async () => {
+    const limiter = isolated(() => 1_000);
+    limiter.imposeCooldown('quad9', 12_000);
+
+    await expect(limiter.wait('quad9')).rejects.toMatchObject({ code: 'cooldown' });
+    await expect(limiter.wait('quad9-relay')).resolves.toBeUndefined();
+    limiter.imposeCooldown('quad9-relay', 8_000);
+    await expect(limiter.wait('quad9-relay')).rejects.toMatchObject({
+      code: 'cooldown',
+      retryAfterMs: 8_000,
+    });
+    limiter.close();
+  });
+
   it('enforces the rolling per-resolver request ceiling', async () => {
     let now = 0;
     const limiter = isolated(() => now);

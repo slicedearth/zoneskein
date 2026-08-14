@@ -1,4 +1,9 @@
-import type { DnsExtendedError, DnsRecordType, DnsResponse } from '../dns/types';
+import type {
+  DnsExtendedError,
+  DnsRecordType,
+  DnsResponse,
+  ResolverDefinition,
+} from '../dns/types';
 import {
   canEstablishDsTrustPath,
   canValidateDsDigestType,
@@ -90,6 +95,7 @@ export interface DnssecChainOptions {
   readonly clock?: () => number;
   readonly matchTrustAnchors?: typeof matchRootTrustAnchors;
   readonly now?: number;
+  readonly resolver?: ResolverDefinition;
   readonly rrsetType?: DnssecApplicationType;
   readonly signal?: AbortSignal;
 }
@@ -217,6 +223,14 @@ export async function validateDnssecChain(
   const evidence: DnssecChainEvidence[] = [];
   const steps: DnssecChainStep[] = [];
   const authenticatedGroups: (readonly SignatureVerification[])[] = [];
+  const selectedResolverEvidence =
+    options.resolver === undefined
+      ? {}
+      : {
+          resolver: options.resolver.label,
+          resolverEndpoint: options.resolver.endpoint,
+          resolverId: options.resolver.id,
+        };
   let rootAnchorMatches: readonly RootTrustAnchorMatch[] = [];
   let application: DnssecApplicationResult | undefined;
   let questionsUsed = 0;
@@ -226,6 +240,7 @@ export async function validateDnssecChain(
       evidence.push({
         error: `The DNSSEC run reached its ${String(MAX_CHAIN_QUESTIONS)}-question bound.`,
         name,
+        ...selectedResolverEvidence,
         type,
       });
       return undefined;
@@ -261,7 +276,12 @@ export async function validateDnssecChain(
       evidence.push(item);
       return response;
     } catch (cause) {
-      evidence.push({ error: errorMessage(cause), name, type });
+      evidence.push({
+        error: errorMessage(cause),
+        name,
+        ...selectedResolverEvidence,
+        type,
+      });
       return undefined;
     }
   };

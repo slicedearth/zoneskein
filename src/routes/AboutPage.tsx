@@ -3,8 +3,8 @@ import { ToolIntro } from '../components/ToolIntro';
 
 const boundaries = [
   {
-    title: 'No application backend',
-    text: 'The built site contains only static files. DNS questions travel directly from your browser to the resolver you select.',
+    title: 'Static-first, bounded relay',
+    text: 'DNS questions travel directly to the selected resolver by default. The only server-side component is an explicitly selected, tightly bounded Quad9 compatibility relay.',
   },
   {
     title: 'Evidence, not omniscience',
@@ -107,20 +107,28 @@ export function AboutPage() {
           <div>
             <h3>DNS questions</h3>
             <p>
-              The selected resolver receives DNS questions and your network connection
-              information; that resolver’s privacy policy applies. ZoneSkein uses fixed
-              allowlisted endpoints for Google Public DNS, Cloudflare 1.1.1.1, and Quad9.
+              For direct requests, the selected resolver receives DNS questions and your network
+              connection information; that resolver’s privacy policy applies. ZoneSkein uses
+              fixed allowlisted endpoints for Google Public DNS, Cloudflare 1.1.1.1, and Quad9.
               Resolver URLs cannot be supplied by a user. Cloudflare uses a wire-format POST;
-              Google and Quad9 use standard base64url wire-format GET so their endpoints work
-              from an ordinary browser. The resolver can read the question under either method.
+              Google and Quad9 (direct) use standard base64url wire-format GET so their
+              endpoints work from an ordinary browser. Quad9 (direct) remains the default Quad9
+              path. If you explicitly select Quad9 (compatibility mode), the browser sends a
+              bounded wire-format POST to the same-origin `/api/doh/quad9` endpoint, and Netlify
+              forwards it only to Quad9 over HTTP/2. Netlify sees your connection in
+              compatibility mode, while Quad9 sees the relay connection; both receive the
+              question.
             </p>
           </div>
           <div>
             <h3>Page requests</h3>
             <p>
               Netlify receives ordinary page and asset requests and may retain connection logs
-              under its own policies. DNS names are never placed in those page request query
-              strings.
+              under its own policies. In explicitly selected Quad9 relay mode it also receives
+              the DNS wire question and ordinary connection metadata. The fixed relay uses a
+              POST body rather than a DNS-name-bearing path or query string, does not add
+              cookies or credentials, and does not log or server-cache the question in
+              application code.
             </p>
           </div>
           <div>
@@ -159,7 +167,9 @@ export function AboutPage() {
         <ul className="guidance-list">
           <li>
             Client-side rate limiting protects normal users and public resolvers from accidental
-            bursts, but a modified client can bypass it. It is not an enforcement boundary.
+            bursts, but a modified client can bypass it. The optional Quad9 relay separately
+            enforces strict request and response bounds and 120 requests per minute per source
+            IP address and site domain.
           </li>
           <li>
             DNSSEC validates supported delegation, positive, NODATA, NXDOMAIN, wildcard, and

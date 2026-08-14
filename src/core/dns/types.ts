@@ -95,7 +95,14 @@ export interface DnsMessage {
   readonly responseCode: string;
 }
 
-export type ResolverId = 'google' | 'cloudflare' | 'quad9';
+export type ResolverId = 'google' | 'cloudflare' | 'quad9' | 'quad9-relay';
+
+export interface ResolverRelayDefinition {
+  readonly operator: string;
+  readonly upstreamEndpoint: string;
+  readonly upstreamLabel: string;
+  readonly upstreamPrivacyUrl: string;
+}
 
 export interface ResolverDefinition {
   readonly endpoint: string;
@@ -103,6 +110,8 @@ export interface ResolverDefinition {
   readonly id: ResolverId;
   readonly label: string;
   readonly privacyUrl: string;
+  readonly relay?: ResolverRelayDefinition;
+  readonly selectionNote?: string;
   readonly transportNote?: string;
 }
 

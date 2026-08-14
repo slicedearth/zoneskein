@@ -8,11 +8,13 @@ For non-sensitive correctness bugs, open a normal repository issue with a minima
 
 ## Security model
 
-ZoneSkein is a static browser application:
+ZoneSkein is a static-first browser application with one bounded Netlify Function:
 
-- it has no application server, credentials, accounts, or server-side data store;
-- all network targets are fixed DNS-over-HTTPS endpoints;
+- it has no accounts, application credentials, server-side data store, server-rendered route, analytics, telemetry, or general-purpose application API;
+- all DNS network targets are fixed DNS-over-HTTPS endpoints; the only server-side function accepts explicitly selected Quad9 relay requests and has one fixed upstream;
 - all outbound DNS requests use RFC 8484 wire format over a fixed GET or POST transport verified for browser CORS, with omitted credentials, no referrer, an eight-second timeout, and bounded concurrency;
+- direct Quad9 remains the default; its compatibility relay uses a same-origin POST with the expected DNS media type and no request query string or browser credentials, applies a 4,096-byte request cap, a 65,535-byte response cap, strict DNS message and work bounds, and a fixed timeout, and opens a fixed Node.js HTTP/2 connection to `https://dns.quad9.net/dns-query` without forwarding cookies or credentials;
+- relay responses declare `Cache-Control: no-store` and relay bodies are not written to application logs; the normal bounded browser memory cache still applies after validation, and Netlify can observe the relayed question and ordinary connection metadata under its platform policies;
 - names, policies, SMTP sender inputs, raw messages, zone snippets, fragments, and resolver data are validated, bounded, or narrowed before use;
 - untrusted content is rendered through React text nodes and is never injected as HTML;
 - the Netlify configuration sets a restrictive Content Security Policy, frame protections, a conservative referrer policy, `nosniff`, and a minimal Permissions Policy;
@@ -22,9 +24,9 @@ ZoneSkein is a static browser application:
 
 ## Abuse resistance
 
-ZoneSkein limits normal use with a shared four-request semaphore, per-resolver token buckets, a rolling request window, bounded first-in-first-out queues, replay-resistant cross-tab request signals, an 80-question per-run budget, TTL caching, in-flight deduplication, cancellation, graph depth limits, cycle detection, pasted-message and macro-work bounds, and capped resolver cooldown circuits. Its bounded cross-tab ledger stores only opaque request identifiers, timestamps, resolver buckets, and cooldown expiries, never questions, answers, names, or pasted content.
+ZoneSkein limits normal use with a shared four-request semaphore, per-resolver token buckets, a rolling request window, bounded first-in-first-out queues, replay-resistant cross-tab request signals, an 80-question per-run budget, TTL caching, in-flight deduplication, cancellation, graph depth limits, cycle detection, pasted-message and macro-work bounds, and capped resolver cooldown circuits. Its bounded cross-tab ledger stores only opaque request identifiers, timestamps, resolver buckets, and cooldown expiries, never questions, answers, names, or pasted content. The optional Quad9 relay additionally uses Netlify's server-side rate limiting at 120 requests per minute, aggregated by source IP address and site domain.
 
-Because source and execution are in the visitor’s browser, these controls cannot prevent a modified copy from issuing different requests. Resolver operators remain the authoritative enforcement boundary for hostile clients.
+Browser-side controls cannot prevent a modified copy from issuing different direct requests. The relay's server-side validation, fixed target, resource bounds, and rate limit still apply to relay traffic; Quad9 and Netlify retain their own service protections.
 
 ## Supported versions
 
@@ -32,4 +34,4 @@ Security fixes are made on the current `main` branch. There is no separate long-
 
 ## Deployment responsibilities
 
-Deployers should preserve the committed Netlify headers, keep dependencies current, review lockfile changes, run all quality gates, and retain the build artefact verifier. Production builds omit source maps and fail when output files, sizes, legal assets, redirects, or resolver/CSP origins depart from the static contract. The browser gate includes route-wide WCAG A/AA automation, narrow-screen reflow, keyboard focus, and forced-colour checks; automation supplements rather than replaces manual assistive-technology review. Tagged release archives are accompanied by checksums, a CycloneDX SBOM, and GitHub build/SBOM attestations; these artefacts do not replace verification of the separately deployed Netlify output. Verify live response headers after each deployment. A custom domain should use HTTPS and an appropriate DNS configuration.
+Deployers should preserve the committed Netlify headers and function rate limit, keep dependencies current, review lockfile changes, run all quality gates, and retain the build artefact verifier. Production builds omit source maps and fail when output files, sizes, legal assets, redirects, resolver/CSP origins, or the single allowlisted function contract depart from the deployment contract. The browser gate includes route-wide WCAG A/AA automation, narrow-screen reflow, keyboard focus, and forced-colour checks; automation supplements rather than replaces manual assistive-technology review. Tagged releases distinguish the browser-only static archive from the complete bounded Netlify deployment archive; both are checksummed and receive separate GitHub provenance and SBOM attestations. These artefacts do not replace verification of the deployed Netlify application and function. Verify live response headers, direct resolver requests, relay rejection behaviour, and rate limiting after each deployment. A custom domain should use HTTPS and an appropriate DNS configuration.

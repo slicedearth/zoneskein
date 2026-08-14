@@ -806,6 +806,11 @@ export function DiffPage({ initialInput, onCreateWorkspace }: DiffPageProps = {}
               <label htmlFor="diff-resolver">Resolver</label>
               <select
                 id="diff-resolver"
+                aria-describedby={
+                  RESOLVERS[resolverId].selectionNote === undefined
+                    ? undefined
+                    : 'diff-resolver-note'
+                }
                 value={resolverId}
                 onChange={(event) => {
                   invalidateResult();
@@ -818,6 +823,9 @@ export function DiffPage({ initialInput, onCreateWorkspace }: DiffPageProps = {}
                   </option>
                 ))}
               </select>
+              {RESOLVERS[resolverId].selectionNote === undefined ? null : (
+                <small id="diff-resolver-note">{RESOLVERS[resolverId].selectionNote}</small>
+              )}
             </div>
             <fieldset className="record-picker">
               <legend>Current record types</legend>

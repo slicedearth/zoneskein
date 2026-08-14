@@ -464,7 +464,8 @@ export function DnssecPage() {
     setError('');
     setReport(null);
     setState('loading');
-    const resolver = new WireDnsResolver(RESOLVERS[resolverId]);
+    const selectedResolver = RESOLVERS[resolverId];
+    const resolver = new WireDnsResolver(selectedResolver);
     const query: DnssecChainQuery = async (absoluteName, type) => {
       const validated =
         absoluteName === '.' ? ROOT_NAME : validateDnsName(absoluteName.replace(/\.$/u, ''));
@@ -478,6 +479,7 @@ export function DnssecPage() {
     try {
       const next = await validateDnssecChain(parsed.value.absolute, query, {
         ...(rrsetType === 'chain' ? {} : { rrsetType }),
+        resolver: selectedResolver,
         signal: run.signal,
       });
       if (activeRun.current !== run) return;
@@ -557,6 +559,11 @@ export function DnssecPage() {
           <label htmlFor="dnssec-resolver">Resolver transport</label>
           <select
             id="dnssec-resolver"
+            aria-describedby={
+              RESOLVERS[resolverId].selectionNote === undefined
+                ? undefined
+                : 'dnssec-resolver-note'
+            }
             value={resolverId}
             disabled={state === 'loading'}
             onChange={(event) => {
@@ -570,6 +577,9 @@ export function DnssecPage() {
               </option>
             ))}
           </select>
+          {RESOLVERS[resolverId].selectionNote === undefined ? null : (
+            <small id="dnssec-resolver-note">{RESOLVERS[resolverId].selectionNote}</small>
+          )}
         </div>
         {error === '' ? null : (
           <p className="form-error" role="alert">

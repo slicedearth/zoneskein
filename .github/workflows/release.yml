@@ -37,24 +37,38 @@ jobs:
       - name: Create bounded release files
         env:
           ARCHIVE_FILE: zoneskein-static.tar.gz
+          NETLIFY_ARCHIVE_FILE: zoneskein-netlify-source.tar.gz
           SBOM_FILE: zoneskein.cdx.json
         run: |
           npm sbom --sbom-format=cyclonedx > "$SBOM_FILE"
           SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
           tar --sort=name --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0 --numeric-owner --pax-option=delete=atime,delete=ctime -czf "$ARCHIVE_FILE" -C dist .
-          sha256sum "$ARCHIVE_FILE" "$SBOM_FILE" > SHA256SUMS
+          tar --sort=name --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0 --numeric-owner --pax-option=delete=atime,delete=ctime -czf "$NETLIFY_ARCHIVE_FILE" dist netlify/functions/quad9-doh.ts netlify.toml package.json package-lock.json LICENSE THIRD_PARTY_NOTICES.md
+          sha256sum "$ARCHIVE_FILE" "$NETLIFY_ARCHIVE_FILE" "$SBOM_FILE" > SHA256SUMS
+          test "$(wc -l < SHA256SUMS)" -eq 3
+          sha256sum --check SHA256SUMS
           test "$(wc -c < "$ARCHIVE_FILE")" -le 4194304
+          test "$(wc -c < "$NETLIFY_ARCHIVE_FILE")" -le 8388608
           test "$(wc -c < "$SBOM_FILE")" -le 4194304
           jq -e '.bomFormat == "CycloneDX" and (.components | type == "array")' "$SBOM_FILE" >/dev/null
-      - name: Attest release provenance
+      - name: Attest static-client provenance
         uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
         with:
           subject-path: zoneskein-static.tar.gz
-      - name: Attest release SBOM
+      - name: Attest complete Netlify provenance
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          subject-path: zoneskein-netlify-source.tar.gz
+      - name: Attest static-client SBOM
         uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
         with:
           sbom-path: zoneskein.cdx.json
           subject-path: zoneskein-static.tar.gz
+      - name: Attest complete Netlify SBOM
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          sbom-path: zoneskein.cdx.json
+          subject-path: zoneskein-netlify-source.tar.gz
       - name: Upload release files
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -62,6 +76,7 @@ jobs:
           name: zoneskein-release-${{ github.run_id }}
           path: |
             zoneskein-static.tar.gz
+            zoneskein-netlify-source.tar.gz
             zoneskein.cdx.json
             SHA256SUMS
           retention-days: 90

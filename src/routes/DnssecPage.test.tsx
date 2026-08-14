@@ -18,7 +18,15 @@ describe('DnssecPage', () => {
 
     const target = screen.getByLabelText('Validation target');
     expect(target).toHaveValue('chain');
-    expect(screen.getAllByRole('option')).toHaveLength(DNSSEC_APPLICATION_TYPES.length + 4);
+    expect(screen.getAllByRole('option')).toHaveLength(DNSSEC_APPLICATION_TYPES.length + 5);
+    expect(screen.getByRole('option', { name: 'Quad9 (compatibility mode)' })).toHaveValue(
+      'quad9-relay',
+    );
+    const resolver = screen.getByLabelText('Resolver transport');
+    fireEvent.change(resolver, { target: { value: 'quad9-relay' } });
+    const note = screen.getByText(/DNS question and connection metadata to Netlify/iu);
+    expect(note).toHaveAttribute('id', 'dnssec-resolver-note');
+    expect(resolver).toHaveAttribute('aria-describedby', 'dnssec-resolver-note');
 
     fireEvent.change(target, { target: { value: 'HTTPS' } });
     expect(target).toHaveValue('HTTPS');
@@ -80,7 +88,7 @@ describe('DnssecPage', () => {
       configurable: true,
       value: { writeText },
     });
-    vi.spyOn(dnssecChain, 'validateDnssecChain').mockResolvedValue({
+    const validateSpy = vi.spyOn(dnssecChain, 'validateDnssecChain').mockResolvedValue({
       evidence: [
         {
           decodedQuestion: { class: 'IN', name: 'example.test.', type: 'A' },
@@ -109,6 +117,9 @@ describe('DnssecPage', () => {
     fireEvent.change(target, { target: { value: 'A' } });
     fireEvent.click(submit);
     expect(await screen.findByRole('heading', { name: 'example.test.' })).toBeVisible();
+    const validationCall = validateSpy.mock.calls[0];
+    expect(validationCall?.[0]).toBe('example.test.');
+    expect(validationCall?.[2]?.resolver?.id).toBe('google');
     fireEvent.click(screen.getByRole('button', { name: 'Copy evidence bundle' }));
     await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
     const evidence = JSON.parse(String(writeText.mock.calls[0]?.[0])) as {

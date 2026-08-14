@@ -9,6 +9,7 @@ export default tseslint.config(
     ignores: [
       'coverage/**',
       'dist/**',
+      '.netlify/**',
       'node_modules/**',
       'playwright-report/**',
       'test-results/**',
@@ -42,7 +43,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ['*.config.ts', 'scripts/**/*.ts', 'tests/**/*.ts'],
+    files: ['*.config.ts', 'netlify/functions/**/*.ts', 'scripts/**/*.ts', 'tests/**/*.ts'],
     languageOptions: {
       globals: globals.node,
       parserOptions: {

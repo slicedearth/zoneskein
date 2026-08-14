@@ -128,6 +128,51 @@ describe('DNS Change Lab', () => {
     ]);
   });
 
+  it('captures the explicit Netlify relay path as inert Change Workspace evidence', async () => {
+    const onCreateWorkspace = vi.fn<(workspace: ChangeWorkspace) => void>();
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      dnsResponse(
+        [
+          {
+            class: 'IN',
+            data: '192.0.2.45',
+            name: 'relay-workspace.example.',
+            ttl: 300,
+            type: 'A',
+          },
+        ],
+        'relay-workspace.example.',
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    render(<DiffPage onCreateWorkspace={onCreateWorkspace} />);
+    selectOnlyA('relay-workspace.example');
+    fireEvent.change(screen.getByLabelText('Resolver'), {
+      target: { value: 'quad9-relay' },
+    });
+    const resolverNote = screen.getByText(/DNS question and connection metadata to Netlify/iu);
+    expect(resolverNote).toHaveAttribute('id', 'diff-resolver-note');
+    expect(screen.getByLabelText('Resolver')).toHaveAttribute(
+      'aria-describedby',
+      'diff-resolver-note',
+    );
+    fireEvent.change(screen.getByLabelText('Proposed snapshot'), {
+      target: { value: 'relay-workspace.example. 300 IN A 192.0.2.45' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Compare snapshots' }));
+
+    expect(await screen.findByText('Comparison found 0 classified changes.')).toBeVisible();
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/doh/quad9');
+    fireEvent.click(screen.getByRole('button', { name: 'Open in Change Workspace' }));
+    expect(onCreateWorkspace.mock.calls[0]?.[0].evidence.runs[0]?.resolvers[0]).toMatchObject({
+      endpoint: '/api/doh/quad9',
+      label: 'Quad9 (compatibility mode)',
+      resolverId: 'quad9-relay',
+    });
+  });
+
   it('surfaces an ambiguous reachable alias RRset as an incomplete type', async () => {
     const onCreateWorkspace = vi.fn<(workspace: ChangeWorkspace) => void>();
     vi.stubGlobal(

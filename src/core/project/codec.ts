@@ -57,7 +57,8 @@ const QUESTION_STATUSES = [
   'malformed-response',
   'cancelled',
 ] as const;
-const RESOLVER_IDS = ['cloudflare', 'google', 'quad9', 'custom'] as const;
+const RESOLVER_IDS = ['cloudflare', 'google', 'quad9', 'quad9-relay', 'custom'] as const;
+const QUAD9_RELAY_ENDPOINT = '/api/doh/quad9';
 const ANALYSIS_STATUSES = ['not-run', 'complete', 'partial'] as const;
 const EVIDENCE_STATUSES = ['none', 'complete', 'partial'] as const;
 const COMPLETENESS = ['complete', 'partial'] as const;
@@ -966,9 +967,17 @@ function parseResolver(
     { trim: true },
   );
   if (!endpoint.ok) return endpoint;
-  if (!/^https:\/\/[^\s#@]+$/u.test(endpoint.value)) {
+  const resolverId = asEnum(object.value['resolverId'], RESOLVER_IDS, `${path}.resolverId`);
+  if (!resolverId.ok) return resolverId;
+  const validEndpoint =
+    resolverId.value === 'quad9-relay'
+      ? endpoint.value === QUAD9_RELAY_ENDPOINT
+      : /^https:\/\/[^\s#@]+$/u.test(endpoint.value);
+  if (!validEndpoint) {
     return schemaFailure(
-      'Resolver endpoint must be an inert HTTPS string without credentials, whitespace, or a fragment.',
+      resolverId.value === 'quad9-relay'
+        ? `The Quad9 relay endpoint must be exactly ${QUAD9_RELAY_ENDPOINT}.`
+        : 'Resolver endpoint must be an inert HTTPS string without credentials, whitespace, or a fragment.',
       `${path}.endpoint`,
     );
   }
@@ -1017,8 +1026,6 @@ function parseResolver(
     questionKeys.add(questionKey);
     parsedQuestions.push(question.value);
   }
-  const resolverId = asEnum(object.value['resolverId'], RESOLVER_IDS, `${path}.resolverId`);
-  if (!resolverId.ok) return resolverId;
   const status = asEnum(object.value['status'], COMPLETENESS, `${path}.status`);
   if (!status.ok) return status;
   if (status.value === 'complete' && incompleteReasons.value.length !== 0) {

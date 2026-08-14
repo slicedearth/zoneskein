@@ -321,7 +321,7 @@ export function App() {
               <h1 id="home-title">Untangle DNS.</h1>
               <p className="lede">
                 Inspect evidence, understand policy dependencies, and review records before you
-                publish—without sending your work to an application backend.
+                publish, with local-first authoring and analysis.
               </p>
               <div className="tool-links" aria-label="Primary tools">
                 {tools.map((tool, index) => (
@@ -358,8 +358,8 @@ export function App() {
 
       <footer>
         <p>
-          Static by design. DNS questions go directly from your browser to the resolver. No
-          warranty.
+          Static-first by design. DNS is direct by default; Quad9 (compatibility mode) is
+          explicit. No warranty.
         </p>
         <div>
           <a href={href('about/#privacy')}>Privacy</a>

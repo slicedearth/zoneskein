@@ -80,6 +80,18 @@ function installDns(fixtures: Readonly<Record<string, DnsFixture>>) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('DmarcPage', () => {
+  it('discloses the Netlify intermediary when the Quad9 relay is selected', async () => {
+    const user = userEvent.setup();
+    render(<DmarcPage />);
+
+    const resolver = screen.getByLabelText('Resolver');
+    await user.selectOptions(resolver, 'quad9-relay');
+
+    const note = screen.getByText(/DNS question and connection metadata to Netlify/iu);
+    expect(note).toHaveAttribute('id', 'dmarc-resolver-note');
+    expect(resolver).toHaveAttribute('aria-describedby', 'dmarc-resolver-note');
+  });
+
   const resolverFor = (testNumber: number): 'cloudflare' | 'google' | 'quad9' =>
     ['cloudflare', 'google', 'quad9'][testNumber % 3] as 'cloudflare' | 'google' | 'quad9';
 

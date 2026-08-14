@@ -800,9 +800,17 @@ export function DmarcPage() {
           <label htmlFor="dmarc-resolver">Resolver</label>
           <select
             id="dmarc-resolver"
+            aria-describedby={
+              RESOLVERS[resolverId].selectionNote === undefined
+                ? undefined
+                : 'dmarc-resolver-note'
+            }
             value={resolverId}
             disabled={state === 'loading'}
-            onChange={(event) => setResolverId(event.currentTarget.value as ResolverId)}
+            onChange={(event) => {
+              resetResults();
+              setResolverId(event.currentTarget.value as ResolverId);
+            }}
           >
             {RESOLVER_IDS.map((id) => (
               <option key={id} value={id}>
@@ -810,6 +818,9 @@ export function DmarcPage() {
               </option>
             ))}
           </select>
+          {RESOLVERS[resolverId].selectionNote === undefined ? null : (
+            <small id="dmarc-resolver-note">{RESOLVERS[resolverId].selectionNote}</small>
+          )}
         </div>
         {error !== '' ? (
           <p className="form-error" role="alert">

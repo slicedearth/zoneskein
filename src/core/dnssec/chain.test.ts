@@ -298,6 +298,27 @@ describe('independent DNSSEC chain validation', () => {
     expect(report.steps[1]?.dsMatches.some((match) => match.matches)).toBe(true);
   });
 
+  it('retains the selected resolver provenance when a DNS question fails', async () => {
+    const resolver = resolverById('quad9-relay');
+    const report = await validateDnssecChain(
+      'test.',
+      () => Promise.reject(new Error('The compatibility relay returned HTTP 502.')),
+      { now: NOW_MILLISECONDS, resolver },
+    );
+
+    expect(report.state).toBe('incomplete');
+    expect(report.evidence).toEqual([
+      {
+        error: 'The compatibility relay returned HTTP 502.',
+        name: '.',
+        resolver: resolver.label,
+        resolverEndpoint: resolver.endpoint,
+        resolverId: resolver.id,
+        type: 'DNSKEY',
+      },
+    ]);
+  });
+
   it.each([5, 7] as const)(
     'treats an authenticated algorithm %s DS-only delegation as insecure without querying child keys',
     async (algorithm) => {

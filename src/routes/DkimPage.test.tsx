@@ -46,6 +46,17 @@ afterEach(() => {
 });
 
 describe('DkimPage', () => {
+  it('discloses the Netlify intermediary when the Quad9 relay is selected', () => {
+    render(<DkimPage />);
+
+    const resolver = screen.getByLabelText('Resolver');
+    fireEvent.change(resolver, { target: { value: 'quad9-relay' } });
+
+    const note = screen.getByText(/DNS question and connection metadata to Netlify/iu);
+    expect(note).toHaveAttribute('id', 'dkim-resolver-note');
+    expect(resolver).toHaveAttribute('aria-describedby', 'dkim-resolver-note');
+  });
+
   it('rejects non-LDH and overlong complete selector names before DNS', () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);

@@ -2,7 +2,7 @@
 
 ## Summary
 
-ZoneSkein's operator has no application backend that receives, proxies, or stores visitor DNS names or pasted content. The delivered browser application necessarily holds active inputs and results in page memory.
+ZoneSkein is static-first. Its only server-side application component is an optional, explicitly selected Netlify compatibility relay for Quad9. The delivered browser application necessarily holds active inputs and results in page memory.
 
 ## Live DNS questions
 
@@ -12,17 +12,19 @@ When a visitor starts a live tool, the browser sends DNS-over-HTTPS wire message
 - Cloudflare 1.1.1.1; or
 - Quad9.
 
-The resolver receives the DNS question and network connection information. Its privacy policy and operating jurisdiction apply. ZoneSkein cannot control resolver logging or retention. Resolver URLs are fixed in source; visitors cannot supply arbitrary fetch targets.
+For direct requests, the resolver receives the DNS question and browser connection information. In optional relay mode, Netlify receives the visitor connection and Quad9 receives the function connection, as detailed below. Each service's privacy policy and operating jurisdiction applies. ZoneSkein cannot control platform or resolver logging or retention. Resolver URLs are fixed in source; visitors cannot supply arbitrary fetch targets.
 
 Every wire query includes EDNS Client Subnet with a zero source prefix (`0.0.0.0/0`). This asks the recursive resolver and any downstream authority not to tailor the answer to an address-derived client subnet. It does not hide the browser's connection address from the selected resolver, force the resolver to discard that address, or replace the resolver's privacy policy.
 
-Live tools do not place visitor-supplied DNS names in the Netlify request path or query string. An explicitly created share link can contain report names and data after `#`; browsers do not send that fragment in the HTTP request to Netlify.
+Direct live tools do not place visitor-supplied DNS names in the Netlify page-request path or query string. The optional Quad9 relay uses the fixed same-origin path `/api/doh/quad9` and a POST body, not a DNS-name-bearing path or query string. An explicitly created share link can contain report names and data after `#`; browsers do not send that fragment in the HTTP request to Netlify.
 
-Cloudflare questions use RFC 8484 POST bodies. Google and Quad9 questions use RFC 8484 GET because their standards-compliant POST endpoints do not currently work with ordinary browser CORS; the DNS wire message is base64url-encoded in the selected resolver's `dns=` URL parameter. Quad9 additionally requires the browser's complete network path to preserve HTTP/2 or HTTP/3. ZoneSkein does not relay an incompatible connection through Netlify or another resolver. This is not encryption beyond HTTPS, and the selected resolver can decode or log the question and connection information.
+Cloudflare questions use RFC 8484 POST bodies. Google and **Quad9 (direct)** questions use RFC 8484 GET because their standards-compliant POST endpoints do not currently work with ordinary browser CORS; the DNS wire message is base64url-encoded in the selected resolver's `dns=` URL parameter. Quad9 (direct) additionally requires the browser's complete network path to preserve HTTP/2 or HTTP/3. It remains the default Quad9 path.
+
+If a visitor explicitly selects **Quad9 (compatibility mode)**, the browser instead sends one bounded RFC 8484 wire question in a POST body to `/api/doh/quad9`. Netlify receives the question and ordinary connection metadata, and a fixed Node.js HTTP/2 client forwards it only to `https://dns.quad9.net/dns-query`. No user-supplied upstream, DNS-name-bearing request query string, cookie, credential, application log, or server-side response cache is used. Netlify's platform and infrastructure policies still govern any connection metadata or platform-level processing outside ZoneSkein's application code. Quad9 receives the forwarded question and the relay connection information. HTTPS protects each transport leg; it does not hide the question from Netlify in compatibility mode or from Quad9.
 
 ## Hosting requests
 
-Netlify receives ordinary requests for ZoneSkein pages and static assets. It may process or retain visitor connection information under its own policies. The application does not add analytics identifiers, advertising identifiers, tracking pixels, telemetry, or third-party error reporting.
+Netlify receives ordinary requests for ZoneSkein pages and static assets. In optional relay mode it also receives the bounded DNS wire question described above. It may process or retain visitor connection information under its own policies. ZoneSkein's application does not log relay bodies or add analytics identifiers, advertising identifiers, tracking pixels, telemetry, or third-party error reporting.
 
 ## Email and sender inputs
 

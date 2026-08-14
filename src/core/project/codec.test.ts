@@ -234,6 +234,53 @@ describe('portable Change Workspace codec', () => {
     }
   });
 
+  it('round-trips the fixed Quad9 relay endpoint as inert evidence', async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal('fetch', fetch);
+    const original = workspace();
+    const originalRun = original.evidence.runs[0];
+    const originalResolver = originalRun?.resolvers[0];
+    if (originalRun === undefined || originalResolver === undefined)
+      throw new Error('Expected resolver evidence fixture.');
+    const relayWorkspace: ChangeWorkspace = {
+      ...original,
+      evidence: {
+        ...original.evidence,
+        runs: [
+          {
+            ...originalRun,
+            resolvers: [
+              {
+                ...originalResolver,
+                endpoint: '/api/doh/quad9',
+                label: 'Quad9 (compatibility mode)',
+                resolverId: 'quad9-relay',
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    try {
+      const encoded = await encodeChangeWorkspace(relayWorkspace);
+      expect(encoded.ok).toBe(true);
+      if (!encoded.ok) return;
+      const decoded = await decodeChangeWorkspace(textEncoder.encode(encoded.value));
+      expect(decoded.ok).toBe(true);
+      expect(fetch).not.toHaveBeenCalled();
+      if (decoded.ok) {
+        expect(decoded.value.workspace.evidence.runs[0]?.resolvers[0]).toMatchObject({
+          endpoint: '/api/doh/quad9',
+          label: 'Quad9 (compatibility mode)',
+          resolverId: 'quad9-relay',
+        });
+      }
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('rejects getters during encoding without invoking them', async () => {
     let calls = 0;
     const value = workspace() as ChangeWorkspace & { trap?: string };
@@ -1069,6 +1116,23 @@ describe('portable Change Workspace codec', () => {
           evidence: {
             incompleteReasons: [],
             runs: [{ ...run(), resolvers: [{ ...resolver(), endpoint }] }],
+            status: 'complete',
+          },
+        }),
+        'invalid-schema',
+      );
+    }
+    for (const candidate of [
+      { endpoint: 'https://dns.quad9.net/dns-query', resolverId: 'quad9-relay' },
+      { endpoint: '/api/doh/quad9', resolverId: 'custom' },
+      { endpoint: '/api/doh/quad9?dns=question', resolverId: 'quad9-relay' },
+    ] as const) {
+      expectFailure(
+        parseChangeWorkspace({
+          ...workspace(),
+          evidence: {
+            incompleteReasons: [],
+            runs: [{ ...run(), resolvers: [{ ...resolver(), ...candidate }] }],
             status: 'complete',
           },
         }),

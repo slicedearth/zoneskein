@@ -17,6 +17,7 @@ blob-report/
 .env.*
 !.env.example
 .netlify/
+deno.lock
 
 # Editors
 .idea/

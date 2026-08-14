@@ -5,7 +5,8 @@ export type ChangeWorkspaceCompleteness = 'complete' | 'partial';
 export type ChangeWorkspaceRisk = 'information' | 'low' | 'moderate' | 'high' | 'critical';
 export type ChangeWorkspaceAnalysisStatus = 'not-run' | ChangeWorkspaceCompleteness;
 export type ChangeWorkspaceEvidenceStatus = 'none' | ChangeWorkspaceCompleteness;
-export type ChangeWorkspaceResolverId = 'cloudflare' | 'google' | 'quad9' | 'custom';
+export type ChangeWorkspaceResolverId =
+  'cloudflare' | 'google' | 'quad9' | 'quad9-relay' | 'custom';
 export type ChangeWorkspaceQuestionStatus =
   | 'answer'
   | 'no-data'

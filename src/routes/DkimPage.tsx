@@ -564,6 +564,11 @@ export function DkimPage() {
           <label htmlFor="dkim-resolver">Resolver</label>
           <select
             id="dkim-resolver"
+            aria-describedby={
+              RESOLVERS[resolverId].selectionNote === undefined
+                ? undefined
+                : 'dkim-resolver-note'
+            }
             value={resolverId}
             onChange={(event) => {
               invalidateRun();
@@ -576,6 +581,9 @@ export function DkimPage() {
               </option>
             ))}
           </select>
+          {RESOLVERS[resolverId].selectionNote === undefined ? null : (
+            <small id="dkim-resolver-note">{RESOLVERS[resolverId].selectionNote}</small>
+          )}
         </div>
         {error !== '' ? (
           <p className="form-error" role="alert">

@@ -153,6 +153,11 @@ export function CaaPage() {
           <label htmlFor="caa-resolver">Resolver</label>
           <select
             id="caa-resolver"
+            aria-describedby={
+              RESOLVERS[resolverId].selectionNote === undefined
+                ? undefined
+                : 'caa-resolver-note'
+            }
             value={resolverId}
             onChange={(event) => {
               invalidateInspection();
@@ -165,6 +170,9 @@ export function CaaPage() {
               </option>
             ))}
           </select>
+          {RESOLVERS[resolverId].selectionNote === undefined ? null : (
+            <small id="caa-resolver-note">{RESOLVERS[resolverId].selectionNote}</small>
+          )}
         </div>
         {error !== '' ? (
           <p className="form-error" role="alert">

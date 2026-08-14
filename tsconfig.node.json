@@ -24,7 +24,9 @@
     "vite.config.ts",
     "vitest.config.ts",
     "playwright.config.ts",
+    "netlify/functions/**/*.ts",
     "scripts/**/*.ts",
-    "tests/e2e"
+    "tests/e2e",
+    "tests/functions/**/*.ts"
   ]
 }

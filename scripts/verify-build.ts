@@ -4,9 +4,11 @@ import { extname, join, relative, resolve, sep } from 'node:path';
 
 const root = resolve(import.meta.dirname, '..');
 const output = join(root, 'dist');
+const functionsDirectory = join(root, 'netlify', 'functions');
 const MAX_FILES = 128;
 const MAX_TOTAL_OCTETS = 4 * 1024 * 1024;
 const MAX_SINGLE_ASSET_OCTETS = 512 * 1024;
+const MAX_FUNCTION_SOURCE_OCTETS = 64 * 1024;
 const HASHED_ASSET_NAME = /^assets\/[A-Za-z0-9_-]+-[A-Za-z0-9_-]{8}\.(?:css|js)$/u;
 const REQUIRED_ROOT_FILES = new Set([
   'LICENSE',
@@ -66,6 +68,21 @@ function assertSameSet(
   }
 }
 
+function requireSourcePattern(source: string, pattern: RegExp, label: string): void {
+  if (!pattern.test(source)) fail(`Quad9 relay source is missing its ${label}.`);
+}
+
+async function quad9RelaySource(): Promise<string> {
+  const entries = await readdir(functionsDirectory, { withFileTypes: true });
+  if (entries.length !== 1 || entries[0]?.name !== 'quad9-doh.ts' || !entries[0].isFile()) {
+    fail('netlify/functions must contain exactly the quad9-doh.ts function source.');
+  }
+  const sourcePath = join(functionsDirectory, 'quad9-doh.ts');
+  if ((await stat(sourcePath)).size > MAX_FUNCTION_SOURCE_OCTETS)
+    fail(`quad9-doh.ts exceeds ${String(MAX_FUNCTION_SOURCE_OCTETS)} octets.`);
+  return readFile(sourcePath, 'utf8');
+}
+
 const files = await filesBelow(output);
 let totalOctets = 0;
 for (const path of files) {
@@ -103,24 +120,84 @@ await Promise.all([
   requireExactCopy('public/robots.txt', 'robots.txt'),
 ]);
 
-const [html, headers, redirects, resolverSource, netlifyConfig] = await Promise.all([
-  readFile(join(output, 'index.html'), 'utf8'),
-  readFile(join(output, '_headers'), 'utf8'),
-  readFile(join(output, '_redirects'), 'utf8'),
-  readFile(join(root, 'src/core/doh/resolvers.ts'), 'utf8'),
-  readFile(join(root, 'netlify.toml'), 'utf8'),
-]);
+const [html, headers, redirects, resolverSource, netlifyConfig, relaySource] =
+  await Promise.all([
+    readFile(join(output, 'index.html'), 'utf8'),
+    readFile(join(output, '_headers'), 'utf8'),
+    readFile(join(output, '_redirects'), 'utf8'),
+    readFile(join(root, 'src/core/doh/resolvers.ts'), 'utf8'),
+    readFile(join(root, 'netlify.toml'), 'utf8'),
+    quad9RelaySource(),
+  ]);
 
 if (!redirects.split(/\r?\n/u).includes('/*  /index.html  200'))
   fail('SPA fallback redirect is missing.');
-if (/\[(?:edge_)?functions\]|functions\s*=|edge_functions\s*=/iu.test(netlifyConfig))
-  fail('Netlify configuration declares server-side functions.');
+if (/\[edge_functions\]|edge_functions\s*=/iu.test(netlifyConfig))
+  fail('Netlify configuration declares an Edge Function.');
+if (/\[functions(?:\.|\])|functions\s*=/iu.test(netlifyConfig))
+  fail('Netlify configuration overrides the checked default function directory.');
 
-const resolverOrigins = new Set(
-  [...resolverSource.matchAll(/endpoint:\s*'([^']+)'/gu)].map((match) => {
+requireSourcePattern(relaySource, /from\s+['"]node:http2['"]/u, 'Node.js HTTP/2 transport');
+requireSourcePattern(relaySource, /path:\s*['"]\/api\/doh\/quad9['"]/u, 'fixed route');
+requireSourcePattern(relaySource, /method:\s*['"]POST['"]/u, 'POST-only route configuration');
+requireSourcePattern(relaySource, /action:\s*['"]rate_limit['"]/u, 'rate-limit action');
+requireSourcePattern(
+  relaySource,
+  /aggregateBy:\s*\[\s*['"]ip['"]\s*,\s*['"]domain['"]\s*\]/u,
+  'IP-and-domain rate-limit aggregation',
+);
+requireSourcePattern(relaySource, /windowLimit:\s*120\b/u, '120-request rate limit');
+requireSourcePattern(relaySource, /windowSize:\s*60\b/u, '60-second rate-limit window');
+requireSourcePattern(
+  relaySource,
+  /MAX_RELAY_QUERY_BYTES\s*=\s*4_096\b/u,
+  '4,096-octet request limit',
+);
+requireSourcePattern(
+  relaySource,
+  /MAX_RELAY_RESPONSE_BYTES\s*=\s*65_535\b/u,
+  '65,535-octet response limit',
+);
+requireSourcePattern(
+  relaySource,
+  /QUAD9_RELAY_TIMEOUT_MS\s*=\s*7_000\b/u,
+  'seven-second upstream timeout',
+);
+requireSourcePattern(
+  relaySource,
+  /requestUrl\.search\s*!==\s*['"]['"]/u,
+  'empty query-string check',
+);
+requireSourcePattern(
+  relaySource,
+  /['"]Cache-Control['"]:\s*['"]no-store,/u,
+  'no-store response policy',
+);
+if (/\bprocess\.env\b|\bconsole\s*\./u.test(relaySource))
+  fail('Quad9 relay source uses an environment override or application logging.');
+if (/(?:from\s+|import\s*\(|require\s*\()\s*['"](?:\.{1,2}\/|\/)/u.test(relaySource))
+  fail('Quad9 relay source imports a repository-local or absolute module.');
+
+const relayUrls = relaySource.match(/https?:\/\/[^'"\s`)]+/gu) ?? [];
+if (relayUrls.length !== 1 || relayUrls[0] !== 'https://dns.quad9.net/dns-query')
+  fail('Quad9 relay source does not contain exactly one fixed upstream URL.');
+
+const resolverEndpoints = [...resolverSource.matchAll(/endpoint:\s*'([^']+)'/gu)].map(
+  (match) => {
     if (match[1] === undefined) fail('resolver endpoint extraction failed.');
-    return new URL(match[1]).origin;
-  }),
+    return match[1];
+  },
+);
+if (
+  resolverEndpoints.length !== 4 ||
+  resolverEndpoints.filter((endpoint) => endpoint === '/api/doh/quad9').length !== 1
+) {
+  fail('expected three direct resolver endpoints and one fixed Quad9 relay endpoint.');
+}
+const resolverOrigins = new Set(
+  resolverEndpoints
+    .filter((endpoint) => endpoint.startsWith('https://'))
+    .map((endpoint) => new URL(endpoint).origin),
 );
 if (resolverOrigins.size !== 3) fail('expected exactly three fixed resolver origins.');
 const expectedConnections = new Set(["'self'", ...resolverOrigins]);

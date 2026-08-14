@@ -2,14 +2,14 @@
 
 **Untangle DNS.**
 
-ZoneSkein is a static, privacy-conscious DNS inspection, validation, and record-authoring workbench. It helps domain owners, developers, and operators inspect evidence, understand email-policy dependencies, lint proposed records, and compare changes before publishing.
+ZoneSkein is a static-first, privacy-conscious DNS inspection, validation, and record-authoring workbench. It helps domain owners, developers, and operators inspect evidence, understand email-policy dependencies, lint proposed records, and compare changes before publishing.
 
 It is not a subdomain scanner, reconnaissance platform, monitoring service, DNS publisher, or provider account manager. Every live DNS question begins with a name and record types selected by the visitor.
 
 ## Features
 
 - DNS record explorer with A, AAAA, CNAME, MX, NS, TXT, SOA, CAA, SRV, PTR, DS, DNSKEY, RRSIG, NSEC, NSEC3, TLSA, HTTPS, and SVCB support.
-- RFC 8484 wire-format DNS-over-HTTPS to fixed Google Public DNS, Cloudflare 1.1.1.1, and Quad9 endpoints, using the GET or POST method expected by each endpoint. Quad9 requires an end-to-end HTTP/2 or HTTP/3 browser path.
+- RFC 8484 wire-format DNS-over-HTTPS to fixed Google Public DNS, Cloudflare 1.1.1.1, and Quad9 endpoints, using the GET or POST method expected by each endpoint. **Quad9 (direct)** remains the default Quad9 path, with explicit **Quad9 (compatibility mode)** for browser paths that cannot preserve HTTP/2 or HTTP/3.
 - Side-by-side recursive-resolver comparison, exact DNS message sizes, EDNS Extended DNS Error explanations, RFC 2308 negative-cache TTLs, normalised record fields, PTR conversion, and plain, BIND, JSON, or Markdown exports.
 - Independent DNSSEC validation from bundled IANA root trust anchors, with authenticated DS and DNSKEY chains, positive and negative selected application answers, wildcard proofs, bounded CNAME/DNAME/SVCB/HTTPS alias continuation, SHA-1/SHA-256/SHA-384 DS matching, explicit NSEC3 Opt-Out uncertainty, and browser-supported RSA, ECDSA, and Ed25519 verification.
 - Ordered SPF lexer and parser, recursive include/redirect graph, path-aware ten-term and void-lookup analysis, A/MX expansion, cycle detection, and guarded point-in-time snapshots with provenance.
@@ -24,11 +24,11 @@ It is not a subdomain scanner, reconnaissance platform, monitoring service, DNS 
 
 ## Architecture and privacy
 
-ZoneSkein builds to static files. It has no application backend, server routes, functions, database service, authentication, analytics, advertising, telemetry, or error-reporting service.
+ZoneSkein is static-first. The built browser application contains no server-rendered routes, database service, authentication, analytics, advertising, telemetry, or error-reporting service. Its only server-side component is a bounded Netlify Function for the explicitly selected Quad9 compatibility relay.
 
-Parsing, cryptography, linting, policy evaluation, diffing, report generation, and local snapshots run in the browser. DNS questions go directly from the browser to the selected resolver. The resolver receives those questions and its privacy policy applies. Netlify still receives ordinary page and asset requests and may log connection information.
+Parsing, cryptography, linting, policy evaluation, diffing, report generation, and local snapshots run in the browser. Google, Cloudflare, and **Quad9 (direct)** questions go directly from the browser to the selected resolver. The resolver receives those questions and its privacy policy applies. Netlify receives ordinary page and asset requests and may log connection information.
 
-Quad9 no longer accepts DNS-over-HTTPS over HTTP/1.1. A browser, VPN, enterprise inspection product, or network proxy that downgrades Quad9 requests can therefore make that resolver unavailable even while Google or Cloudflare works. ZoneSkein reports this as a transport limitation, retains any other resolver evidence, and does not relay questions through Netlify or a substitute service.
+Quad9 no longer accepts DNS-over-HTTPS over HTTP/1.1. A browser, VPN, enterprise inspection product, or network proxy that downgrades Quad9 requests can therefore make that resolver unavailable even while Google or Cloudflare works. **Quad9 (direct)** remains the default Quad9 path. A visitor can explicitly opt into **Quad9 (compatibility mode)**, which sends the DNS wire question in a bounded POST body to `/api/doh/quad9`; Netlify then forwards it only to `https://dns.quad9.net/dns-query` through a fixed Node.js HTTP/2 client. Netlify can observe that question and ordinary connection metadata in compatibility mode. The relay uses no request query string, cookies, credentials, application logging, or server-side response cache. Google and Cloudflare evidence remains independent, and no recursive answer is treated as authoritative or globally representative.
 
 SPF sender mode can place parts of a supplied mailbox, IP address, HELO/EHLO name, or receiver name into resolver-visible DNS questions when a policy uses macros. DKIM message mode keeps the raw message in page memory and sends only derived selector TXT questions. See the privacy documentation before using real sender or message data.
 
@@ -46,6 +46,7 @@ Normal browser use is bounded by:
 - an eight-second timeout;
 - a token bucket with a four-request burst and two requests per second per resolver;
 - a rolling limit of 120 requests per minute and resolver, coordinated across tabs with replay-resistant events and a bounded anonymous local ledger where browser facilities are available;
+- a Netlify-enforced limit of 120 requests per minute per source IP address and site domain for the optional Quad9 relay;
 - a first-in-first-out queue capped at 256 waiting requests per resolver, with complete cancellation cleanup;
 - an 80-unique-question budget for each user-initiated run;
 - in-flight deduplication and TTL-aware memory caching;
@@ -55,7 +56,7 @@ Normal browser use is bounded by:
 - bounded DNS response streaming and aggregate DNSSEC record, digest, signature, and NSEC3 hashing work;
 - cancellation, cycle detection, no ANY queries, no unrestricted batches, and no user-supplied fetch target.
 
-These controls reduce accidental and ordinary abuse. They cannot enforce policy against someone who modifies a fully client-side application.
+These controls reduce accidental and ordinary abuse. The browser controls cannot enforce policy against someone who modifies the client; the optional relay separately enforces its server-side request, media, size, time, work, target, and rate limits.
 
 ## Local development
 
@@ -88,16 +89,20 @@ npm run test:e2e
 npm run test:live
 ```
 
-`npm run build` also verifies the bounded static output, legal assets, CSP resolver allowlist, SPA rewrite, and entry-asset hashes. `npm run check:build` repeats that verification for an existing `dist` directory. Production source maps are not emitted. Browser tests exercise deterministic, mocked workflows in Chromium, Firefox, WebKit, and a mobile Chromium viewport. The dedicated accessibility project checks every static route with axe, 320-CSS-pixel reflow, keyboard skip-link focus, forced colours, and reduced motion. Property tests use fixed seeds and bounded generated inputs so failures remain locally reproducible.
+`npm run build` also verifies the bounded static output, legal assets, CSP resolver allowlist, SPA rewrite, entry-asset hashes, and the single allowlisted Netlify Function contract. `npm run check:build` repeats that verification for an existing `dist` directory and the committed relay source and configuration. Production source maps are not emitted. Browser tests exercise deterministic, mocked workflows in Chromium, Firefox, WebKit, and a mobile Chromium viewport. The dedicated accessibility project checks every static route with axe, 320-CSS-pixel reflow, keyboard skip-link focus, forced colours, and reduced motion. Property tests use fixed seeds and bounded generated inputs so failures remain locally reproducible.
 
 `npm run test:live` is an optional manual check against current public resolvers. It is excluded from normal tests and continuous integration. Unit and browser tests otherwise use deterministic fixtures and mocked network responses.
+
+The Vite development and preview servers exercise the static client but do not execute Netlify Functions. Direct resolver modes work there; an end-to-end Quad9 relay check requires a Netlify local runtime or a deployed preview. The deterministic function tests still cover its request validation and HTTP/2 transport without contacting Quad9.
+
+Version tags produce a browser-only static archive and a separate, bounded complete Netlify deployment archive containing the verified `dist` output, the single Quad9 function, deployment configuration, package manifests, and legal notices. Both archives are checksummed and receive separate provenance and SBOM attestations; neither workflow deploys the site.
 
 ## Netlify deployment
 
 1. Create a Netlify site from the repository.
 2. Use `npm run build` as the build command and `dist` as the publish directory. The committed `netlify.toml` supplies both.
-3. Deploy. No environment variables, functions, API keys, or paid services are required by ZoneSkein itself.
-4. Verify the security headers and all direct routes after deployment.
+3. Deploy the static application and the committed `quad9-doh` Netlify Function. No application environment variables, API keys, database, or scheduled jobs are required.
+4. Verify the security headers, all direct routes, and the bounded `/api/doh/quad9` endpoint after deployment.
 
 The rewrite in `public/_redirects` sends direct application routes to `index.html`; static assets retain their own paths. `public/_headers` supplies the restrictive Content Security Policy and other Netlify response headers. Hosting-provider plans and terms can change, so “free forever” cannot be guaranteed.
 

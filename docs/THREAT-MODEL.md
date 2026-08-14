@@ -6,12 +6,13 @@
 - raw email messages and locally derived authentication evidence;
 - accuracy of protocol conclusions and generated records;
 - availability of public DNS-over-HTTPS resolvers;
+- availability and bounded use of the optional Quad9 compatibility relay;
 - local snapshot contents;
-- integrity of the deployed static application.
+- integrity of the deployed static-first application and bounded relay.
 
 ## Trust boundaries
 
-The visitor trusts the delivered static files, browser runtime, selected resolver, Netlify’s static hosting, and their own device. ZoneSkein does not operate an application backend.
+The visitor trusts the delivered static files, browser runtime, selected resolver, Netlify's hosting and optional Quad9 relay execution, and their own device. ZoneSkein is static-first; its only server-side application component is the bounded Quad9 compatibility function.
 
 Resolver responses, DNS record text, pasted zone or message data, SMTP sender inputs, URL fragments, imported snapshots, and Change Workspace files are untrusted. Browser extensions and local malware are outside the application's protection boundary.
 
@@ -19,17 +20,17 @@ Resolver responses, DNS record text, pasted zone or message data, SMTP sender in
 
 ### Arbitrary requests and SSRF-like behaviour
 
-All resolver definitions and endpoints are compile-time allowlisted. The UI accepts no URL, host, or protocol for network destinations. CSP `connect-src` repeats the allowlist. Credentials are omitted and referrers are suppressed.
+All resolver definitions and endpoints are compile-time allowlisted. The UI accepts no URL, host, or protocol for network destinations. CSP `connect-src` repeats the browser allowlist. The Quad9 relay is exposed only at `/api/doh/quad9` and its Node.js HTTP/2 client can connect only to `https://dns.quad9.net/dns-query`; it rejects a request query string and never interprets caller input as a target. Browser credentials are omitted and referrers are suppressed. The function does not forward cookies or credentials.
 
 ### Resolver abuse
 
 Shared concurrency, token buckets, a rolling request window, bounded first-in-first-out queues, cross-tab signals, replay-resistant opaque request identifiers, run budgets, timeouts, cooldown circuits, TTL caching, in-flight deduplication, depth limits, cycle detection, and bounded targets reduce accidental amplification. Cross-tab state has strict shapes, size and age limits, contains no questions or answers, and fails back to tab-local coordination when browser messaging or storage is unavailable. There is no bulk input, subdomain generation, ANY query, or automatic retry storm.
 
-A modified client can bypass browser-side controls. Public resolvers must enforce their own service limits.
+A modified client can bypass browser-side controls for direct resolver requests. The optional Quad9 relay separately accepts only one bounded DNS wire question per POST, limits request and response bytes, DNS parsing work and time, and uses Netlify's 120-request-per-minute limit aggregated by source IP address and site domain. Visitors sharing an apparent egress address can share an allowance, and distributed addresses retain separate allowances, so this is not an absolute upstream traffic cap. The relay has no arbitrary target, automatic retry loop, server-side response cache, or unrestricted request body. Quad9 and Netlify retain their own service protections.
 
 ### Resource exhaustion
 
-Names, zone snippets, parser statements, tokens, diagnostics, records, proposed changes, plan findings, raw-message bytes, header fields, DKIM signatures, SPF macro output, evidence traces, snapshot records, fragments, graph depth, MX expansion, unique questions, cache entries, snapshot count, and snapshot size are bounded. Resource exhaustion produces an explicit incomplete result rather than a retained prefix comparison or rollout plan. DNSSEC also has whole-run limits for records, keys, signatures, digests, cryptographic attempts, and NSEC3 hash rounds. Long-running work observes cancellation between bounded cryptographic operations. DNS response bodies are streamed through the DNS wire limit rather than allocated without a bound.
+Names, zone snippets, parser statements, tokens, diagnostics, records, proposed changes, plan findings, raw-message bytes, header fields, DKIM signatures, SPF macro output, evidence traces, snapshot records, fragments, graph depth, MX expansion, unique questions, cache entries, snapshot count, and snapshot size are bounded. Resource exhaustion produces an explicit incomplete result rather than a retained prefix comparison or rollout plan. DNSSEC also has whole-run limits for records, keys, signatures, digests, cryptographic attempts, and NSEC3 hash rounds. Long-running work observes cancellation between bounded cryptographic operations. Browser DNS response bodies are streamed through the DNS wire limit rather than allocated without a bound. The relay rejects requests above 4,096 octets and upstream responses above 65,535 octets before forwarding a result to the browser.
 
 Change Workspace files are rejected before reading when their declared size exceeds the file limit, then decoded with fatal UTF-8, duplicate-key, canonical-value, schema, count, and string bounds. A mismatched digest is quarantined until explicit acknowledgement. A later file read cannot overwrite a newer clear or edit, and retained endpoint strings never become network authority.
 
@@ -39,9 +40,11 @@ React renders record and pasted values as text. No `dangerouslySetInnerHTML`, ar
 
 ### Privacy leakage
 
-Live tools do not place visitor-supplied DNS names in the Netlify request path or query string. Explicit report sharing can place names and record data in the URL fragment, which is not sent to Netlify but remains visible to the browser, its history, and recipients. Cloudflare receives POST wire bodies; Google and Quad9 receive base64url-encoded RFC 8484 GET parameters for direct browser CORS. Quad9 requires end-to-end HTTP/2 or HTTP/3 and is reported unavailable when the client's network path cannot provide it; ZoneSkein does not route that question through Netlify or another resolver. Resolver URLs are fixed, and the selected resolver can read or log the question under either method. There is no application proxy, analytics, telemetry, tracking pixel, or default query history.
+Direct live tools do not place visitor-supplied DNS names in a Netlify page-request path or query string. Explicit report sharing can place names and record data in the URL fragment, which is not sent to Netlify but remains visible to the browser, its history, and recipients. Cloudflare receives POST wire bodies; Google and **Quad9 (direct)** receive base64url-encoded RFC 8484 GET parameters for direct browser CORS. Quad9 requires end-to-end HTTP/2 or HTTP/3 and is reported unavailable when the client's direct network path cannot provide it. Quad9 (direct) remains the default Quad9 path.
 
-SPF macros can place parts of supplied mailbox, IP, HELO/EHLO, or receiver values into resolver-visible DNS questions. DKIM message verification keeps the raw message in page memory and sends only derived selector TXT questions. DMARC alignment sends boundary questions derived from supplied domains. Netlify still sees ordinary page requests. Local storage contains the snapshot opt-in boolean and the anonymous bounded rate-limit ledger, but no query history, DNS content, or pasted input.
+The visitor can explicitly opt into **Quad9 (compatibility mode)**. Netlify then receives the DNS wire question in the POST body plus ordinary connection metadata, and Quad9 receives the forwarded question and the relay connection information. The fixed path and upstream contain no visitor-supplied target or request query string; the function does not use or forward cookies or credentials and has no application log or server-side response cache. Platform-level processing remains governed by Netlify's policies. Resolver URLs remain fixed, and the selected resolver can read or log the question under either direct method or compatibility mode. There is no general-purpose application proxy, analytics, telemetry, tracking pixel, or default query history.
+
+SPF macros can place parts of supplied mailbox, IP, HELO/EHLO, or receiver values into resolver-visible DNS questions and, when Quad9 relay mode is selected, into questions visible to Netlify. DKIM message verification keeps the raw message in page memory and sends only derived selector TXT questions. DMARC alignment sends boundary questions derived from supplied domains. Netlify also sees ordinary page requests. Local storage contains the snapshot opt-in boolean and the anonymous bounded rate-limit ledger, but no query history, DNS content, or pasted input.
 
 ### Misleading security conclusions
 
@@ -51,4 +54,4 @@ Workspace analysis preserves unavailable and partial inputs explicitly. It never
 
 ### Supply chain and deployment
 
-Runtime dependencies use MIT, BSD-2-Clause, or ISC licences and are version-locked. Dependency lifecycle scripts require version-pinned approval, and quality automation performs a vulnerability audit before format, lint, strict type checking, deterministic tests, browser tests, and a static build. Netlify security headers are committed and should be verified after deployment.
+Runtime dependencies use MIT, BSD-2-Clause, or ISC licences and are version-locked. Dependency lifecycle scripts require version-pinned approval, and quality automation performs a vulnerability audit before format, lint, strict type checking, deterministic tests, browser tests, and a checked static-first build. Netlify security headers and the single function's route and rate-limit configuration are committed and should be verified after deployment. The build verifier rejects an unexpected function file, upstream, route, or rate-limit contract.

@@ -74,14 +74,21 @@ const MAX_PERSISTED_CHARACTERS = 32_768;
 const MAX_EVENT_ID_CHARACTERS = 96;
 const CHANNEL_NAME = 'zoneskein-doh-rate-v2';
 const STORAGE_KEY = 'zoneskein-doh-rate-v2';
-const RESOLVER_IDS = ['cloudflare', 'google', 'quad9'] as const satisfies readonly ResolverId[];
+const RESOLVER_IDS = [
+  'cloudflare',
+  'google',
+  'quad9',
+  'quad9-relay',
+] as const satisfies readonly ResolverId[];
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 function isResolverId(value: unknown): value is ResolverId {
-  return value === 'cloudflare' || value === 'google' || value === 'quad9';
+  return (
+    value === 'cloudflare' || value === 'google' || value === 'quad9' || value === 'quad9-relay'
+  );
 }
 
 function isTimestamp(value: unknown): value is number {

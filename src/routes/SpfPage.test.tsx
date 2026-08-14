@@ -7,15 +7,20 @@ import { SpfPage } from './SpfPage';
 
 afterEach(() => vi.unstubAllGlobals());
 
-function spfAnswer(input: RequestInfo | URL): Response {
+function spfAnswer(input: RequestInfo | URL, init?: RequestInit): Response {
   if (typeof input !== 'string') throw new Error('Expected a string DNS request URL.');
-  const encoded = new URL(input).searchParams.get('dns');
-  if (encoded === null) throw new Error('Expected a DNS wire query.');
-  const base64 = encoded.replaceAll('-', '+').replaceAll('_', '/');
-  const request = Uint8Array.from(
-    atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, '=')),
-    (character) => character.charCodeAt(0),
-  );
+  const encoded = new URL(input, 'http://localhost').searchParams.get('dns');
+  let request: Uint8Array;
+  if (encoded !== null) {
+    const base64 = encoded.replaceAll('-', '+').replaceAll('_', '/');
+    request = Uint8Array.from(
+      atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, '=')),
+      (character) => character.charCodeAt(0),
+    );
+  } else if (init?.body instanceof ArrayBuffer) request = new Uint8Array(init.body);
+  else if (ArrayBuffer.isView(init?.body)) {
+    request = new Uint8Array(init.body.buffer, init.body.byteOffset, init.body.byteLength);
+  } else throw new Error('Expected a DNS wire query.');
   const question = decode(request).questions?.[0];
   if (question === undefined) throw new Error('Expected one DNS question.');
   const bytes = encode({
@@ -36,6 +41,17 @@ function spfAnswer(input: RequestInfo | URL): Response {
 }
 
 describe('SpfPage', () => {
+  it('discloses the Netlify intermediary when the Quad9 relay is selected', () => {
+    render(<SpfPage />);
+
+    const resolver = screen.getByLabelText('Resolver');
+    fireEvent.change(resolver, { target: { value: 'quad9-relay' } });
+
+    const note = screen.getByText(/DNS question and connection metadata to Netlify/iu);
+    expect(note).toHaveAttribute('id', 'spf-resolver-note');
+    expect(resolver).toHaveAttribute('aria-describedby', 'spf-resolver-note');
+  });
+
   it('uses pressed-button mode semantics and evaluates invalid sender input locally', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
@@ -164,6 +180,79 @@ describe('SpfPage', () => {
     };
     expect(evidence.capturedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/iu);
     expect(evidence.resolver?.id).toBe('quad9');
+  });
+
+  it('retains relay and fixed-upstream provenance in analysis and snapshot exports', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<typeof fetch>((input, init) => Promise.resolve(spfAnswer(input, init))),
+    );
+    render(<SpfPage />);
+
+    fireEvent.change(screen.getByLabelText('Resolver'), {
+      target: { value: 'quad9-relay' },
+    });
+    fireEvent.change(screen.getByLabelText('Domain'), {
+      target: { value: 'spf-relay-evidence.test' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Analyse SPF' }));
+    expect(
+      await screen.findByRole('heading', { level: 2, name: 'spf-relay-evidence.test' }),
+    ).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy analysis JSON' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+    const analysis = JSON.parse(String(writeText.mock.calls[0]?.[0])) as {
+      readonly evidenceSchema?: string;
+      readonly resolver?: {
+        readonly endpoint?: string;
+        readonly id?: string;
+        readonly relay?: { readonly operator?: string; readonly upstreamEndpoint?: string };
+      };
+    };
+    expect(analysis).toMatchObject({
+      evidenceSchema: 'zoneskein-spf-analysis-v1',
+      resolver: {
+        endpoint: '/api/doh/quad9',
+        id: 'quad9-relay',
+        relay: {
+          operator: 'Netlify',
+          upstreamEndpoint: 'https://dns.quad9.net/dns-query',
+        },
+      },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Snapshot flattener' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Build guarded snapshot' }));
+    expect(
+      await screen.findByRole('heading', { name: 'Point-in-time SPF snapshot' }),
+    ).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy provenance JSON' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(2));
+    const snapshot = JSON.parse(String(writeText.mock.calls[1]?.[0])) as {
+      readonly evidenceSchema?: string;
+      readonly resolver?: {
+        readonly id?: string;
+        readonly relay?: { readonly operator?: string };
+      };
+    };
+    expect(snapshot).toMatchObject({
+      evidenceSchema: 'zoneskein-spf-snapshot-v1',
+      resolver: { id: 'quad9-relay', relay: { operator: 'Netlify' } },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy Markdown' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(3));
+    expect(writeText.mock.calls[2]?.[0]).toContain('Intermediary: Netlify');
+    expect(writeText.mock.calls[2]?.[0]).toContain(
+      'Fixed upstream: Quad9 (https://dns.quad9.net/dns-query)',
+    );
   });
 
   it('keeps material controls bound to the pending SPF run', async () => {

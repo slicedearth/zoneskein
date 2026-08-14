@@ -6,7 +6,7 @@ ZoneSkein queries recursive resolvers, not authoritative nameservers directly. R
 
 When supplied, Extended DNS Errors are resolver-provided explanations rather than independently verified conclusions. Negative-cache guidance uses the lesser of the authority SOA TTL and SOA MINIMUM field; a response without the required SOA is not cached as a negative answer by ZoneSkein. Resolution failures never inherit authority TTLs: repeated failures use a bounded in-memory backoff from five seconds to five minutes and a later successful response clears that failure history.
 
-The browser must permit cross-origin DNS-over-HTTPS requests. Enterprise policy, extensions, regional resolver behaviour, or temporary CORS changes may block a resolver independently of DNS itself. Quad9 requires an end-to-end HTTP/2 or HTTP/3 path for DNS-over-HTTPS; a browser, VPN, inspection product, or network proxy that forces HTTP/1.1 can make Quad9 unavailable without establishing anything about the queried DNS name. ZoneSkein does not proxy or silently substitute that request.
+The browser must permit cross-origin DNS-over-HTTPS requests. Enterprise policy, extensions, regional resolver behaviour, or temporary CORS changes may block a resolver independently of DNS itself. Quad9 requires an end-to-end HTTP/2 or HTTP/3 path for direct DNS-over-HTTPS; a browser, VPN, inspection product, or network proxy that forces HTTP/1.1 can make **Quad9 (direct)** unavailable without establishing anything about the queried DNS name. Direct mode remains the default Quad9 path and ZoneSkein never silently substitutes a transport or resolver. A visitor can explicitly select **Quad9 (compatibility mode)**, which forwards the bounded wire question through the same-origin Netlify relay only to Quad9 over HTTP/2. Compatibility mode changes the privacy boundary because Netlify receives the question as well as ordinary connection metadata.
 
 ## DNSSEC
 
@@ -46,6 +46,6 @@ DKIM key mode validates one supplied selector and imports supported public keys;
 
 CAA inspection follows a bounded parent walk and explains the first observed policy, including standardised account, validation-method, and S/MIME controls. It does not authenticate a certificate request, interpret every CA-specific parameter, or guarantee that issuance succeeds or fails.
 
-## Client-side controls
+## Abuse controls
 
-Rate limits and input bounds protect the normal application path. They are not tamper-resistant and cannot constrain a modified client.
+Browser rate limits and input bounds protect the normal direct path. They are not tamper-resistant and cannot constrain a modified client. The optional Quad9 relay separately enforces its own fixed target, method, media type, query shape, request and response size, DNS work, timeout, and 120-request-per-minute rate limit per source IP address and site domain. Visitors behind one apparent egress address can share that allowance, while distributed source addresses have separate allowances; it is not an absolute site-wide upstream cap. Those controls reduce abuse of this function but do not make recursive results authoritative or prove global propagation.

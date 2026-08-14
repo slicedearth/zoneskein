@@ -91,6 +91,69 @@ describe('wire DoH resolver', () => {
     expect(init).toEqual(expect.objectContaining({ credentials: 'omit', method: 'GET' }));
   });
 
+  it('uses a same-origin POST for the explicit Quad9 compatibility relay', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(answerResponse());
+    const resolver = new WireDnsResolver(
+      resolverById('quad9-relay'),
+      testDependencies(fetchMock),
+    );
+
+    const response = await resolver.query(question(), {
+      checkingDisabled: false,
+      dnssecOk: true,
+    });
+
+    expect(response.resolver).toMatchObject({
+      endpoint: '/api/doh/quad9',
+      httpMethod: 'POST',
+      id: 'quad9-relay',
+      label: 'Quad9 (compatibility mode)',
+      relay: {
+        operator: 'Netlify',
+        upstreamEndpoint: 'https://dns.quad9.net/dns-query',
+        upstreamLabel: 'Quad9',
+      },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [target, init] = fetchMock.mock.calls[0] ?? [];
+    expect(target).toBe('/api/doh/quad9');
+    expect(init?.body).toBeInstanceOf(ArrayBuffer);
+    expect(init).toEqual(
+      expect.objectContaining({
+        cache: 'no-store',
+        credentials: 'omit',
+        headers: {
+          Accept: 'application/dns-message',
+          'Content-Type': 'application/dns-message',
+        },
+        method: 'POST',
+        mode: 'cors',
+        referrerPolicy: 'no-referrer',
+      }),
+    );
+  });
+
+  it('keeps direct and relayed Quad9 cache entries separate', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockImplementation(() => Promise.resolve(answerResponse()));
+    const cache = new DnsMemoryCache();
+    const dependencies = { ...testDependencies(fetchMock), cache };
+    const direct = new WireDnsResolver(resolverById('quad9'), dependencies);
+    const relayed = new WireDnsResolver(resolverById('quad9-relay'), dependencies);
+    const options = { checkingDisabled: false, dnssecOk: true };
+
+    expect((await direct.query(question(), options)).cache).toBe('miss');
+    expect((await relayed.query(question(), options)).cache).toBe('miss');
+    expect((await direct.query(question(), options)).cache).toBe('hit');
+    expect((await relayed.query(question(), options)).cache).toBe('hit');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.map(([target]) => target)).toEqual([
+      expect.stringMatching(/^https:\/\/dns\.quad9\.net\/dns-query\?dns=/u),
+      '/api/doh/quad9',
+    ]);
+  });
+
   it('deduplicates identical in-flight requests', async () => {
     let resolveFetch: ((value: Response) => void) | undefined;
     const fetchMock = vi.fn<typeof fetch>().mockImplementation(
@@ -132,6 +195,29 @@ describe('wire DoH resolver', () => {
       resolver.query(question(), { checkingDisabled: false, dnssecOk: false }),
     ).rejects.toMatchObject({ code: 'rate-limited', retryAfterMs: 12_000 });
     expect(imposeCooldown).toHaveBeenCalledWith('quad9', 12_000);
+  });
+
+  it('opens only the relay cooldown circuit after a relay HTTP 429', async () => {
+    const imposeCooldown = vi.fn();
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response('', { headers: { 'Retry-After': '7' }, status: 429 }));
+    const resolver = new WireDnsResolver(resolverById('quad9-relay'), {
+      ...testDependencies(fetchMock),
+      limiter: { wait: vi.fn(), imposeCooldown } as never,
+    });
+
+    await expect(
+      resolver.query(question(), { checkingDisabled: false, dnssecOk: false }),
+    ).rejects.toMatchObject({
+      code: 'rate-limited',
+      message: 'The resolver rate-limited this browser.',
+      retryAfterMs: 7_000,
+    });
+    expect(imposeCooldown).toHaveBeenCalledWith('quad9-relay', 7_000);
+    const [target, init] = fetchMock.mock.calls[0] ?? [];
+    expect(target).toBe('/api/doh/quad9');
+    expect(init?.method).toBe('POST');
   });
 
   it('recovers from a transient SERVFAIL without inheriting its authority TTL', async () => {

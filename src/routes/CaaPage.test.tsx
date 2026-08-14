@@ -45,6 +45,18 @@ function deferredReport() {
 afterEach(() => discoverCaaPolicyMock.mockReset());
 
 describe('CaaPage', () => {
+  it('discloses the Netlify intermediary when the Quad9 relay is selected', async () => {
+    const user = userEvent.setup();
+    render(<CaaPage />);
+
+    const resolver = screen.getByLabelText('Resolver');
+    await user.selectOptions(resolver, 'quad9-relay');
+
+    const note = screen.getByText(/DNS question and connection metadata to Netlify/iu);
+    expect(note).toHaveAttribute('id', 'caa-resolver-note');
+    expect(resolver).toHaveAttribute('aria-describedby', 'caa-resolver-note');
+  });
+
   it('announces loading and completion, and exposes populated results as a keyboard region', async () => {
     const deferred = deferredReport();
     discoverCaaPolicyMock.mockReturnValue(deferred.promise);

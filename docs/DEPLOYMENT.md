@@ -2,14 +2,19 @@
 
 ## Build contract
 
-ZoneSkein produces a static `dist` directory with:
+ZoneSkein is static-first. It produces a static `dist` directory with:
 
 - one application entry point and code-split route assets;
 - `_redirects` for direct-route fallback;
 - `_headers` for Netlify security headers;
-- no production source maps;
-- no function or edge-function bundle;
-- no server endpoint, credential, or environment-specific API URL.
+- no production source maps, server-rendered routes, credentials, or environment-specific API URLs.
+
+The deployment also contains exactly one Netlify Function source,
+`netlify/functions/quad9-doh.ts`. Its exported configuration exposes the fixed
+same-origin path `/api/doh/quad9` and applies Netlify's 120-request-per-minute
+rate limit aggregated by source IP address and site domain. It is an explicit,
+opt-in **Quad9 (compatibility mode)** path only; **Quad9 (direct)** remains the default Quad9 path.
+There are no Edge Functions or other server-side application components.
 
 The committed `netlify.toml` uses:
 
@@ -24,31 +29,52 @@ quality workflow. npm 12.0.2 is pinned through Netlify's `NPM_VERSION`, the
 package-manager declaration, and an explicit continuous-integration setup
 step. Production dependencies and build tools are locked by `package-lock.json`.
 
-The build finishes by verifying the output allowlist, file and asset-size bounds,
-legal-file copies, resolver/CSP alignment, SPA rewrite, static-only Netlify
-configuration, and SHA-256 hashes of the entry assets. A mismatch fails the build.
+The build finishes by verifying the static output allowlist, file and asset-size
+bounds, legal-file copies, resolver/CSP alignment, SPA rewrite, the exactly one
+allowlisted Netlify Function source and its fixed route, upstream and rate-limit
+contract, and SHA-256 hashes of the entry assets. The function is deployed by
+Netlify rather than copied into `dist`; the static output remains exact and
+bounded. A mismatch fails the build.
 
-Version tags matching `v*` run the same checked build and produce a deterministic
-static archive, CycloneDX software bill of materials, and SHA-256 checksum file.
-The release workflow uploads those bounded files for 90 days and records separate
-GitHub attestations for build provenance and the SBOM. This workflow does not
-deploy the site or create a GitHub release.
+Vite's development and preview servers do not execute Netlify Functions. They
+can verify the direct resolver paths, while mocked browser tests verify the
+relay request shape. An end-to-end `/api/doh/quad9` check requires a Netlify
+local runtime or a deployed preview. Deterministic function tests exercise the
+request validation and HTTP/2 boundary without contacting Quad9.
+
+Version tags matching `v*` run the same checked build and produce two distinct
+deterministic archives. `zoneskein-static.tar.gz` contains only the verified
+contents of `dist` and is a browser-client artefact without the relay.
+`zoneskein-netlify-source.tar.gz` is the complete prebuilt Netlify deployment
+artefact: it contains exactly `dist`, `netlify/functions/quad9-doh.ts`,
+`netlify.toml`, `package.json`, `package-lock.json`, `LICENSE`, and
+`THIRD_PARTY_NOTICES.md`. The static archive is capped at 4 MiB and the complete
+archive at 8 MiB.
+
+The workflow also produces a bounded CycloneDX software bill of materials and a
+SHA-256 checksum file covering both archives and the SBOM. GitHub records
+separate provenance and SBOM attestations for each archive, then retains the
+files for 90 days. The exact archive commands do not use repository globs, so
+tests, local files, and unrelated source cannot enter the deployment archive.
+This workflow does not deploy the site or create a GitHub release.
 
 ## Deploy from a repository
 
 1. Import the repository into Netlify.
 2. Confirm the build command and publish directory from `netlify.toml`.
-3. Do not configure a functions directory.
-4. Deploy without application environment variables.
+3. Preserve the committed `netlify/functions` source directory and do not add another function or Edge Function.
+4. Deploy without application environment variables or secrets.
 5. Open `/`, `/lookup/`, `/dnssec/`, `/spf/`, `/zone-lint/`, `/studio/`, `/diff/`, `/workspace/`, `/dmarc/`, `/dkim/`, `/caa/`, `/snapshots/`, and `/about/` directly.
 6. Refresh each route and confirm the application loads.
-7. Run a manual resolver smoke check from a supported browser.
+7. Run manual direct checks against Google, Cloudflare, and Quad9 from a supported browser.
+8. Explicitly enable Quad9 compatibility mode and confirm a valid DNS wire POST to `/api/doh/quad9` succeeds while invalid methods, media types, query strings, oversized or malformed bodies, and unsupported question shapes are rejected. Confirm responses declare `Cache-Control: no-store`.
+9. Inspect the deploy log's post-processing stage and confirm Netlify accepted the code-based rate-limit rule. Then confirm the deployed rule aggregates by source IP address and site domain, permits no more than 120 requests in 60 seconds, and does not expose a caller-selected upstream. Netlify does not necessarily fail a deploy when a code-based rule is invalid, so a successful build alone is insufficient.
 
 ## Security headers
 
 The Netlify `_headers` file sets:
 
-- a Content Security Policy allowing self-hosted assets and only the three DNS-over-HTTPS origins;
+- a Content Security Policy allowing self-hosted assets, including the same-origin relay, and only the three direct DNS-over-HTTPS origins;
 - `frame-ancestors 'none'` and `X-Frame-Options: DENY`;
 - `Referrer-Policy: no-referrer`;
 - `X-Content-Type-Options: nosniff`;
@@ -61,12 +87,32 @@ Verify deployed headers with the browser network inspector or an HTTP header cli
 
 Configure the custom domain in Netlify, follow its DNS and certificate instructions, and wait for HTTPS provisioning before advertising the site. ZoneSkein itself does not require a specific hostname.
 
-If the site hostname is moved, test URL-fragment report links, direct-route fallback, favicon loading, resolver CSP connections, and immutable asset caching.
+If the site hostname is moved, test URL-fragment report links, direct-route fallback, favicon loading, direct resolver CSP connections, same-origin relay requests, and immutable asset caching. Confirm that the relay rate limit still aggregates by the intended Netlify site domain.
 
 ## Costs and external services
 
-ZoneSkein requires no paid API, database, function runtime, scheduled job, authentication provider, or application secret. Netlify plan availability, quotas, and pricing are external and can change; review the current plan before deployment.
+ZoneSkein requires no paid resolver API, database, scheduled job, authentication provider, application secret, or environment variable. The Quad9 compatibility relay does consume Netlify Function invocations and bandwidth. Netlify plan availability, function limits, rate-limiting availability, quotas, and pricing are external and can change; review the current plan before deployment.
 
 ## Rollback
 
-Use Netlify’s previous static deploy artefact to roll back. Because there is no server migration or shared application database, rollback is limited to the deployed files. Visitor-created IndexedDB snapshots remain on their devices and use a versioned schema.
+Use Netlify's previous deploy artefact to roll back both the static files and the associated function version. There is no server migration or shared application database. Visitor-created IndexedDB snapshots remain on their devices and use a versioned schema. After rollback, verify that `/api/doh/quad9` and its rate limit match the rolled-back browser interface rather than assuming a static-asset rollback covered the function.
+
+## Relay trust and operation
+
+The relay accepts only an RFC 8484 POST body at `/api/doh/quad9`. It has one
+hard-coded upstream, `https://dns.quad9.net/dns-query`, reached with Node.js
+HTTP/2. It does not accept a target or query string and does not use or forward
+cookies, credentials, or an application environment override. Requests are capped at 4,096 octets and
+responses at 65,535 octets; method, media type, DNS header, single-question
+shape, class, supported type, work, declared response length, streamed response
+length, question binding, and timeout limits fail closed. It returns
+`Cache-Control: no-store` and does not cache responses on the relay or write
+question bodies to application logs. The normal bounded browser memory cache
+still applies after response validation.
+
+Netlify can observe the relayed DNS wire question and ordinary visitor
+connection metadata, and Quad9 can observe the forwarded question and the
+function's connection. Deployers must preserve this disclosure and must not
+describe relay answers as authoritative, globally representative, or equivalent
+to direct observations from the other resolvers. Successful Google and
+Cloudflare results remain independent evidence when the relay fails.

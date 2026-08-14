@@ -26,6 +26,7 @@ const RESOLVER_IDS = Object.keys(RESOLVERS) as ResolverId[];
 interface SpfRunReport {
   readonly analysis: SpfAnalysis;
   readonly dnsQuestions: number;
+  readonly resolverId: ResolverId;
   readonly snapshot?: SpfSnapshot;
 }
 
@@ -45,6 +46,31 @@ function senderTone(result: SpfSenderEvaluation['result']) {
   return 'unknown';
 }
 
+function resolverEvidence(resolverId: ResolverId) {
+  const resolver = RESOLVERS[resolverId];
+  return {
+    endpoint: resolver.endpoint,
+    id: resolver.id,
+    label: resolver.label,
+    privacyUrl: resolver.privacyUrl,
+    ...(resolver.relay === undefined ? {} : { relay: resolver.relay }),
+  };
+}
+
+function resolverMarkdown(resolverId: ResolverId): readonly string[] {
+  const resolver = RESOLVERS[resolverId];
+  return [
+    `- Resolver: ${resolver.label} (${resolver.id})`,
+    `- Resolver endpoint: ${resolver.endpoint}`,
+    ...(resolver.relay === undefined
+      ? []
+      : [
+          `- Intermediary: ${resolver.relay.operator}`,
+          `- Fixed upstream: ${resolver.relay.upstreamLabel} (${resolver.relay.upstreamEndpoint})`,
+        ]),
+  ];
+}
+
 function senderMarkdown(evaluation: SpfSenderEvaluation, resolverId: ResolverId): string {
   const escaped = (value: string) => value.replaceAll('|', '\\|').replaceAll('\n', ' ');
   return [
@@ -54,7 +80,7 @@ function senderMarkdown(evaluation: SpfSenderEvaluation, resolverId: ResolverId)
     `- Identity: ${evaluation.identity}`,
     `- Client IP: ${evaluation.ip}`,
     `- Policy domain: ${evaluation.domain}`,
-    `- Resolver: ${RESOLVERS[resolverId].label} (${resolverId})`,
+    ...resolverMarkdown(resolverId),
     ...(evaluation.capturedAt === undefined
       ? []
       : [`- Evaluated at: ${evaluation.capturedAt}`]),
@@ -93,7 +119,13 @@ function senderMarkdown(evaluation: SpfSenderEvaluation, resolverId: ResolverId)
   ].join('\n');
 }
 
-function SnapshotPanel({ snapshot }: { readonly snapshot: SpfSnapshot }) {
+function SnapshotPanel({
+  resolverId,
+  snapshot,
+}: {
+  readonly resolverId: ResolverId;
+  readonly snapshot: SpfSnapshot;
+}) {
   if (!snapshot.safe) {
     return (
       <article className="result-panel unsafe-output">
@@ -116,16 +148,25 @@ function SnapshotPanel({ snapshot }: { readonly snapshot: SpfSnapshot }) {
   const json = JSON.stringify(
     {
       earliestSourceExpiry: snapshot.earliestSourceExpiry,
+      evidenceSchema: 'zoneskein-spf-snapshot-v1',
       estimatedResponseBytes: snapshot.estimatedResponseBytes,
       generatedAt: snapshot.generatedAt,
       provenance: snapshot.provenance,
       recommendedRecheck: snapshot.recommendedRecheck,
+      resolver: resolverEvidence(resolverId),
       value: snapshot.value,
       warning: 'Point-in-time SPF snapshot — provider address ranges may change.',
     },
     null,
     2,
   );
+  const markdown = [
+    snapshot.markdown ?? '# ZoneSkein point-in-time SPF snapshot',
+    '',
+    '## Resolver provenance',
+    '',
+    ...resolverMarkdown(resolverId),
+  ].join('\n');
   return (
     <article className="snapshot-panel">
       <div className="result-heading">
@@ -144,7 +185,7 @@ function SnapshotPanel({ snapshot }: { readonly snapshot: SpfSnapshot }) {
         <CopyButton label="Copy SPF value" text={snapshot.value ?? ''} />
         <CopyButton label="Copy BIND TXT" text={snapshot.bindRecord ?? ''} />
         <CopyButton label="Copy provenance JSON" text={json} />
-        <CopyButton label="Copy Markdown" text={snapshot.markdown ?? ''} />
+        <CopyButton label="Copy Markdown" text={markdown} />
       </div>
       <dl className="metadata-grid">
         <div>
@@ -170,6 +211,10 @@ function SnapshotPanel({ snapshot }: { readonly snapshot: SpfSnapshot }) {
         <div>
           <dt>Estimated response</dt>
           <dd>{snapshot.estimatedResponseBytes} bytes</dd>
+        </div>
+        <div>
+          <dt>Resolver</dt>
+          <dd>{RESOLVERS[resolverId].label}</dd>
         </div>
       </dl>
       <details>
@@ -232,9 +277,28 @@ function SnapshotPanel({ snapshot }: { readonly snapshot: SpfSnapshot }) {
 
 function AnalysisPanel({ report }: { readonly report: SpfRunReport }) {
   const { analysis } = report;
+  const analysisJson = JSON.stringify(
+    {
+      ...analysis,
+      dnsQuestions: report.dnsQuestions,
+      evidenceSchema: 'zoneskein-spf-analysis-v1',
+      resolver: resolverEvidence(report.resolverId),
+    },
+    null,
+    2,
+  );
   const snapshotContent =
-    report.snapshot?.markdown ??
-    JSON.stringify({ ...analysis, dnsQuestions: report.dnsQuestions }, null, 2);
+    report.snapshot === undefined
+      ? analysisJson
+      : JSON.stringify(
+          {
+            evidenceSchema: 'zoneskein-spf-snapshot-v1',
+            resolver: resolverEvidence(report.resolverId),
+            snapshot: report.snapshot,
+          },
+          null,
+          2,
+        );
   return (
     <section className="results" aria-labelledby="spf-results-title">
       <div className="section-heading">
@@ -242,11 +306,16 @@ function AnalysisPanel({ report }: { readonly report: SpfRunReport }) {
           <p className="eyebrow">Ordered policy evaluation</p>
           <h2 id="spf-results-title">{analysis.rootDomain}</h2>
         </div>
-        <SnapshotButton
-          content={snapshotContent}
-          title={`SPF ${report.snapshot === undefined ? 'analysis' : 'snapshot'} — ${analysis.rootDomain}`}
-          tool="spf"
-        />
+        <div className="export-actions">
+          {report.snapshot === undefined ? (
+            <CopyButton label="Copy analysis JSON" text={analysisJson} />
+          ) : null}
+          <SnapshotButton
+            content={snapshotContent}
+            title={`SPF ${report.snapshot === undefined ? 'analysis' : 'snapshot'} — ${analysis.rootDomain}`}
+            tool="spf"
+          />
+        </div>
       </div>
       <div className="metric-strip">
         <div>
@@ -363,7 +432,9 @@ function AnalysisPanel({ report }: { readonly report: SpfRunReport }) {
           </article>
         ))}
       </div>
-      {report.snapshot === undefined ? null : <SnapshotPanel snapshot={report.snapshot} />}
+      {report.snapshot === undefined ? null : (
+        <SnapshotPanel resolverId={report.resolverId} snapshot={report.snapshot} />
+      )}
     </section>
   );
 }
@@ -375,7 +446,7 @@ function SenderPanel({ report }: { readonly report: SpfSenderReport }) {
     {
       ...evaluation,
       evidenceSchema: 'zoneskein-spf-sender-v1',
-      resolver: { id: resolverId, label: RESOLVERS[resolverId].label },
+      resolver: resolverEvidence(resolverId),
     },
     null,
     2,
@@ -610,7 +681,8 @@ export function SpfPage() {
     setReport(null);
     setSenderReport(null);
     setState('loading');
-    const dns = new WireSpfDnsClient(new WireDnsResolver(RESOLVERS[resolverId]), run);
+    const selectedResolverId = resolverId;
+    const dns = new WireSpfDnsClient(new WireDnsResolver(RESOLVERS[selectedResolverId]), run);
     try {
       if (mode === 'sender') {
         const evaluation = await evaluateSpfSender(
@@ -630,7 +702,7 @@ export function SpfPage() {
           setState('cancelled');
           return;
         }
-        setSenderReport({ evaluation, resolverId });
+        setSenderReport({ evaluation, resolverId: selectedResolverId });
       } else if (mode === 'analysis') {
         const analysis = await analyseSpf(policyDomain, dns);
         if (activeRun.current !== run) return;
@@ -638,7 +710,11 @@ export function SpfPage() {
           setState('cancelled');
           return;
         }
-        setReport({ analysis, dnsQuestions: run.questionsUsed });
+        setReport({
+          analysis,
+          dnsQuestions: run.questionsUsed,
+          resolverId: selectedResolverId,
+        });
       } else {
         const result = await flattenSpf(policyDomain, dns);
         if (activeRun.current !== run) return;
@@ -649,6 +725,7 @@ export function SpfPage() {
         setReport({
           analysis: result.analysis,
           dnsQuestions: run.questionsUsed,
+          resolverId: selectedResolverId,
           snapshot: result.snapshot,
         });
       }
@@ -809,6 +886,11 @@ export function SpfPage() {
           <label htmlFor="spf-resolver">Resolver</label>
           <select
             id="spf-resolver"
+            aria-describedby={
+              RESOLVERS[resolverId].selectionNote === undefined
+                ? undefined
+                : 'spf-resolver-note'
+            }
             value={resolverId}
             disabled={state === 'loading'}
             onChange={(event) => {
@@ -822,6 +904,9 @@ export function SpfPage() {
               </option>
             ))}
           </select>
+          {RESOLVERS[resolverId].selectionNote === undefined ? null : (
+            <small id="spf-resolver-note">{RESOLVERS[resolverId].selectionNote}</small>
+          )}
         </div>
         {error !== '' ? (
           <p className="form-error" role="alert">

@@ -7,6 +7,8 @@ All notable changes to ZoneSkein are documented here.
 - Reworked the crowded primary navigation into accessible tool groups, introduced a restrained first-party SVG mark, added active-route titles, and tightened responsive workbench spacing and touch targets.
 - Added forward-record select-all and default-reset controls, compact type-major resolver results, keyboard-accessible record tables, stale-result invalidation, and provenance-preserving lookup exports.
 - Added resolver-specific Quad9 transport guidance for browser, VPN, or inspection paths that cannot preserve its required HTTP/2-or-newer DNS-over-HTTPS connection.
+- Added explicit **Quad9 (direct)** and opt-in **Quad9 (compatibility mode)** choices. Compatibility mode uses a fixed Node.js HTTP/2 upstream, strict DNS wire and resource bounds, no application logging or server-side cache, and a Netlify-enforced 120-request-per-minute limit per source IP address and site domain; direct mode remains the default Quad9 path.
+- Split tagged artefacts into the existing browser-only static archive and a separately bounded, checksummed, and attested complete Netlify deployment archive containing the exact static output, Quad9 function, deployment configuration, package manifests, and legal notices.
 
 - Corrected DNSSEC algorithm policy for RFC 9905: legacy RSA/SHA-1 signatures remain verifiable, but algorithm 5 or 7 DS records can no longer establish a secure delegation.
 - Completed bounded DNSSEC validation for application NODATA, NXDOMAIN, wildcard-positive and wildcard-NODATA proof sets, RFC 9824 compact denial, and authenticated CNAME, DNAME, SVCB, and HTTPS alias continuation.

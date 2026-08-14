@@ -30,6 +30,11 @@ const DEFAULT_RECORD_TYPES = [
 ] as const satisfies readonly DnsRecordType[];
 const FORWARD_RECORD_TYPES = DNS_RECORD_TYPES.filter((type) => type !== 'PTR');
 const RESOLVER_IDS = Object.keys(RESOLVERS) as ResolverId[];
+const DIRECT_COMPARISON_RESOLVERS = [
+  'cloudflare',
+  'google',
+] as const satisfies readonly ResolverId[];
+type Quad9ComparisonResolverId = 'quad9' | 'quad9-relay';
 
 interface QueryResultBase {
   readonly question: DnsQuestion;
@@ -91,7 +96,27 @@ function resolverProvenance(resolver: ResolverDefinition) {
     httpMethod: resolver.httpMethod,
     id: resolver.id,
     label: resolver.label,
+    transport:
+      resolver.relay === undefined
+        ? { kind: 'direct' as const }
+        : {
+            intermediary: {
+              label: resolver.relay.operator,
+              privacyUrl: resolver.privacyUrl,
+            },
+            kind: 'relay' as const,
+            upstream: {
+              endpoint: resolver.relay.upstreamEndpoint,
+              label: resolver.relay.upstreamLabel,
+              privacyUrl: resolver.relay.upstreamPrivacyUrl,
+            },
+          },
   };
+}
+
+function markdownResolverProvenance(resolver: ResolverDefinition): string | null {
+  if (resolver.relay === undefined) return null;
+  return `- ${resolver.label}: ${resolver.relay.operator} compatibility relay → ${resolver.relay.upstreamLabel} (${resolver.relay.upstreamEndpoint})`;
 }
 
 function markdownCell(value: string): string {
@@ -171,6 +196,9 @@ function jsonExport(run: CompletedLookupRun): string {
 }
 
 function markdownExport(run: CompletedLookupRun): string {
+  const relayProvenance = run.descriptor.resolverIds
+    .map((id) => markdownResolverProvenance(RESOLVERS[id]))
+    .filter((line): line is string => line !== null);
   const lines = [
     `# ZoneSkein DNS lookup — ${run.descriptor.submittedInput}`,
     '',
@@ -178,6 +206,7 @@ function markdownExport(run: CompletedLookupRun): string {
     `- Completed: ${run.completedAt}`,
     `- Record types: ${run.descriptor.recordTypes.join(', ')}`,
     `- Resolvers: ${run.descriptor.resolverIds.map((id) => RESOLVERS[id].label).join(', ')}`,
+    ...relayProvenance,
     '',
   ];
   for (const type of run.descriptor.recordTypes) {
@@ -331,6 +360,15 @@ function ResultPanel({
                 <dt>DoH transport</dt>
                 <dd>RFC 8484 {response.resolver.httpMethod}</dd>
               </div>
+              {response.resolver.relay === undefined ? null : (
+                <div>
+                  <dt>Resolver path</dt>
+                  <dd>
+                    {response.resolver.relay.operator} relay →{' '}
+                    {response.resolver.relay.upstreamLabel}
+                  </dd>
+                </div>
+              )}
               {message.negativeCacheTtl === undefined ? null : (
                 <div>
                   <dt>Negative cache TTL</dt>
@@ -401,6 +439,8 @@ export function LookupPage() {
   );
   const [resolverId, setResolverId] = useState<ResolverId>('google');
   const [compare, setCompare] = useState(false);
+  const [comparisonQuad9ResolverId, setComparisonQuad9ResolverId] =
+    useState<Quad9ComparisonResolverId>('quad9');
   const [state, setState] = useState<RunState>('idle');
   const [completedRun, setCompletedRun] = useState<CompletedLookupRun | null>(null);
   const [localError, setLocalError] = useState('');
@@ -423,8 +463,8 @@ export function LookupPage() {
     [completedRun],
   );
   const resolverNote = compare
-    ? `Comparison includes Quad9. ${RESOLVERS.quad9.transportNote ?? ''}`.trim()
-    : RESOLVERS[resolverId].transportNote;
+    ? `Comparison uses ${RESOLVERS[comparisonQuad9ResolverId].label}. ${RESOLVERS[comparisonQuad9ResolverId].selectionNote ?? RESOLVERS[comparisonQuad9ResolverId].transportNote ?? ''}`.trim()
+    : (RESOLVERS[resolverId].selectionNote ?? RESOLVERS[resolverId].transportNote);
 
   useEffect(
     () => () => {
@@ -486,7 +526,9 @@ export function LookupPage() {
     activeRun.current = run;
     setCompletedRun(null);
     setState('loading');
-    const targetResolvers = compare ? [...RESOLVER_IDS] : [resolverId];
+    const targetResolvers: readonly ResolverId[] = compare
+      ? [...DIRECT_COMPARISON_RESOLVERS, comparisonQuad9ResolverId]
+      : [resolverId];
     const descriptor: LookupRunDescriptor = {
       comparison: compare,
       recordTypes: questions.map((question) => question.type),
@@ -591,7 +633,9 @@ export function LookupPage() {
           <select
             id="resolver"
             value={resolverId}
-            aria-describedby={resolverNote === undefined ? undefined : 'lookup-resolver-note'}
+            aria-describedby={
+              compare || resolverNote === undefined ? undefined : 'lookup-resolver-note'
+            }
             onChange={(event) => {
               invalidateRun();
               setResolverId(event.currentTarget.value as ResolverId);
@@ -604,7 +648,7 @@ export function LookupPage() {
               </option>
             ))}
           </select>
-          {resolverNote === undefined ? null : (
+          {compare || resolverNote === undefined ? null : (
             <small id="lookup-resolver-note">{resolverNote}</small>
           )}
         </div>
@@ -617,8 +661,30 @@ export function LookupPage() {
               setCompare(event.currentTarget.checked);
             }}
           />
-          Compare all allowlisted resolvers
+          Compare Cloudflare, Google and Quad9
         </label>
+        {compare ? (
+          <div className="field-group">
+            <label htmlFor="lookup-comparison-quad9">Quad9 comparison path</label>
+            <select
+              id="lookup-comparison-quad9"
+              value={comparisonQuad9ResolverId}
+              aria-describedby="lookup-resolver-note"
+              onChange={(event) => {
+                invalidateRun();
+                setComparisonQuad9ResolverId(
+                  event.currentTarget.value as Quad9ComparisonResolverId,
+                );
+              }}
+            >
+              <option value="quad9">{RESOLVERS.quad9.label}</option>
+              <option value="quad9-relay">{RESOLVERS['quad9-relay'].label}</option>
+            </select>
+            {resolverNote === undefined ? null : (
+              <small id="lookup-resolver-note">{resolverNote}</small>
+            )}
+          </div>
+        ) : null}
         <fieldset className="record-picker">
           <legend>Record types</legend>
           <div className="record-picker-actions">
