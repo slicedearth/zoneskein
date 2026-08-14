@@ -63,9 +63,12 @@ function workspace(): ChangeWorkspace {
           after: 'www 300 IN A 192.0.2.1',
           before: null,
           category: 'added',
+          disruptive: false,
           explanation: 'The intended zone adds an address record.',
           owner: 'www.example.test.',
+          reasons: ['The intended zone adds an address record.'],
           risk: 'low',
+          rollback: 'Remove the added A value if verification fails.',
           type: 'A',
         },
       ],
@@ -410,7 +413,29 @@ describe('portable Change Workspace codec', () => {
       source: '',
       status: 'complete',
     } as const;
-    expect(parseChangeWorkspace({ ...workspace(), current: unavailable }).ok).toBe(true);
+    expect(
+      parseChangeWorkspace({
+        ...workspace(),
+        analysis: {
+          analysedAt: null,
+          changes: [],
+          findings: [],
+          guidance: [],
+          incompleteReasons: [],
+          phases: [],
+          risk: null,
+          status: 'not-run',
+          timing: {
+            plannedAt: null,
+            preparationDeadline: null,
+            previousTtlSeconds: null,
+            rollbackCacheHorizon: null,
+            safeChangeAtIfLoweredNow: null,
+          },
+        },
+        current: unavailable,
+      }).ok,
+    ).toBe(true);
     expect(parseChangeWorkspace({ ...workspace(), current: deliberatelyEmpty }).ok).toBe(true);
 
     for (const current of [
@@ -509,6 +534,107 @@ describe('portable Change Workspace codec', () => {
       'resource-limit',
       '$.workspace.analysis.phases[0].actions',
     );
+  });
+
+  it('enforces coherence between zone-state completeness and stored analysis', async () => {
+    const base = workspace();
+    const partialCurrent = {
+      ...base.current,
+      incompleteReasons: ['The current snapshot omitted MX records.'],
+      status: 'partial',
+    } as const;
+    const unavailableCurrent = {
+      format: 'bind-zone-text',
+      incompleteReasons: ['The current snapshot was not supplied.'],
+      origin: null,
+      source: '',
+      status: 'unavailable',
+    } as const;
+    const notRun = {
+      analysedAt: null,
+      changes: [],
+      findings: [],
+      guidance: [],
+      incompleteReasons: [],
+      phases: [],
+      risk: null,
+      status: 'not-run',
+      timing: {
+        plannedAt: null,
+        preparationDeadline: null,
+        previousTtlSeconds: null,
+        rollbackCacheHorizon: null,
+        safeChangeAtIfLoweredNow: null,
+      },
+    } as const;
+    const partialAnalysis = {
+      ...base.analysis,
+      incompleteReasons: ['The current snapshot omitted MX records.'],
+      risk: null,
+      status: 'partial',
+    } as const;
+    const hostile = [
+      { ...base, current: partialCurrent },
+      { ...base, analysis: notRun, current: partialCurrent },
+      { ...base, current: unavailableCurrent },
+      { ...base, analysis: partialAnalysis, current: unavailableCurrent },
+    ];
+    for (const candidate of hostile) {
+      expectFailure(parseChangeWorkspace(candidate), 'invalid-schema', '$.workspace.analysis');
+      const encoded = await encodeChangeWorkspace(candidate);
+      expect(encoded.ok).toBe(false);
+      if (!encoded.ok) expect(encoded.error.path).toBe('$.workspace.analysis');
+    }
+
+    expect(
+      parseChangeWorkspace({ ...base, analysis: partialAnalysis, current: partialCurrent }).ok,
+    ).toBe(true);
+    expect(
+      parseChangeWorkspace({ ...base, analysis: notRun, current: unavailableCurrent }).ok,
+    ).toBe(true);
+  });
+
+  it('retains typed impact reasons and rollback guidance for each analysed change', () => {
+    const parsed = parseChangeWorkspace(workspace());
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.analysis.changes[0]).toMatchObject({
+      reasons: ['The intended zone adds an address record.'],
+      rollback: 'Remove the added A value if verification fails.',
+    });
+
+    const base = workspace();
+    const change = base.analysis.changes[0];
+    if (change === undefined) throw new Error('Fixture is incomplete.');
+    for (const candidate of [
+      { ...change, reasons: [] },
+      { ...change, rollback: '' },
+    ]) {
+      expectFailure(
+        parseChangeWorkspace({
+          ...base,
+          analysis: { ...base.analysis, changes: [candidate] },
+        }),
+        'invalid-schema',
+      );
+    }
+  });
+
+  it('retains disruptive classification and permits repeated finding codes at distinct sites', () => {
+    const base = workspace();
+    const finding = base.analysis.findings[0];
+    if (finding === undefined) throw new Error('Fixture is incomplete.');
+    const parsed = parseChangeWorkspace({
+      ...base,
+      analysis: {
+        ...base.analysis,
+        findings: [finding, { ...finding, message: 'A second affected site.' }],
+      },
+    });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.analysis.changes[0]?.disruptive).toBe(false);
+    expect(parsed.value.analysis.findings).toHaveLength(2);
   });
 
   it('enforces analysis change, finding, guidance, and incomplete-reason limits', () => {
@@ -731,6 +857,15 @@ describe('portable Change Workspace codec', () => {
       'partial analysis without an incomplete reason',
       { ...workspace().analysis, incompleteReasons: [], status: 'partial' },
     ],
+    [
+      'partial analysis claiming an overall risk',
+      {
+        ...workspace().analysis,
+        incompleteReasons: ['The comparison scope was incomplete.'],
+        risk: 'high',
+        status: 'partial',
+      },
+    ],
   ])('rejects %s', (_label, analysis) => {
     expectFailure(parseChangeWorkspace({ ...workspace(), analysis }), 'invalid-schema');
   });
@@ -783,6 +918,109 @@ describe('portable Change Workspace codec', () => {
       );
     }
   });
+
+  it.each([
+    ['timeout', null],
+    ['network-error', null],
+    ['cancelled', null],
+    ['server-failure', 2],
+    ['refused', 5],
+  ] as const)(
+    'rejects complete evidence containing a coherent %s question outcome',
+    (status, responseCode) => {
+      const failedQuestion: ChangeWorkspaceQuestionObservation =
+        responseCode === null
+          ? {
+              ...question(),
+              authenticatedData: null,
+              error: `The question ended with ${status}.`,
+              records: [],
+              responseCode: null,
+              status,
+            }
+          : {
+              ...question(),
+              authenticatedData: false,
+              error: null,
+              records: [],
+              responseCode,
+              status,
+            };
+      expectFailure(
+        parseChangeWorkspace({
+          ...workspace(),
+          evidence: {
+            incompleteReasons: [],
+            runs: [
+              {
+                ...run(),
+                resolvers: [{ ...resolver(), questions: [failedQuestion] }],
+              },
+            ],
+            status: 'complete',
+          },
+        }),
+        'invalid-schema',
+      );
+    },
+  );
+
+  it('accepts failed questions only through a consistently partial evidence hierarchy', () => {
+    const timeout: ChangeWorkspaceQuestionObservation = {
+      ...question(),
+      authenticatedData: null,
+      error: 'The resolver timed out.',
+      records: [],
+      responseCode: null,
+      status: 'timeout',
+    };
+    const partial = parseChangeWorkspace({
+      ...workspace(),
+      evidence: {
+        incompleteReasons: ['The observation run was incomplete.'],
+        runs: [
+          {
+            ...run(),
+            incompleteReasons: ['A resolver observation was incomplete.'],
+            resolvers: [
+              {
+                ...resolver(),
+                incompleteReasons: ['The A question timed out.'],
+                questions: [timeout],
+                status: 'partial',
+              },
+            ],
+            status: 'partial',
+          },
+        ],
+        status: 'partial',
+      },
+    });
+    expect(partial.ok).toBe(true);
+  });
+
+  it.each(['2026-08-14T00:00:59.999Z', '2026-08-14T00:03:00.001Z'])(
+    'rejects question evidence observed outside its run interval (%s)',
+    (observedAt) => {
+      expectFailure(
+        parseChangeWorkspace({
+          ...workspace(),
+          evidence: {
+            incompleteReasons: [],
+            runs: [
+              {
+                ...run(),
+                resolvers: [{ ...resolver(), questions: [{ ...question(), observedAt }] }],
+              },
+            ],
+            status: 'complete',
+          },
+        }),
+        'invalid-schema',
+        '$.workspace.evidence.runs[0].resolvers[0].questions[0].observedAt',
+      );
+    },
+  );
 
   it('rejects duplicate run, resolver, and question evidence', () => {
     const duplicateRun = { ...run(10), id: run().id };
@@ -883,7 +1121,7 @@ describe('portable Change Workspace codec', () => {
         guidance: [],
         incompleteReasons: ['Current zone parsing reached its record bound.'],
         phases: [],
-        risk: 'moderate',
+        risk: null,
         status: 'partial',
         timing: workspace().analysis.timing,
       },

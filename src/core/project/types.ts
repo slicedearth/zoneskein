@@ -32,9 +32,12 @@ export interface ChangeWorkspaceAnalysedChange {
   readonly after: string | null;
   readonly before: string | null;
   readonly category: ChangeWorkspaceChangeCategory;
+  readonly disruptive: boolean;
   readonly explanation: string;
   readonly owner: string;
+  readonly reasons: readonly string[];
   readonly risk: ChangeWorkspaceRisk;
+  readonly rollback: string;
   readonly type: string;
 }
 

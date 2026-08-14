@@ -68,6 +68,7 @@ test('all static routes load directly and the shell remains usable', async ({ pa
     '/zone-lint/',
     '/studio/',
     '/diff/',
+    '/workspace/',
     '/dmarc/',
     '/dkim/',
     '/caa/',
@@ -172,6 +173,39 @@ test('change comparison builds a risk-aware staged rollout', async ({ page }) =>
   await expect(
     page.getByRole('heading', { name: 'Publish in dependency order' }),
   ).toBeVisible();
+});
+
+test('change workspace keeps unavailable records unknown and edits locally', async ({
+  page,
+}) => {
+  await page.goto('/workspace/');
+
+  await expect(page.getByText(/absence is not treated as an empty zone/iu)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Reanalyse' })).toBeDisabled();
+  await page.getByLabel('Workspace title').fill('Mail migration');
+  await page
+    .getByRole('group', { name: 'Current zone state' })
+    .getByLabel('Availability')
+    .selectOption('complete');
+  await page
+    .getByLabel('Current BIND-style zone text')
+    .fill('@ 3600 IN MX 10 old-mail.example.net.');
+  await page
+    .getByRole('group', { name: 'Intended zone state' })
+    .getByLabel('Availability')
+    .selectOption('complete');
+  await page
+    .getByLabel('Intended BIND-style zone text')
+    .fill('@ 300 IN MX 10 new-mail.example.net.');
+  await page.getByLabel('Current origin (optional)').fill('example.com');
+  await page.getByLabel('Intended origin (optional)').fill('example.com');
+  await page.getByRole('button', { name: 'Apply edits' }).click();
+  await page.getByRole('button', { name: 'Reanalyse' }).click();
+
+  await expect(page.getByRole('heading', { name: 'Mail migration' })).toBeVisible();
+  await expect(page.getByText('Analysed changes')).toBeVisible();
+  await expect(page.getByText('3600 seconds', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Staged rollout' })).toBeVisible();
 });
 
 test('local snapshots require opt-in and a separate save', async ({ page }) => {

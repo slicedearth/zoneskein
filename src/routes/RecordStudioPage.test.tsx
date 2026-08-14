@@ -1,7 +1,8 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { ChangeWorkspace } from '../core/project';
 import { RecordStudioPage } from './RecordStudioPage';
 
 const RECORD_TYPES = [
@@ -26,6 +27,10 @@ const RECORD_TYPES = [
 ];
 
 describe('DNS Record Studio', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it('offers every supported authoring type through a labelled selector', () => {
     render(<RecordStudioPage />);
 
@@ -80,5 +85,39 @@ describe('DNS Record Studio', () => {
     expect(within(chunks).getAllByRole('row')).toHaveLength(3);
     expect(within(chunks).getAllByText('254')).toHaveLength(1);
     expect(within(chunks).getAllByText('2')).toHaveLength(2);
+  });
+
+  it('hands a bounded working set to an in-memory workspace without querying DNS', async () => {
+    const user = userEvent.setup();
+    const fetch = vi.fn();
+    const onCreateWorkspace = vi.fn<(workspace: ChangeWorkspace) => void>();
+    vi.stubGlobal('fetch', fetch);
+    render(<RecordStudioPage onCreateWorkspace={onCreateWorkspace} />);
+
+    await user.type(screen.getByRole('textbox', { name: 'Owner name' }), 'www.example.com.');
+    await user.type(screen.getByRole('textbox', { name: 'IPv4 address' }), '192.0.2.10');
+    await user.click(screen.getByRole('button', { name: 'Add valid record' }));
+    await user.click(screen.getByRole('button', { name: 'Open in Change Workspace' }));
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(onCreateWorkspace).toHaveBeenCalledOnce();
+    expect(onCreateWorkspace.mock.calls[0]?.[0]).toMatchObject({
+      analysis: { status: 'not-run' },
+      current: {
+        incompleteReasons: [
+          'No current-zone snapshot accompanied this Record Studio hand-off.',
+        ],
+        origin: null,
+        source: '',
+        status: 'unavailable',
+      },
+      evidence: { incompleteReasons: [], runs: [], status: 'none' },
+      intended: {
+        incompleteReasons: [],
+        origin: null,
+        source: 'www.example.com. 3600 IN A 192.0.2.10',
+        status: 'complete',
+      },
+    });
   });
 });

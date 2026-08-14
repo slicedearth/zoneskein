@@ -32,6 +32,11 @@ const LOCAL_FAILURE_STATUSES = new Set<ChangeWorkspaceQuestionStatus>([
   'network-error',
   'timeout',
 ]);
+const DEFINITIVE_QUESTION_STATUSES = new Set<ChangeWorkspaceQuestionStatus>([
+  'answer',
+  'name-error',
+  'no-data',
+]);
 const RISKS = ['information', 'low', 'moderate', 'high', 'critical'] as const;
 const CHANGE_CATEGORIES = [
   'added',
@@ -378,7 +383,18 @@ function parseChange(
 ): Result<ChangeWorkspaceAnalysedChange, ChangeWorkspaceCodecError> {
   const object = asRecord(
     value,
-    ['after', 'before', 'category', 'explanation', 'owner', 'risk', 'type'],
+    [
+      'after',
+      'before',
+      'category',
+      'disruptive',
+      'explanation',
+      'owner',
+      'reasons',
+      'risk',
+      'rollback',
+      'type',
+    ],
     path,
   );
   if (!object.ok) return object;
@@ -396,6 +412,9 @@ function parseChange(
   if (!before.ok) return before;
   const category = asEnum(object.value['category'], CHANGE_CATEGORIES, `${path}.category`);
   if (!category.ok) return category;
+  if (typeof object.value['disruptive'] !== 'boolean') {
+    return schemaFailure('Expected a boolean.', `${path}.disruptive`);
+  }
   const explanation = asString(
     object.value['explanation'],
     CHANGE_WORKSPACE_LIMITS.messageOctets,
@@ -410,8 +429,28 @@ function parseChange(
     { trim: true },
   );
   if (!owner.ok) return owner;
+  const reasons = asStringList(
+    object.value['reasons'],
+    CHANGE_WORKSPACE_LIMITS.guidanceItems,
+    CHANGE_WORKSPACE_LIMITS.messageOctets,
+    `${path}.reasons`,
+  );
+  if (!reasons.ok) return reasons;
+  if (reasons.value.length === 0) {
+    return schemaFailure(
+      'An analysed change requires at least one impact reason.',
+      `${path}.reasons`,
+    );
+  }
   const risk = asEnum(object.value['risk'], RISKS, `${path}.risk`);
   if (!risk.ok) return risk;
+  const rollback = asString(
+    object.value['rollback'],
+    CHANGE_WORKSPACE_LIMITS.messageOctets,
+    `${path}.rollback`,
+    { trim: true },
+  );
+  if (!rollback.ok) return rollback;
   const type = asString(object.value['type'], 32, `${path}.type`, { trim: true });
   if (!type.ok) return type;
   if (!isRecordType(type.value)) {
@@ -437,9 +476,12 @@ function parseChange(
     after: after.value,
     before: before.value,
     category: category.value,
+    disruptive: object.value['disruptive'],
     explanation: explanation.value,
     owner: owner.value,
+    reasons: reasons.value,
     risk: risk.value,
+    rollback: rollback.value,
     type: type.value,
   });
 }
@@ -623,17 +665,9 @@ function parseAnalysis(
   );
   if (!findings.ok) return findings;
   const parsedFindings: ChangeWorkspaceFinding[] = [];
-  const findingCodes = new Set<string>();
   for (let index = 0; index < findings.value.length; index += 1) {
     const finding = parseFinding(findings.value[index], `${path}.findings[${String(index)}]`);
     if (!finding.ok) return finding;
-    if (findingCodes.has(finding.value.code)) {
-      return schemaFailure(
-        'Finding codes must be unique.',
-        `${path}.findings[${String(index)}].code`,
-      );
-    }
-    findingCodes.add(finding.value.code);
     parsedFindings.push(finding.value);
   }
   const guidance = asStringList(
@@ -705,9 +739,12 @@ function parseAnalysis(
   if (status.value === 'partial' && incompleteReasons.value.length === 0) {
     return schemaFailure('A partial analysis requires at least one incomplete reason.', path);
   }
-  if (status.value !== 'not-run' && risk.value === null) {
+  if (status.value === 'complete' && risk.value === null) {
+    return schemaFailure('A complete analysis requires an overall risk.', `${path}.risk`);
+  }
+  if (status.value === 'partial' && risk.value !== null) {
     return schemaFailure(
-      'A completed or partial analysis requires an overall risk.',
+      'A partial analysis must not claim an overall risk; per-change and finding risks remain scoped.',
       `${path}.risk`,
     );
   }
@@ -996,6 +1033,15 @@ function parseResolver(
       path,
     );
   }
+  if (
+    status.value === 'complete' &&
+    parsedQuestions.some((question) => !DEFINITIVE_QUESTION_STATUSES.has(question.status))
+  ) {
+    return schemaFailure(
+      'A complete resolver observation requires every question to have a definitive answer, no-data, or name-error outcome.',
+      path,
+    );
+  }
   if (status.value === 'partial' && incompleteReasons.value.length === 0) {
     return schemaFailure('A partial resolver observation requires an incomplete reason.', path);
   }
@@ -1070,6 +1116,20 @@ function parseRun(
   if (!startedAt.ok) return startedAt;
   if (completedAt.value < startedAt.value) {
     return schemaFailure('Evidence completedAt must not precede startedAt.', path);
+  }
+  for (let resolverIndex = 0; resolverIndex < parsedResolvers.length; resolverIndex += 1) {
+    const resolver = parsedResolvers[resolverIndex];
+    if (resolver === undefined) continue;
+    for (let questionIndex = 0; questionIndex < resolver.questions.length; questionIndex += 1) {
+      const question = resolver.questions[questionIndex];
+      if (question === undefined) continue;
+      if (question.observedAt < startedAt.value || question.observedAt > completedAt.value) {
+        return schemaFailure(
+          'Question observedAt must fall within its evidence run interval.',
+          `${path}.resolvers[${String(resolverIndex)}].questions[${String(questionIndex)}].observedAt`,
+        );
+      }
+    }
   }
   const status = asEnum(object.value['status'], COMPLETENESS, `${path}.status`);
   if (!status.ok) return status;
@@ -1219,6 +1279,32 @@ export function parseChangeWorkspace(
   if (!updatedAt.ok) return updatedAt;
   if (updatedAt.value < createdAt.value) {
     return schemaFailure('Workspace updatedAt must not precede createdAt.', '$.workspace');
+  }
+  const zoneStatuses = [current.value.status, intended.value.status] as const;
+  if (
+    analysis.value.status === 'complete' &&
+    zoneStatuses.some((status) => status !== 'complete')
+  ) {
+    return schemaFailure(
+      'A complete analysis requires complete current and intended zone states.',
+      '$.workspace.analysis',
+    );
+  }
+  if (zoneStatuses.includes('unavailable') && analysis.value.status !== 'not-run') {
+    return schemaFailure(
+      'An unavailable zone state requires analysis status not-run without derived conclusions.',
+      '$.workspace.analysis',
+    );
+  }
+  if (
+    !zoneStatuses.includes('unavailable') &&
+    zoneStatuses.includes('partial') &&
+    analysis.value.status !== 'partial'
+  ) {
+    return schemaFailure(
+      'A partial zone state requires analysis status partial.',
+      '$.workspace.analysis',
+    );
   }
   return success({
     analysis: analysis.value,

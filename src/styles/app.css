@@ -1206,6 +1206,24 @@ summary {
   grid-column: 1 / -1;
 }
 
+.workspace-zone-fields {
+  display: grid;
+  gap: 1rem;
+}
+
+.workspace-zone-fields > div {
+  display: grid;
+  margin-top: 0;
+}
+
+.workspace-zone-fields .zone-source textarea {
+  min-height: 16rem;
+  resize: vertical;
+  font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace;
+  font-size: 0.8rem;
+  line-height: 1.55;
+}
+
 .partial-panel {
   border-left-color: var(--warm);
 }

@@ -5,6 +5,13 @@ import { SnapshotButton } from '../components/SnapshotButton';
 import { StatusBadge } from '../components/StatusBadge';
 import { ToolIntro } from '../components/ToolIntro';
 import {
+  createChangeLabWorkspace,
+  type ChangeWorkspace,
+  type ChangeWorkspaceEvidence,
+  type ChangeWorkspaceQuestionObservation,
+  type ChangeWorkspaceQuestionStatus,
+} from '../core/project';
+import {
   compareZoneDocuments,
   isDefinitiveDnsObservation,
   omitIncompleteRecordTypes,
@@ -14,7 +21,13 @@ import type { ChangeRisk, DiffReport, DnsChange, DnsChangePlan } from '../core/d
 import { reachableAnswerRecords } from '../core/dns/answer-chain';
 import { validateDnsName } from '../core/dns/names';
 import { bindRecord } from '../core/dns/presentation';
-import { DnsQueryError, type DnsRecordType, type ResolverId } from '../core/dns/types';
+import {
+  DnsQueryError,
+  type DnsRecord,
+  type DnsRecordType,
+  type DnsResponse,
+  type ResolverId,
+} from '../core/dns/types';
 import { DnsQueryRun } from '../core/doh/query-run';
 import { RESOLVERS } from '../core/doh/resolvers';
 import { WireDnsResolver } from '../core/doh/wire-resolver';
@@ -37,11 +50,193 @@ const RESOLVER_IDS = Object.keys(RESOLVERS) as ResolverId[];
 
 interface DisplayReport {
   readonly after: ZoneDocument;
+  readonly analysedAt: Date;
   readonly before: ZoneDocument;
+  readonly currentIncompleteReasons?: readonly string[];
+  readonly currentOrigin: string | null;
   readonly currentSnapshot?: string;
+  readonly evidence?: ChangeWorkspaceEvidence;
+  readonly intendedOrigin: string | null;
   readonly partialErrors: readonly string[];
   readonly plan: DnsChangePlan;
   readonly report: DiffReport;
+}
+
+interface CurrentObservationOutcome {
+  readonly bindingError?: string;
+  readonly error?: string;
+  readonly errorCode?: DnsQueryError['code'];
+  readonly observedAt: string;
+  readonly records: readonly DnsRecord[];
+  readonly response?: DnsResponse;
+  readonly type: DnsRecordType;
+}
+
+export interface ChangeLabInput {
+  readonly current: string;
+  readonly currentIncompleteReasons?: readonly string[];
+  readonly currentOrigin?: string | null;
+  readonly currentStatus?: ChangeWorkspace['current']['status'];
+  readonly intended: string;
+  readonly intendedIncompleteReasons?: readonly string[];
+  readonly intendedOrigin?: string | null;
+  readonly intendedStatus?: ChangeWorkspace['intended']['status'];
+  readonly origin?: string;
+  readonly workspace?: ChangeWorkspace;
+}
+
+export interface DiffPageProps {
+  readonly initialInput?: ChangeLabInput;
+  readonly onCreateWorkspace?: (workspace: ChangeWorkspace) => void;
+}
+
+const RESPONSE_CODES = Object.freeze({
+  NOERROR: 0,
+  NXDOMAIN: 3,
+  REFUSED: 5,
+  SERVFAIL: 2,
+} as const);
+
+function failureStatus(code: DnsQueryError['code'] | undefined): ChangeWorkspaceQuestionStatus {
+  if (code === 'timeout') return 'timeout';
+  if (code === 'aborted') return 'cancelled';
+  if (code === 'invalid-response') return 'malformed-response';
+  return 'network-error';
+}
+
+function questionStatus(
+  responseCode: keyof typeof RESPONSE_CODES,
+  records: readonly string[],
+): ChangeWorkspaceQuestionStatus {
+  if (responseCode === 'NXDOMAIN') return 'name-error';
+  if (responseCode === 'REFUSED') return 'refused';
+  if (responseCode === 'SERVFAIL') return 'server-failure';
+  return records.length === 0 ? 'no-data' : 'answer';
+}
+
+function currentEvidence(
+  outcomes: readonly CurrentObservationOutcome[],
+  resolverId: ResolverId,
+  name: string,
+  startedAt: string,
+  completedAt: string,
+  incompleteReasons: readonly string[],
+): ChangeWorkspaceEvidence {
+  const questions = outcomes.flatMap<ChangeWorkspaceQuestionObservation>((outcome) => {
+    if (outcome.response === undefined || outcome.bindingError !== undefined) {
+      return [
+        {
+          authenticatedData: null,
+          className: 'IN',
+          error: outcome.error ?? 'The DNS question did not produce a response.',
+          id: crypto.randomUUID(),
+          name,
+          observedAt: outcome.observedAt,
+          records: [],
+          responseCode: null,
+          status:
+            outcome.bindingError === undefined
+              ? failureStatus(outcome.errorCode)
+              : 'malformed-response',
+          type: outcome.type,
+        },
+      ];
+    }
+    const responseCode = outcome.response.message.responseCode;
+    if (!(responseCode in RESPONSE_CODES)) return [];
+    const code = responseCode as keyof typeof RESPONSE_CODES;
+    const records = outcome.records.map(bindRecord);
+    return [
+      {
+        authenticatedData: outcome.response.message.flags.authenticatedData,
+        className: 'IN',
+        error: null,
+        id: crypto.randomUUID(),
+        name,
+        observedAt: outcome.response.receivedAt,
+        records,
+        responseCode: RESPONSE_CODES[code],
+        status: questionStatus(code, records),
+        type: outcome.type,
+      },
+    ];
+  });
+  const partial = incompleteReasons.length > 0 || questions.length !== outcomes.length;
+  const reasons = [
+    ...incompleteReasons,
+    ...(questions.length === outcomes.length
+      ? []
+      : ['One or more resolver responses used an unsupported response code.']),
+  ];
+  const status = partial ? 'partial' : 'complete';
+  const resolver = RESOLVERS[resolverId];
+  const observedTimes = outcomes
+    .map((outcome) => Date.parse(outcome.observedAt))
+    .filter(Number.isFinite);
+  const runStartedAt = new Date(
+    Math.min(Date.parse(startedAt), ...observedTimes),
+  ).toISOString();
+  const runCompletedAt = new Date(
+    Math.max(Date.parse(completedAt), ...observedTimes),
+  ).toISOString();
+  return {
+    incompleteReasons: reasons,
+    runs: [
+      {
+        completedAt: runCompletedAt,
+        id: crypto.randomUUID(),
+        incompleteReasons: reasons,
+        resolvers: [
+          {
+            endpoint: resolver.endpoint,
+            id: crypto.randomUUID(),
+            incompleteReasons: reasons,
+            label: resolver.label,
+            questions,
+            resolverId,
+            status,
+          },
+        ],
+        startedAt: runStartedAt,
+        status,
+      },
+    ],
+    status,
+  };
+}
+
+function suppliedOrigin(
+  specific: string | null | undefined,
+  shared: string | undefined,
+): string {
+  return specific === null ? '' : (specific ?? shared ?? '');
+}
+
+function blockingParserReasons(label: string, document: ZoneDocument): readonly string[] {
+  const blocking = document.diagnostics.filter(
+    (diagnostic) =>
+      diagnostic.severity === 'error' || diagnostic.rule === 'directive-unsupported',
+  );
+  const retained = blocking.slice(0, 16);
+  return [
+    ...(document.incomplete === undefined
+      ? []
+      : [`${label} parsing is incomplete: ${document.incomplete.message}`]),
+    ...(blocking.length === 0
+      ? []
+      : [
+          `${label} parsing reported ${String(blocking.length)} diagnostic${blocking.length === 1 ? '' : 's'} indicating omitted or unparseable input.`,
+          ...retained.map(
+            (diagnostic) =>
+              `${label} line ${String(diagnostic.line)}:${String(diagnostic.column)} [${diagnostic.rule}] — ${diagnostic.message}`,
+          ),
+          ...(retained.length === blocking.length
+            ? []
+            : [
+                `${label} has ${String(blocking.length - retained.length)} additional blocking diagnostics.`,
+              ]),
+        ]),
+  ];
 }
 
 function recordText(record: ZoneRecord | undefined): string {
@@ -111,12 +306,17 @@ function markdown(report: DisplayReport): string {
   ].join('\n');
 }
 
-export function DiffPage() {
+export function DiffPage({ initialInput, onCreateWorkspace }: DiffPageProps = {}) {
   const [mode, setMode] = useState<DiffMode>('pasted');
-  const [before, setBefore] = useState('');
-  const [after, setAfter] = useState('');
+  const [before, setBefore] = useState(initialInput?.current ?? '');
+  const [after, setAfter] = useState(initialInput?.intended ?? '');
   const [domain, setDomain] = useState('');
-  const [origin, setOrigin] = useState('');
+  const [currentOrigin, setCurrentOrigin] = useState(
+    suppliedOrigin(initialInput?.currentOrigin, initialInput?.origin),
+  );
+  const [intendedOrigin, setIntendedOrigin] = useState(
+    suppliedOrigin(initialInput?.intendedOrigin, initialInput?.origin),
+  );
   const [plannedAt, setPlannedAt] = useState('');
   const [resolverId, setResolverId] = useState<ResolverId>('google');
   const [types, setTypes] = useState(DEFAULT_CURRENT_TYPES);
@@ -127,13 +327,46 @@ export function DiffPage() {
   const [display, setDisplay] = useState<DisplayReport | null>(null);
   const activeRun = useRef<DnsQueryRun | null>(null);
 
+  function invalidateResult() {
+    activeRun.current?.cancel();
+    activeRun.current = null;
+    setDisplay(null);
+    setError('');
+    setState('idle');
+  }
+
   function toggleType(type: DnsRecordType) {
+    invalidateResult();
     setTypes((current) => {
       const next = new Set(current);
       if (next.has(type)) next.delete(type);
       else next.add(type);
       return next;
     });
+  }
+
+  function suppliedInputReasons(): readonly string[] {
+    if (mode !== 'pasted' || initialInput === undefined) return [];
+    const reasons: string[] = [];
+    for (const [label, status, incompleteReasons] of [
+      [
+        'Current zone state',
+        initialInput.currentStatus ?? 'complete',
+        initialInput.currentIncompleteReasons ?? [],
+      ],
+      [
+        'Intended zone state',
+        initialInput.intendedStatus ?? 'complete',
+        initialInput.intendedIncompleteReasons ?? [],
+      ],
+    ] as const) {
+      if (status === 'complete') continue;
+      reasons.push(
+        `${label} is ${status}; omitted records cannot be treated as absent.`,
+        ...incompleteReasons.map((reason) => `${label}: ${reason}`),
+      );
+    }
+    return [...new Set(reasons)];
   }
 
   function stopIncomplete(reasons: readonly string[]) {
@@ -150,15 +383,34 @@ export function DiffPage() {
     setDisplay(null);
     setState('idle');
     activeRun.current?.cancel();
+    activeRun.current = null;
     const plannedDate = plannedAt === '' ? undefined : new Date(plannedAt);
     if (plannedDate !== undefined && Number.isNaN(plannedDate.getTime())) {
       setError('Enter a valid planned publication date and time.');
       return;
     }
-    const parseOptions = origin.trim() === '' ? {} : { origin };
     if (mode === 'pasted') {
-      const prior = parseZoneSnippet(before, parseOptions);
-      const next = parseZoneSnippet(after, parseOptions);
+      const incompleteInputReasons = suppliedInputReasons();
+      if (incompleteInputReasons.length > 0) {
+        stopIncomplete(incompleteInputReasons);
+        return;
+      }
+      const prior = parseZoneSnippet(
+        before,
+        currentOrigin.trim() === '' ? {} : { origin: currentOrigin },
+      );
+      const next = parseZoneSnippet(
+        after,
+        intendedOrigin.trim() === '' ? {} : { origin: intendedOrigin },
+      );
+      const parserReasons = [
+        ...blockingParserReasons('Current snapshot', prior),
+        ...blockingParserReasons('Proposed snapshot', next),
+      ];
+      if (parserReasons.length > 0) {
+        stopIncomplete(parserReasons);
+        return;
+      }
       const report = compareZoneDocuments(prior, next);
       if (report.status === 'incomplete') {
         stopIncomplete(report.incompleteReasons);
@@ -173,7 +425,10 @@ export function DiffPage() {
       }
       setDisplay({
         after: next,
+        analysedAt: new Date(),
         before: prior,
+        currentOrigin: currentOrigin.trim() === '' ? null : currentOrigin.trim(),
+        intendedOrigin: intendedOrigin.trim() === '' ? null : intendedOrigin.trim(),
         partialErrors: [],
         plan,
         report,
@@ -196,6 +451,7 @@ export function DiffPage() {
     activeRun.current = run;
     setState('loading');
     const resolver = new WireDnsResolver(RESOLVERS[resolverId]);
+    const startedAt = new Date().toISOString();
     const outcomes = await Promise.all(
       selected.map(async (type) => {
         try {
@@ -207,20 +463,40 @@ export function DiffPage() {
           if (!isDefinitiveDnsObservation(response.message.responseCode)) {
             return {
               error: `${type}: resolver returned ${response.message.responseCode}; this scope was not compared.`,
+              observedAt: response.receivedAt,
               records: [],
+              response,
               type,
             };
           }
-          if (response.message.responseCode !== 'NOERROR') return { records: [], type };
+          if (response.message.responseCode !== 'NOERROR')
+            return {
+              observedAt: response.receivedAt,
+              records: [],
+              response,
+              type,
+            };
           const bound = reachableAnswerRecords(
             parsed.value.ascii,
             response.message.answers,
             type,
           );
           if (bound.error !== undefined) {
-            return { error: `${type}: ${bound.error}`, records: [], type };
+            return {
+              bindingError: bound.error,
+              error: `${type}: ${bound.error}`,
+              observedAt: response.receivedAt,
+              records: [],
+              response,
+              type,
+            };
           }
-          return { records: [...bound.aliases, ...bound.records], type };
+          return {
+            observedAt: response.receivedAt,
+            records: [...bound.aliases, ...bound.records],
+            response,
+            type,
+          };
         } catch (cause) {
           const message =
             cause instanceof DnsQueryError
@@ -228,7 +504,13 @@ export function DiffPage() {
               : cause instanceof Error
                 ? cause.message
                 : 'DNS query failed.';
-          return { error: `${type}: ${message}`, records: [], type };
+          return {
+            error: `${type}: ${message}`,
+            ...(cause instanceof DnsQueryError ? { errorCode: cause.code } : {}),
+            observedAt: new Date().toISOString(),
+            records: [],
+            type,
+          };
         }
       }),
     );
@@ -237,27 +519,46 @@ export function DiffPage() {
       setState('cancelled');
       return;
     }
+    const completedAt = new Date().toISOString();
     const currentSnapshot = [
       ...new Set(outcomes.flatMap((outcome) => outcome.records).map(bindRecord)),
     ].join('\n');
     const partialErrors = outcomes.flatMap((outcome) =>
       outcome.error === undefined ? [] : [outcome.error],
     );
+    const currentIncompleteReasons = [
+      `Current DNS was observed only for the selected ${selected.join(', ')} record types; all unselected record types and authoritative-zone data remain unknown.`,
+      ...partialErrors,
+    ];
     const incompleteTypes = outcomes.flatMap((outcome) =>
       outcome.error === undefined ? [] : [outcome.type],
     );
     const prior = parseZoneSnippet(currentSnapshot, { origin: parsed.value.ascii });
     const next = parseZoneSnippet(after, { origin: parsed.value.ascii });
-    const report = omitIncompleteRecordTypes(
-      compareZoneDocuments(prior, next),
-      incompleteTypes,
-    );
+    const parserReasons = [
+      ...blockingParserReasons('Observed current snapshot', prior),
+      ...blockingParserReasons('Proposed snapshot', next),
+    ];
+    if (parserReasons.length > 0) {
+      stopIncomplete(parserReasons);
+      return;
+    }
+    const observedTypes = new Set<string>([...selected, 'CNAME']);
+    const unobservedProposedTypes = [
+      ...new Set(
+        next.records.map((record) => record.type).filter((type) => !observedTypes.has(type)),
+      ),
+    ];
+    const report = omitIncompleteRecordTypes(compareZoneDocuments(prior, next), [
+      ...incompleteTypes,
+      ...unobservedProposedTypes,
+    ]);
     if (report.status === 'incomplete') {
       stopIncomplete(report.incompleteReasons);
       return;
     }
     const plan = planDnsChanges(prior, next, report, {
-      incompleteTypes,
+      incompleteTypes: [...incompleteTypes, ...unobservedProposedTypes],
       ...(plannedDate === undefined ? {} : { plannedAt: plannedDate }),
     });
     if (plan.status === 'incomplete') {
@@ -266,8 +567,20 @@ export function DiffPage() {
     }
     setDisplay({
       after: next,
+      analysedAt: new Date(completedAt),
       before: prior,
+      currentIncompleteReasons,
+      currentOrigin: parsed.value.absolute,
       currentSnapshot,
+      evidence: currentEvidence(
+        outcomes,
+        resolverId,
+        parsed.value.absolute,
+        startedAt,
+        completedAt,
+        partialErrors,
+      ),
+      intendedOrigin: parsed.value.absolute,
       partialErrors,
       plan,
       report,
@@ -281,15 +594,106 @@ export function DiffPage() {
     setBefore('');
     setAfter('');
     setDomain('');
-    setOrigin('');
+    setCurrentOrigin('');
+    setIntendedOrigin('');
     setPlannedAt('');
     setError('');
     setDisplay(null);
     setState('idle');
   }
 
+  function openWorkspace() {
+    if (display === null || onCreateWorkspace === undefined) return;
+    const observedCurrent = display.currentSnapshot !== undefined;
+    const currentStatus = observedCurrent ? 'partial' : 'complete';
+    const created = createChangeLabWorkspace({
+      analysis: {
+        analysedAt: display.analysedAt,
+        plan: display.plan,
+        report: display.report,
+      },
+      currentIncompleteReasons:
+        currentStatus === 'partial'
+          ? (display.currentIncompleteReasons ?? [
+              'The current DNS source is a scoped observation rather than a complete zone.',
+            ])
+          : [],
+      currentOrigin: display.currentOrigin,
+      currentSource: display.before.source,
+      currentStatus,
+      ...(display.evidence === undefined ? {} : { evidence: display.evidence }),
+      intendedOrigin: display.intendedOrigin,
+      intendedSource: display.after.source,
+      intendedStatus: 'complete',
+      title: observedCurrent ? `${domain.trim()} DNS change` : 'Pasted DNS change',
+    });
+    if (!created.ok) {
+      setError(`The Change Workspace could not be created. ${created.error.message}`);
+      return;
+    }
+    onCreateWorkspace(created.value);
+  }
+
+  function initialInputIsUnchanged(): boolean {
+    if (initialInput === undefined || mode !== 'pasted') return false;
+    const expectedCurrentOrigin = suppliedOrigin(
+      initialInput.currentOrigin,
+      initialInput.origin,
+    );
+    const expectedIntendedOrigin = suppliedOrigin(
+      initialInput.intendedOrigin,
+      initialInput.origin,
+    );
+    return (
+      before === initialInput.current &&
+      after === initialInput.intended &&
+      currentOrigin === expectedCurrentOrigin &&
+      intendedOrigin === expectedIntendedOrigin
+    );
+  }
+
+  function returnSuppliedWorkspace() {
+    if (
+      initialInput === undefined ||
+      onCreateWorkspace === undefined ||
+      !initialInputIsUnchanged()
+    )
+      return;
+    if (initialInput.workspace !== undefined) {
+      onCreateWorkspace(initialInput.workspace);
+      return;
+    }
+    const created = createChangeLabWorkspace({
+      currentIncompleteReasons: initialInput.currentIncompleteReasons ?? [],
+      currentOrigin:
+        initialInput.currentOrigin === undefined
+          ? (initialInput.origin ?? null)
+          : initialInput.currentOrigin,
+      currentSource: initialInput.current,
+      currentStatus: initialInput.currentStatus ?? 'complete',
+      intendedIncompleteReasons: initialInput.intendedIncompleteReasons ?? [],
+      intendedOrigin:
+        initialInput.intendedOrigin === undefined
+          ? (initialInput.origin ?? null)
+          : initialInput.intendedOrigin,
+      intendedSource: initialInput.intended,
+      intendedStatus: initialInput.intendedStatus ?? 'complete',
+      title: 'Change Workspace hand-off',
+    });
+    if (!created.ok) {
+      setError(`The Change Workspace could not be restored. ${created.error.message}`);
+      return;
+    }
+    onCreateWorkspace(created.value);
+  }
+
   const parserDiagnostics =
     display === null ? [] : [...display.before.diagnostics, ...display.after.diagnostics];
+  const incompleteSuppliedInput = suppliedInputReasons();
+  const canReturnSuppliedWorkspace =
+    onCreateWorkspace !== undefined &&
+    incompleteSuppliedInput.length > 0 &&
+    initialInputIsUnchanged();
 
   return (
     <div className="tool-page">
@@ -302,14 +706,20 @@ export function DiffPage() {
         <button
           aria-pressed={mode === 'pasted'}
           type="button"
-          onClick={() => setMode('pasted')}
+          onClick={() => {
+            invalidateResult();
+            setMode('pasted');
+          }}
         >
           Two pasted snapshots
         </button>
         <button
           aria-pressed={mode === 'current'}
           type="button"
-          onClick={() => setMode('current')}
+          onClick={() => {
+            invalidateResult();
+            setMode('current');
+          }}
         >
           Current DNS + proposed
         </button>
@@ -322,7 +732,10 @@ export function DiffPage() {
               <textarea
                 id="before-snapshot"
                 value={before}
-                onChange={(event) => setBefore(event.currentTarget.value)}
+                onChange={(event) => {
+                  invalidateResult();
+                  setBefore(event.currentTarget.value);
+                }}
                 rows={14}
                 maxLength={ZONE_ANALYSIS_LIMITS.characters}
                 spellCheck={false}
@@ -333,18 +746,40 @@ export function DiffPage() {
               <textarea
                 id="after-snapshot"
                 value={after}
-                onChange={(event) => setAfter(event.currentTarget.value)}
+                onChange={(event) => {
+                  invalidateResult();
+                  setAfter(event.currentTarget.value);
+                }}
                 rows={14}
                 maxLength={ZONE_ANALYSIS_LIMITS.characters}
                 spellCheck={false}
               />
             </div>
             <div className="field-group">
-              <label htmlFor="diff-origin">Origin for relative names</label>
+              <label htmlFor="diff-current-origin">Origin for relative names</label>
               <input
-                id="diff-origin"
-                value={origin}
-                onChange={(event) => setOrigin(event.currentTarget.value)}
+                id="diff-current-origin"
+                value={currentOrigin}
+                onChange={(event) => {
+                  invalidateResult();
+                  if (intendedOrigin === currentOrigin)
+                    setIntendedOrigin(event.currentTarget.value);
+                  setCurrentOrigin(event.currentTarget.value);
+                }}
+                placeholder="current.example"
+                maxLength={253}
+                spellCheck={false}
+              />
+            </div>
+            <div className="field-group">
+              <label htmlFor="diff-intended-origin">Proposed snapshot origin</label>
+              <input
+                id="diff-intended-origin"
+                value={intendedOrigin}
+                onChange={(event) => {
+                  invalidateResult();
+                  setIntendedOrigin(event.currentTarget.value);
+                }}
                 placeholder="example.com"
                 maxLength={253}
                 spellCheck={false}
@@ -358,7 +793,10 @@ export function DiffPage() {
               <input
                 id="current-domain"
                 value={domain}
-                onChange={(event) => setDomain(event.currentTarget.value)}
+                onChange={(event) => {
+                  invalidateResult();
+                  setDomain(event.currentTarget.value);
+                }}
                 placeholder="example.com"
                 maxLength={2048}
                 spellCheck={false}
@@ -369,7 +807,10 @@ export function DiffPage() {
               <select
                 id="diff-resolver"
                 value={resolverId}
-                onChange={(event) => setResolverId(event.currentTarget.value as ResolverId)}
+                onChange={(event) => {
+                  invalidateResult();
+                  setResolverId(event.currentTarget.value as ResolverId);
+                }}
               >
                 {RESOLVER_IDS.map((id) => (
                   <option value={id} key={id}>
@@ -398,7 +839,10 @@ export function DiffPage() {
               <textarea
                 id="proposed-snapshot"
                 value={after}
-                onChange={(event) => setAfter(event.currentTarget.value)}
+                onChange={(event) => {
+                  invalidateResult();
+                  setAfter(event.currentTarget.value);
+                }}
                 rows={14}
                 maxLength={ZONE_ANALYSIS_LIMITS.characters}
                 spellCheck={false}
@@ -412,7 +856,10 @@ export function DiffPage() {
             id="planned-change-time"
             type="datetime-local"
             value={plannedAt}
-            onChange={(event) => setPlannedAt(event.currentTarget.value)}
+            onChange={(event) => {
+              invalidateResult();
+              setPlannedAt(event.currentTarget.value);
+            }}
           />
         </div>
         {error !== '' ? (
@@ -433,6 +880,11 @@ export function DiffPage() {
               Cancel
             </button>
           ) : null}
+          {canReturnSuppliedWorkspace ? (
+            <button className="quiet-button" type="button" onClick={returnSuppliedWorkspace}>
+              Return to Change Workspace
+            </button>
+          ) : null}
           <button className="quiet-button" type="button" onClick={clear}>
             Clear
           </button>
@@ -440,7 +892,9 @@ export function DiffPage() {
       </form>
       <div className="run-status" aria-live="polite">
         {state === 'cancelled' ? 'The current-DNS query was cancelled.' : null}
-        {state === 'incomplete' ? 'Comparison stopped at a local resource limit.' : null}
+        {state === 'incomplete'
+          ? 'Comparison stopped because the required inputs are incomplete.'
+          : null}
         {state === 'complete' && display !== null
           ? `Comparison found ${String(display.report.changes.length)} classified changes.`
           : null}
@@ -459,12 +913,17 @@ export function DiffPage() {
                 title="DNS Change Lab report"
                 tool="diff"
               />
+              {onCreateWorkspace === undefined ? null : (
+                <button className="quiet-button" type="button" onClick={openWorkspace}>
+                  Open in Change Workspace
+                </button>
+              )}
             </div>
           </div>
-          {display.partialErrors.length > 0 ? (
+          {display.currentIncompleteReasons !== undefined ? (
             <article className="conclusion-panel partial-panel">
               <StatusBadge tone="warning">Partial current view</StatusBadge>
-              <p>{display.partialErrors.join(' ')}</p>
+              <p>{display.currentIncompleteReasons.join(' ')}</p>
             </article>
           ) : null}
           {parserDiagnostics.length > 0 ? (

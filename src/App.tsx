@@ -1,10 +1,18 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+
+import type { ChangeWorkspace } from './core/project';
+import type { ChangeLabInput } from './routes/DiffPage';
 
 const AboutPage = lazy(() =>
   import('./routes/AboutPage').then((module) => ({ default: module.AboutPage })),
 );
 const CaaPage = lazy(() =>
   import('./routes/CaaPage').then((module) => ({ default: module.CaaPage })),
+);
+const ChangeWorkspacePage = lazy(() =>
+  import('./routes/ChangeWorkspacePage').then((module) => ({
+    default: module.ChangeWorkspacePage,
+  })),
 );
 const DiffPage = lazy(() =>
   import('./routes/DiffPage').then((module) => ({ default: module.DiffPage })),
@@ -74,11 +82,60 @@ export function App() {
       ? 'light'
       : 'dark',
   );
-  const [route] = useState(() => applicationPath());
+  const [route, setRoute] = useState(() => applicationPath());
+  const [workspace, setWorkspace] = useState<ChangeWorkspace | null>(null);
+  const [changeLabInput, setChangeLabInput] = useState<ChangeLabInput | undefined>();
+  const workspaceRef = useRef<ChangeWorkspace | null>(null);
 
   useEffect(() => {
     document.documentElement.dataset['theme'] = theme;
   }, [theme]);
+
+  useEffect(() => {
+    const updateRoute = () => {
+      setRoute(applicationPath());
+      queueMicrotask(() => document.querySelector<HTMLElement>('#main-content')?.focus());
+    };
+    window.addEventListener('popstate', updateRoute);
+    return () => window.removeEventListener('popstate', updateRoute);
+  }, []);
+
+  function openRoute(path: string): void {
+    window.history.pushState(null, '', href(path));
+    setRoute(path.replace(/^\/+|\/+$/g, ''));
+    queueMicrotask(() => document.querySelector<HTMLElement>('#main-content')?.focus());
+  }
+
+  function openWorkspace(value: ChangeWorkspace): void {
+    workspaceRef.current = value;
+    setWorkspace(value);
+    openRoute('workspace/');
+  }
+
+  function openWorkspaceInChangeLab(input: ChangeLabInput): void {
+    const activeWorkspace = workspaceRef.current;
+    setChangeLabInput(
+      activeWorkspace === null
+        ? input
+        : {
+            current: activeWorkspace.current.source,
+            currentIncompleteReasons: activeWorkspace.current.incompleteReasons,
+            currentOrigin: activeWorkspace.current.origin,
+            currentStatus: activeWorkspace.current.status,
+            intended: activeWorkspace.intended.source,
+            intendedIncompleteReasons: activeWorkspace.intended.incompleteReasons,
+            intendedOrigin: activeWorkspace.intended.origin,
+            intendedStatus: activeWorkspace.intended.status,
+            workspace: activeWorkspace,
+          },
+    );
+    openRoute('diff/');
+  }
+
+  function retainWorkspace(value: ChangeWorkspace): void {
+    workspaceRef.current = value;
+    setWorkspace(value);
+  }
 
   return (
     <div className="app-shell">
@@ -94,6 +151,7 @@ export function App() {
           <a href={href('zone-lint/')}>Zone lint</a>
           <a href={href('studio/')}>Record Studio</a>
           <a href={href('diff/')}>Change Lab</a>
+          <a href={href('workspace/')}>Change Workspace</a>
           <a href={href('dmarc/')}>DMARC</a>
           <a href={href('dkim/')}>DKIM</a>
           <a href={href('caa/')}>CAA</a>
@@ -130,9 +188,18 @@ export function App() {
           ) : route === 'dmarc' ? (
             <DmarcPage />
           ) : route === 'diff' ? (
-            <DiffPage />
+            <DiffPage
+              {...(changeLabInput === undefined ? {} : { initialInput: changeLabInput })}
+              onCreateWorkspace={openWorkspace}
+            />
           ) : route === 'studio' ? (
-            <RecordStudioPage />
+            <RecordStudioPage onCreateWorkspace={openWorkspace} />
+          ) : route === 'workspace' ? (
+            <ChangeWorkspacePage
+              initialWorkspace={workspace ?? undefined}
+              onOpenChangeLab={openWorkspaceInChangeLab}
+              onWorkspaceChange={retainWorkspace}
+            />
           ) : route === 'zone-lint' ? (
             <ZoneLintPage />
           ) : route === 'spf' ? (
@@ -162,6 +229,7 @@ export function App() {
                 <span>Also included</span>
                 <a href={href('lookup/')}>Record explorer</a>
                 <a href={href('studio/')}>Record Studio</a>
+                <a href={href('workspace/')}>Change Workspace</a>
                 <a href={href('dmarc/')}>DMARC</a>
                 <a href={href('dkim/')}>DKIM</a>
                 <a href={href('caa/')}>CAA</a>

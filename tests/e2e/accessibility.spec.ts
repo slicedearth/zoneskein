@@ -9,6 +9,7 @@ const STATIC_ROUTES = [
   '/zone-lint/',
   '/studio/',
   '/diff/',
+  '/workspace/',
   '/dmarc/',
   '/dkim/',
   '/caa/',

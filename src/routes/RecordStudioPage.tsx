@@ -4,6 +4,7 @@ import { CopyButton } from '../components/CopyButton';
 import { SnapshotButton } from '../components/SnapshotButton';
 import { StatusBadge } from '../components/StatusBadge';
 import { ToolIntro } from '../components/ToolIntro';
+import { createRecordStudioChangeWorkspace, type ChangeWorkspace } from '../core/project';
 import {
   authorRecord,
   type AuthoringRecordType,
@@ -52,6 +53,10 @@ interface WorkingRecord {
   readonly bind: string;
   readonly json: string;
   readonly type: AuthoringRecordType;
+}
+
+export interface RecordStudioPageProps {
+  readonly onCreateWorkspace?: (workspace: ChangeWorkspace) => void;
 }
 
 const FIELD_DEFINITIONS: Readonly<Record<AuthoringRecordType, readonly FieldDefinition[]>> = {
@@ -487,7 +492,7 @@ function lintLabel(document: ZoneDocument): string {
   return `${String(document.diagnostics.length)} diagnostic${document.diagnostics.length === 1 ? '' : 's'}`;
 }
 
-export function RecordStudioPage() {
+export function RecordStudioPage({ onCreateWorkspace }: RecordStudioPageProps = {}) {
   const [owner, setOwner] = useState('');
   const [ttl, setTtl] = useState('3600');
   const [type, setType] = useState<AuthoringRecordType>('A');
@@ -599,6 +604,20 @@ export function RecordStudioPage() {
     setAnnouncement(
       `Local lint parsed ${String(document.records.length)} records and produced ${String(document.diagnostics.length)} diagnostics.`,
     );
+  }
+
+  function openWorkspace() {
+    if (bindWorkingSet === '' || onCreateWorkspace === undefined) return;
+    const created = createRecordStudioChangeWorkspace({
+      intendedSource: bindWorkingSet,
+      intendedStatus: 'complete',
+      title: 'Record Studio intended state',
+    });
+    if (!created.ok) {
+      setAnnouncement(`The Change Workspace could not be created. ${created.error.message}`);
+      return;
+    }
+    onCreateWorkspace(created.value);
   }
 
   const ownerDiagnostics = fieldDiagnostics(result.diagnostics, 'owner');
@@ -880,6 +899,11 @@ export function RecordStudioPage() {
                   title="DNS Record Studio working set"
                   tool="other"
                 />
+                {onCreateWorkspace === undefined ? null : (
+                  <button className="quiet-button" type="button" onClick={openWorkspace}>
+                    Open in Change Workspace
+                  </button>
+                )}
               </>
             )}
           </div>
