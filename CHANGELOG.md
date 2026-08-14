@@ -11,6 +11,7 @@ All notable changes to ZoneSkein are documented here.
 - Made local snapshot erasure cross-tab aware and delayed the disabled/erased confirmation until IndexedDB deletion succeeds.
 - Added a checked, source-map-free static build artefact; tagged archive, CycloneDX SBOM, checksum, and provenance generation; enforced coverage and dependency/security scanning; and Chromium, Firefox, WebKit, and mobile Chromium browser coverage.
 - Added deterministic bounded property tests for DNS wire, zone parsing, and semantic comparison, plus automated WCAG route, reflow, keyboard, forced-colours, and reduced-motion checks.
+- Added a bounded, versioned Change Workspace workflow with Record Studio and Change Lab hand-offs, strict local JSON import and export, structured analysis and rollback guidance, explicit unavailable or partial inputs, inert resolver provenance, and SHA-256 consistency checks.
 
 ## 0.1.0 — 2026-08-13
 

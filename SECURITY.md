@@ -18,6 +18,7 @@ ZoneSkein is a static browser application:
 - the Netlify configuration sets a restrictive Content Security Policy, frame protections, a conservative referrer policy, `nosniff`, and a minimal Permissions Policy;
 - raw-message canonicalisation and signature verification run locally within a 1,048,576-byte input limit, a 65,536-character header-block limit, 1,000 headers, and 20 signatures; only derived DKIM selector TXT questions cross the network;
 - local snapshots require explicit opt-in and have count and size limits, while the anonymous bounded rate-limit ledger contains no questions, answers, names, or pasted content.
+- portable Change Workspace imports are byte-bounded, strictly decoded and schema-validated, and quarantined on a SHA-256 mismatch; imported resolver endpoints remain inert data rather than fetch targets.
 
 ## Abuse resistance
 

@@ -40,7 +40,7 @@ deploy the site or create a GitHub release.
 2. Confirm the build command and publish directory from `netlify.toml`.
 3. Do not configure a functions directory.
 4. Deploy without application environment variables.
-5. Open `/`, `/lookup/`, `/dnssec/`, `/spf/`, `/zone-lint/`, `/studio/`, `/diff/`, `/dmarc/`, `/dkim/`, `/caa/`, `/snapshots/`, and `/about/` directly.
+5. Open `/`, `/lookup/`, `/dnssec/`, `/spf/`, `/zone-lint/`, `/studio/`, `/diff/`, `/workspace/`, `/dmarc/`, `/dkim/`, `/caa/`, `/snapshots/`, and `/about/` directly.
 6. Refresh each route and confirm the application loads.
 7. Run a manual resolver smoke check from a supported browser.
 

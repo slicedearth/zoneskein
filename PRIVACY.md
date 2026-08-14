@@ -48,6 +48,12 @@ Local snapshots are a separate, explicit opt-in feature:
 
 ZoneSkein uses no cookies. It does not use local storage for query history or DNS content; local storage holds only the snapshot opt-in boolean and the bounded anonymous rate-limit ledger described above.
 
+## Change Workspace files
+
+A Change Workspace is held only in the current page's React memory unless the visitor explicitly downloads it. Import reads a bounded local file in the browser; it does not upload the file, save it to IndexedDB, place it in a URL fragment, or contact any resolver endpoint contained in the file. Those endpoints are rendered as inert historical provenance.
+
+An exported workspace can contain DNS names and records, availability notes, change risk and rollback guidance, timestamps, and retained resolver observations. A canonical SHA-256 mismatch shows that the content no longer matches the included digest, but a match provides no authenticity or tamper resistance because the digest is stored with the file and can be recomputed. The digest does not encrypt the file. The downloaded file, clipboard paths, browser download history, backups, and every recipient are outside ZoneSkein's control.
+
 ## Share links
 
 Share links are created only after an explicit action. Report state is encoded in the URL fragment after `#`, which browsers do not send in the HTTP request to the hosting server.

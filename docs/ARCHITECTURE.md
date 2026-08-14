@@ -20,6 +20,7 @@ Application, protocol, test, and build-configuration source is strict TypeScript
 - `spf` lexes and parses ordered terms, resolves bounded dependency graphs, measures worst-case paths, constructs guarded snapshots, and evaluates bounded sender context with macro and DNS evidence;
 - `zone` tokenises and lints recoverable zone snippets and serialises supported authoring records;
 - `diff` normalises records, classifies semantic changes, and derives bounded preflight, risk, timing, rollback, and staged-rollout guidance;
+- `project` validates and serialises the versioned Change Workspace format, constructs Record Studio and Change Lab hand-offs, and reruns bounded local comparison without network or storage access;
 - `dmarc` performs RFC 9989 discovery and conditional alignment assessment from supplied prior authentication evidence, plus RFC 9990 and RFC 9991 reporting-destination checks;
 - `dkim` parses selector keys and locally canonicalises and verifies bounded messages;
 - `caa` performs bounded inheritance analysis and record authoring;
@@ -45,6 +46,8 @@ Ordinary form and response state lives in React memory. DNS caching is memory-on
 Snapshot persistence is separate. A boolean opt-in preference contains no DNS value. Only explicit saves write to IndexedDB. Disabling the feature asks other ZoneSkein tabs to close database handles, waits for confirmed IndexedDB deletion, and only then clears the preference; blocked or failed deletion remains visible. Share state is created only on request, bounded, encoded in a URL fragment, and runtime-validated when read.
 
 Raw DKIM messages, SPF sender inputs, and DMARC alignment inputs remain in current React memory, and those routes provide no snapshot or share control for them. DKIM verification sends only derived selector TXT questions. SPF macros can place parts of supplied sender context into resolver-visible DNS questions. Record Studio working sets remain temporary unless the visitor explicitly saves one through the snapshot control.
+
+Change Workspace state is also memory-only. Record Studio and Change Lab can hand bounded typed state to it through application-owned React callbacks; browser history holds only the route. Explicit file export produces canonical JSON with a SHA-256 integrity field, and strict import reconstructs plain inert values without reproducing or endorsing stored analysis. Imported resolver endpoints are never passed to `WireDnsResolver`. Opening a workspace in Change Lab transfers both zone states, their omission reasons and distinct origins, and the exact in-memory workspace into pasted comparison mode. Incomplete inputs cannot produce a new comparison and can return losslessly.
 
 ## Failure semantics
 

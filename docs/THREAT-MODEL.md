@@ -13,7 +13,7 @@
 
 The visitor trusts the delivered static files, browser runtime, selected resolver, Netlify’s static hosting, and their own device. ZoneSkein does not operate an application backend.
 
-Resolver responses, DNS record text, pasted zone or message data, SMTP sender inputs, URL fragments, and imported snapshot data are untrusted. Browser extensions and local malware are outside the application's protection boundary.
+Resolver responses, DNS record text, pasted zone or message data, SMTP sender inputs, URL fragments, imported snapshots, and Change Workspace files are untrusted. Browser extensions and local malware are outside the application's protection boundary.
 
 ## Threats and controls
 
@@ -31,6 +31,8 @@ A modified client can bypass browser-side controls. Public resolvers must enforc
 
 Names, zone snippets, parser statements, tokens, diagnostics, records, proposed changes, plan findings, raw-message bytes, header fields, DKIM signatures, SPF macro output, evidence traces, snapshot records, fragments, graph depth, MX expansion, unique questions, cache entries, snapshot count, and snapshot size are bounded. Resource exhaustion produces an explicit incomplete result rather than a retained prefix comparison or rollout plan. DNSSEC also has whole-run limits for records, keys, signatures, digests, cryptographic attempts, and NSEC3 hash rounds. Long-running work observes cancellation between bounded cryptographic operations. DNS response bodies are streamed through the DNS wire limit rather than allocated without a bound.
 
+Change Workspace files are rejected before reading when their declared size exceeds the file limit, then decoded with fatal UTF-8, duplicate-key, canonical-value, schema, count, and string bounds. A mismatched digest is quarantined until explicit acknowledgement. A later file read cannot overwrite a newer clear or edit, and retained endpoint strings never become network authority.
+
 ### Untrusted content execution
 
 React renders record and pasted values as text. No `dangerouslySetInnerHTML`, arbitrary HTML, third-party UI script, remote font, or record-derived URL navigation is used. CSP blocks objects, frames, unexpected connections, and non-self scripts.
@@ -44,6 +46,8 @@ SPF macros can place parts of supplied mailbox, IP, HELO/EHLO, or receiver value
 ### Misleading security conclusions
 
 Statuses are evidence-scoped. Recursive data is not called authoritative or global. Missing DNSSEC AD is not called unsigned. NSEC3 Opt-Out is not called a proven insecure delegation, and unsupported cryptography is not called invalid. Unsafe SPF input receives no flattened output, and a sender result describes only one supplied context. DMARC alignment conclusions are conditional on supplied prior authentication evidence. A DKIM pass authenticates only the signed content for its signing domain and does not imply DMARC alignment or delivery. Partial lookup failures remain visible.
+
+Workspace analysis preserves unavailable and partial inputs explicitly. It never converts a missing current snapshot into record removals. A digest mismatch shows internal inconsistency; a match is not described as tamper resistance, author identity, authorisation, or authenticity because the included digest can be recomputed.
 
 ### Supply chain and deployment
 

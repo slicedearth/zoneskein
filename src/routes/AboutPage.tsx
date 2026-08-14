@@ -75,6 +75,14 @@ export function AboutPage() {
             </span>
           </div>
           <div>
+            <strong>Change Workspace</strong>
+            <span>
+              A bounded local file carries explicit current and intended states, structured
+              analysis, rollback guidance, and historical evidence between Record Studio and
+              Change Lab. Imported resolver endpoints remain inert provenance.
+            </span>
+          </div>
+          <div>
             <strong>Email authentication</strong>
             <span>
               RFC 9989 DMARC policy discovery and conditional alignment assessment from supplied
@@ -125,7 +133,9 @@ export function AboutPage() {
               URL fragment; browser history and every recipient can still see it. DNSSEC
               evidence bundles contain complete raw packets, decoded questions, resolver
               endpoints, and capture times, so copying, snapshotting, or sharing them exposes
-              those details to the selected destination or recipient.
+              those details to the selected destination or recipient. Change Workspace state
+              remains in page memory unless explicitly downloaded; imported files are read
+              locally and their retained resolver endpoints are never contacted.
             </p>
           </div>
           <div>
@@ -164,6 +174,13 @@ export function AboutPage() {
           <li>
             The zone parser implements a documented practical subset, not every BIND directive
             or DNS provider extension.
+          </li>
+          <li>
+            A Change Workspace SHA-256 mismatch shows that the content no longer matches the
+            included digest. A match shows internal consistency only because anyone modifying
+            the file can recompute it; it provides no authenticity, authorisation, or tamper
+            resistance. Unavailable and partial zone states remain explicit and cannot be
+            treated as empty input.
           </li>
           <li>
             DMARC publication does not prove alignment, and alignment mode remains conditional

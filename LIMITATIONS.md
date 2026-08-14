@@ -28,13 +28,15 @@ Sender-context mode models one supplied SMTP client IP, MAIL FROM identity, HELO
 
 The response-size value is an estimate for a conventional answer and can differ with owner-name compression, DNSSEC records, EDNS, resolver additions, or authoritative-server behaviour.
 
-## Zone snippets, Record Studio, and Change Lab
+## Zone snippets, Record Studio, Change Lab, and Change Workspace
 
 The zone parser supports a practical subset of comments, quoted TXT strings, parentheses, `$ORIGIN`, `$TTL`, inherited owners, relative names, explicit TTL, IN class, and common types. It is not a complete BIND parser. Provider extensions such as ALIAS, ANAME, proprietary flattening, routing policies, health checks, and provider-side templates require provider validation.
 
 Record Studio serialises 18 supported record types and applies the practical zone linter to a bounded local working set. It does not know provider-specific syntax, account permissions, existing authoritative records, signing policy, or the intended zone cut, and it never publishes records.
 
 Change Lab normalisation treats ordinary RRset ordering as non-semantic and recognises selected name and numeric fields. Its risk and timing guidance is derived only from supplied or selected records. Unselected RR types, provider behaviour, application dependencies, and recursive-cache state remain outside its evidence, so it cannot assign a universal propagation-complete time.
+
+Change Workspace carries bounded current and intended BIND-style text, explicit complete, partial, or unavailable state, structured Change Lab analysis, and optional historical resolver evidence. It does not discover missing records, poll propagation, publish DNS, persist automatically, or authenticate an author. Import validation checks structure and internal consistency; it does not reproduce or endorse stored analysis, which remains supplied historical data until local reanalysis. A SHA-256 mismatch shows that the content no longer matches the included digest; a match shows internal consistency only because anyone modifying the file can recompute its digest. Imported resolver endpoints are inert provenance and are never queried. Local reanalysis is blocked when either zone state is unavailable and remains partial when an input is partial, so unknown data is never interpreted as an empty zone.
 
 ## DMARC, DKIM, and CAA
 
