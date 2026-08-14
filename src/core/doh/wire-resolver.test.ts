@@ -239,6 +239,25 @@ describe('wire DoH resolver', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it('explains Quad9 HTTP version requirements without mislabelling a transport rejection', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockRejectedValue(new TypeError('Failed to fetch'));
+    const resolver = new WireDnsResolver(resolverById('quad9'), testDependencies(fetchMock));
+
+    const failure = await resolver
+      .query(question(), { checkingDisabled: false, dnssecOk: true })
+      .catch((cause: unknown) => cause);
+
+    expect(resolver.definition.endpoint).toBe('https://dns.quad9.net/dns-query');
+    expect(failure).toBeInstanceOf(DnsQueryError);
+    if (!(failure instanceof DnsQueryError)) throw new Error('Expected a DNS query error.');
+    expect(failure.code).toBe('transport-error');
+    expect(failure.message).toContain('HTTPS transport failed');
+    expect(failure.message).toContain('end-to-end HTTP/2 or HTTP/3');
+    expect(failure.message).toContain('choose another resolver or a compatible network path');
+    expect(failure.message).not.toContain('Failed to fetch');
+    expect(failure.message).not.toContain('NXDOMAIN');
+  });
+
   it('does not turn user cancellation into cached resolution failure state', async () => {
     let requests = 0;
     const fetchMock = vi.fn<typeof fetch>((_input, init) => {

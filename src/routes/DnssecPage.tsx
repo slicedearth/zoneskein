@@ -176,7 +176,12 @@ function ApplicationDetails({ value }: { readonly value: DnssecApplicationResult
         </div>
       </dl>
       {value.records.length === 0 ? null : (
-        <div className="table-scroll">
+        <div
+          className="table-scroll"
+          tabIndex={0}
+          role="region"
+          aria-label="DNSSEC positive application RRset"
+        >
           <table>
             <caption>Positive application RRset</caption>
             <thead>
@@ -296,7 +301,12 @@ function StepDetails({ step }: { readonly step: DnssecChainStep }) {
         </div>
       </dl>
       {step.trustAnchors === undefined || step.trustAnchors.length === 0 ? null : (
-        <div className="table-scroll">
+        <div
+          className="table-scroll"
+          tabIndex={0}
+          role="region"
+          aria-label="DNSSEC matched root trust anchors"
+        >
           <table>
             <caption>Matched root trust anchors</caption>
             <thead>
@@ -331,7 +341,12 @@ function StepDetails({ step }: { readonly step: DnssecChainStep }) {
         </div>
       )}
       {step.ds.length === 0 ? null : (
-        <div className="table-scroll">
+        <div
+          className="table-scroll"
+          tabIndex={0}
+          role="region"
+          aria-label="DNSSEC authenticated parent DS records"
+        >
           <table>
             <caption>Authenticated parent DS records</caption>
             <thead>
@@ -368,7 +383,12 @@ function StepDetails({ step }: { readonly step: DnssecChainStep }) {
         </div>
       )}
       {step.dnskeys.length === 0 ? null : (
-        <div className="table-scroll">
+        <div
+          className="table-scroll"
+          tabIndex={0}
+          role="region"
+          aria-label="DNSSEC DNSKEY records"
+        >
           <table>
             <caption>DNSKEY records</caption>
             <thead>
@@ -658,7 +678,12 @@ export function DnssecPage() {
           ))}
           <article className="result-panel">
             <h3>Captured DNS evidence</h3>
-            <div className="table-scroll">
+            <div
+              className="table-scroll"
+              tabIndex={0}
+              role="region"
+              aria-label="DNSSEC captured DNS evidence"
+            >
               <table>
                 <thead>
                   <tr>

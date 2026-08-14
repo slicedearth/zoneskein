@@ -103,6 +103,7 @@ export interface ResolverDefinition {
   readonly id: ResolverId;
   readonly label: string;
   readonly privacyUrl: string;
+  readonly transportNote?: string;
 }
 
 export interface DnsResponse {

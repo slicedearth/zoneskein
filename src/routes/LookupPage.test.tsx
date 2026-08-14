@@ -1,18 +1,45 @@
 import { encode } from '@dnsquery/dns-packet';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { DNS_RECORD_TYPES } from '../core/dns/types';
 import { LookupPage } from './LookupPage';
 
-function answerResponse(): Response {
+vi.mock('../core/doh/rate-limit', () => ({
+  BrowserRateLimiter: class {
+    imposeCooldown(): void {
+      // Lookup route tests exercise presentation, not cross-tab resolver pacing.
+    }
+
+    wait(): Promise<void> {
+      return Promise.resolve();
+    }
+  },
+}));
+
+function answerResponse(name = 'lookup-test.example.'): Response {
   const bytes = encode({
-    answers: [
-      { class: 'IN', data: '192.0.2.25', name: 'lookup-test.example.', ttl: 300, type: 'A' },
-    ],
+    answers: [{ class: 'IN', data: '192.0.2.25', name, ttl: 300, type: 'A' }],
     flags: 0x81a0,
     id: 0,
-    questions: [{ class: 'IN', name: 'lookup-test.example.', type: 'A' }],
+    questions: [{ class: 'IN', name, type: 'A' }],
+    type: 'response',
+  });
+  const body = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(body).set(bytes);
+  return new Response(body, {
+    headers: { 'Content-Type': 'application/dns-message' },
+    status: 200,
+  });
+}
+
+function txtAnswerResponse(value: string, name = 'markdown-lookup.example.'): Response {
+  const bytes = encode({
+    answers: [{ class: 'IN', data: [value], name, ttl: 300, type: 'TXT' }],
+    flags: 0x81a0,
+    id: 0,
+    questions: [{ class: 'IN', name, type: 'TXT' }],
     type: 'response',
   });
   const body = new ArrayBuffer(bytes.byteLength);
@@ -24,7 +51,53 @@ function answerResponse(): Response {
 }
 
 describe('DNS record explorer', () => {
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('selects every forward type and restores the four documented defaults locally', async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+    render(<LookupPage />);
+
+    await user.click(screen.getByRole('checkbox', { name: 'PTR' }));
+    expect(screen.getByRole('checkbox', { name: 'PTR' })).toBeChecked();
+
+    await user.click(screen.getByRole('button', { name: 'Select all' }));
+    for (const type of DNS_RECORD_TYPES) {
+      const checkbox = screen.getByRole('checkbox', { name: type });
+      if (type === 'PTR') expect(checkbox).not.toBeChecked();
+      else expect(checkbox).toBeChecked();
+    }
+
+    await user.click(screen.getByRole('button', { name: 'Reset to defaults' }));
+    for (const type of DNS_RECORD_TYPES) {
+      const checkbox = screen.getByRole('checkbox', { name: type });
+      if (['A', 'AAAA', 'MX', 'TXT'].includes(type)) expect(checkbox).toBeChecked();
+      else expect(checkbox).not.toBeChecked();
+    }
+    expect(screen.getByText(/all 17 forward record types/iu)).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Clear query and results' })).toBeVisible();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('explains the Quad9 transport requirement before a query is sent', async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+    render(<LookupPage />);
+
+    await user.selectOptions(screen.getByLabelText('Resolver'), 'quad9');
+
+    expect(screen.getByLabelText('Resolver')).toHaveAccessibleDescription(
+      /end-to-end HTTP\/2 or HTTP\/3 DNS-over-HTTPS path/iu,
+    );
+    expect(screen.getByText(/inspection proxy.*HTTP\/1\.1/iu)).toBeVisible();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 
   it('rejects unsafe input before any network request', async () => {
     const fetchMock = vi.fn<typeof fetch>();
@@ -52,10 +125,222 @@ describe('DNS record explorer', () => {
     await user.click(screen.getByRole('button', { name: 'Inspect records' }));
 
     expect(await screen.findByText('192.0.2.25')).toBeVisible();
-    expect(screen.getByText('Completed 1 DNS questions.')).toBeVisible();
+    expect(screen.getByRole('status', { name: 'DNS lookup status' })).toHaveTextContent(
+      'Completed 1 DNS questions.',
+    );
+    expect(
+      screen.getByRole('heading', { level: 2, name: 'Lookup results for lookup-test.example' }),
+    ).toBeVisible();
+    expect(screen.getByLabelText(/Google Public DNS, NOERROR, 1 answer/iu)).toBeVisible();
+    expect(
+      screen.getByRole('region', { name: /Google Public DNS A answer records table/iu }),
+    ).toBeVisible();
     const [target, init] = fetchMock.mock.calls[0] ?? [];
     if (typeof target !== 'string') throw new Error('Expected a string resolver URL.');
     expect(target).toMatch(/^https:\/\/dns\.google\/dns-query\?dns=/u);
     expect(init).toEqual(expect.objectContaining({ method: 'GET', mode: 'cors' }));
+  });
+
+  it('cancels and ignores a pending run when a material input changes', async () => {
+    let resolveFetch: ((response: Response) => void) | undefined;
+    let requestSignal: AbortSignal | undefined;
+    const fetchMock = vi.fn<typeof fetch>((_target, init) => {
+      requestSignal = init?.signal ?? undefined;
+      return new Promise((resolve) => {
+        resolveFetch = resolve;
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<LookupPage />);
+
+    for (const type of ['AAAA', 'MX', 'TXT']) {
+      fireEvent.click(screen.getByRole('checkbox', { name: type }));
+    }
+    const name = screen.getByLabelText('DNS name');
+    fireEvent.change(name, { target: { value: 'pending-lookup.example' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect records' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    expect(screen.getByRole('status', { name: 'DNS lookup status' })).toHaveTextContent(
+      'DNS questions are in progress.',
+    );
+
+    fireEvent.change(name, { target: { value: 'replacement-lookup.example' } });
+    expect(requestSignal?.aborted).toBe(true);
+    resolveFetch?.(answerResponse('pending-lookup.example.'));
+
+    await waitFor(() =>
+      expect(screen.getByRole('status', { name: 'DNS lookup status' })).toBeEmptyDOMElement(),
+    );
+    expect(screen.queryByText('192.0.2.25')).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('heading', { name: /Lookup results for/iu }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('keeps comparison failures and immutable provenance in evidence exports', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    const fetchMock = vi.fn<typeof fetch>((target) => {
+      if (typeof target !== 'string') throw new Error('Expected a string resolver URL.');
+      if (target.startsWith('https://dns.google/')) {
+        return Promise.resolve(answerResponse('comparison-lookup.example.'));
+      }
+      return Promise.reject(new TypeError('Browser transport rejected the request.'));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<LookupPage />);
+
+    for (const type of ['AAAA', 'MX', 'TXT']) {
+      fireEvent.click(screen.getByRole('checkbox', { name: type }));
+    }
+    fireEvent.change(screen.getByLabelText('DNS name'), {
+      target: { value: 'comparison-lookup.example' },
+    });
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: 'Compare all allowlisted resolvers' }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect records' }));
+
+    expect(
+      await screen.findByRole('heading', {
+        level: 2,
+        name: 'Lookup results for comparison-lookup.example',
+      }),
+    ).toBeVisible();
+    expect(screen.getByRole('status', { name: 'DNS lookup status' })).toHaveTextContent(
+      'partial results',
+    );
+    const successSummary = screen.getByLabelText(/Google Public DNS, NOERROR, 1 answer/iu);
+    expect(successSummary).toBeVisible();
+    expect(successSummary.closest('details')).not.toHaveAttribute('open');
+    expect(
+      screen.queryByRole('region', { name: /Google Public DNS A answer records table/iu }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText('Raw DNS wire message')).not.toBeInTheDocument();
+    fireEvent.click(successSummary);
+    expect(
+      await screen.findByRole('region', {
+        name: /Google Public DNS A answer records table/iu,
+      }),
+    ).toBeVisible();
+    expect(screen.getByText('Raw DNS wire message')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Plain answers unavailable' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'BIND answers unavailable' })).toBeDisabled();
+    expect(screen.getAllByText('transport-error')).toHaveLength(2);
+    expect(screen.getAllByText(/end-to-end HTTP\/2 or HTTP\/3/iu).length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy JSON evidence' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
+    const evidence = JSON.parse(String(writeText.mock.calls[0]?.[0])) as {
+      readonly observations: readonly {
+        readonly error?: { readonly code: string; readonly message: string };
+        readonly outcome: string;
+        readonly resolver: { readonly endpoint: string; readonly id: string };
+      }[];
+      readonly run: {
+        readonly comparison: boolean;
+        readonly recordTypes: readonly string[];
+        readonly resolvers: readonly { readonly id: string }[];
+        readonly submittedInput: string;
+      };
+      readonly schemaVersion: number;
+    };
+    expect(evidence).toMatchObject({
+      run: {
+        comparison: true,
+        recordTypes: ['A'],
+        submittedInput: 'comparison-lookup.example',
+      },
+      schemaVersion: 1,
+    });
+    expect(evidence.run.resolvers.map((resolver) => resolver.id)).toEqual([
+      'cloudflare',
+      'google',
+      'quad9',
+    ]);
+    expect(evidence.observations).toHaveLength(3);
+    expect(
+      evidence.observations.filter((observation) => observation.outcome === 'error'),
+    ).toHaveLength(2);
+    expect(
+      evidence.observations.find((observation) => observation.resolver.id === 'quad9'),
+    ).toMatchObject({
+      error: { code: 'transport-error' },
+      resolver: { endpoint: 'https://dns.quad9.net/dns-query' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy Markdown evidence' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(2));
+    const markdown = String(writeText.mock.calls[1]?.[0]);
+    expect(markdown).toContain('# ZoneSkein DNS lookup — comparison-lookup.example');
+    expect(markdown).toContain('### Cloudflare 1.1.1.1 — transport-error');
+    expect(markdown).toContain('### Quad9 — transport-error');
+    expect(markdown).toContain('end-to-end HTTP/2 or HTTP/3');
+  });
+
+  it('escapes HTML-like DNS text in Markdown evidence', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(txtAnswerResponse('<img src=x onerror=alert(1)> & evidence')),
+    );
+    render(<LookupPage />);
+
+    for (const type of ['A', 'AAAA', 'MX']) {
+      fireEvent.click(screen.getByRole('checkbox', { name: type }));
+    }
+    fireEvent.change(screen.getByLabelText('DNS name'), {
+      target: { value: 'markdown-lookup.example' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect records' }));
+
+    expect(await screen.findByText(/img src=x/iu)).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Copy Markdown evidence' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
+    const markdown = String(writeText.mock.calls[0]?.[0]);
+    expect(markdown).toContain('&lt;img src=x onerror=alert(1)&gt; &amp; evidence');
+    expect(markdown).not.toContain('<img src=x');
+  });
+
+  it('groups comparison observations by record type before resolver', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<typeof fetch>().mockRejectedValue(new TypeError('Transport unavailable.')),
+    );
+    render(<LookupPage />);
+
+    for (const type of ['MX', 'TXT']) {
+      fireEvent.click(screen.getByRole('checkbox', { name: type }));
+    }
+    fireEvent.change(screen.getByLabelText('DNS name'), {
+      target: { value: 'type-major-lookup.example' },
+    });
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: 'Compare all allowlisted resolvers' }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect records' }));
+
+    expect(
+      await screen.findByRole('heading', {
+        level: 2,
+        name: 'Lookup results for type-major-lookup.example',
+      }),
+    ).toBeVisible();
+    const groups = screen.getAllByRole('heading', { level: 3 });
+    expect(groups.map((heading) => heading.textContent)).toEqual(['A records', 'AAAA records']);
+    for (const heading of groups) {
+      const group = heading.closest('.lookup-result-group');
+      if (!(group instanceof HTMLElement)) throw new Error('Expected a lookup result group.');
+      expect(within(group).getAllByText('transport-error')).toHaveLength(3);
+    }
   });
 });

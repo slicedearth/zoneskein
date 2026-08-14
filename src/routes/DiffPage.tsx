@@ -1001,7 +1001,12 @@ export function DiffPage({ initialInput, onCreateWorkspace }: DiffPageProps = {}
             {display.report.changes.length === 0 ? (
               <p className="empty-note">No semantic, TTL, or formatting changes were found.</p>
             ) : (
-              <div className="table-scroll">
+              <div
+                className="table-scroll"
+                tabIndex={0}
+                role="region"
+                aria-label="Classified DNS changes"
+              >
                 <table>
                   <caption>Classified DNS changes</caption>
                   <thead>

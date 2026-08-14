@@ -381,7 +381,12 @@ function DmarcPolicyResults({ report }: { readonly report: PolicyReport }) {
             {policy.destinations.length === 0 ? (
               <p className="empty-note">No rua or ruf destinations.</p>
             ) : (
-              <div className="table-scroll">
+              <div
+                className="table-scroll"
+                tabIndex={0}
+                role="region"
+                aria-label="DMARC reporting boundaries and authorisation"
+              >
                 <table>
                   <thead>
                     <tr>
@@ -486,7 +491,12 @@ function DmarcAlignmentResults({ report }: { readonly report: DmarcAlignmentRepo
       {report.evaluation === undefined ? null : (
         <article className="result-panel">
           <h3>Per-method evidence</h3>
-          <div className="table-scroll">
+          <div
+            className="table-scroll"
+            tabIndex={0}
+            role="region"
+            aria-label="DMARC per-method evidence"
+          >
             <table>
               <thead>
                 <tr>

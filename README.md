@@ -9,7 +9,7 @@ It is not a subdomain scanner, reconnaissance platform, monitoring service, DNS 
 ## Features
 
 - DNS record explorer with A, AAAA, CNAME, MX, NS, TXT, SOA, CAA, SRV, PTR, DS, DNSKEY, RRSIG, NSEC, NSEC3, TLSA, HTTPS, and SVCB support.
-- RFC 8484 wire-format DNS-over-HTTPS to fixed Google Public DNS, Cloudflare 1.1.1.1, and Quad9 endpoints, using the browser-compatible GET or POST method each endpoint supports.
+- RFC 8484 wire-format DNS-over-HTTPS to fixed Google Public DNS, Cloudflare 1.1.1.1, and Quad9 endpoints, using the GET or POST method expected by each endpoint. Quad9 requires an end-to-end HTTP/2 or HTTP/3 browser path.
 - Side-by-side recursive-resolver comparison, exact DNS message sizes, EDNS Extended DNS Error explanations, RFC 2308 negative-cache TTLs, normalised record fields, PTR conversion, and plain, BIND, JSON, or Markdown exports.
 - Independent DNSSEC validation from bundled IANA root trust anchors, with authenticated DS and DNSKEY chains, positive and negative selected application answers, wildcard proofs, bounded CNAME/DNAME/SVCB/HTTPS alias continuation, SHA-1/SHA-256/SHA-384 DS matching, explicit NSEC3 Opt-Out uncertainty, and browser-supported RSA, ECDSA, and Ed25519 verification.
 - Ordered SPF lexer and parser, recursive include/redirect graph, path-aware ten-term and void-lookup analysis, A/MX expansion, cycle detection, and guarded point-in-time snapshots with provenance.
@@ -27,6 +27,8 @@ It is not a subdomain scanner, reconnaissance platform, monitoring service, DNS 
 ZoneSkein builds to static files. It has no application backend, server routes, functions, database service, authentication, analytics, advertising, telemetry, or error-reporting service.
 
 Parsing, cryptography, linting, policy evaluation, diffing, report generation, and local snapshots run in the browser. DNS questions go directly from the browser to the selected resolver. The resolver receives those questions and its privacy policy applies. Netlify still receives ordinary page and asset requests and may log connection information.
+
+Quad9 no longer accepts DNS-over-HTTPS over HTTP/1.1. A browser, VPN, enterprise inspection product, or network proxy that downgrades Quad9 requests can therefore make that resolver unavailable even while Google or Cloudflare works. ZoneSkein reports this as a transport limitation, retains any other resolver evidence, and does not relay questions through Netlify or a substitute service.
 
 SPF sender mode can place parts of a supplied mailbox, IP address, HELO/EHLO name, or receiver name into resolver-visible DNS questions when a policy uses macros. DKIM message mode keeps the raw message in page memory and sends only derived selector TXT questions. See the privacy documentation before using real sender or message data.
 

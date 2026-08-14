@@ -18,7 +18,7 @@ Every wire query includes EDNS Client Subnet with a zero source prefix (`0.0.0.0
 
 Live tools do not place visitor-supplied DNS names in the Netlify request path or query string. An explicitly created share link can contain report names and data after `#`; browsers do not send that fragment in the HTTP request to Netlify.
 
-Cloudflare questions use RFC 8484 POST bodies. Google and Quad9 questions use RFC 8484 GET because their standards-compliant POST endpoints do not currently work with ordinary browser CORS; the DNS wire message is base64url-encoded in the selected resolver's `dns=` URL parameter. This is not encryption beyond HTTPS, and the resolver can decode or log it. In every case, the selected resolver receives the DNS name and network connection information.
+Cloudflare questions use RFC 8484 POST bodies. Google and Quad9 questions use RFC 8484 GET because their standards-compliant POST endpoints do not currently work with ordinary browser CORS; the DNS wire message is base64url-encoded in the selected resolver's `dns=` URL parameter. Quad9 additionally requires the browser's complete network path to preserve HTTP/2 or HTTP/3. ZoneSkein does not relay an incompatible connection through Netlify or another resolver. This is not encryption beyond HTTPS, and the selected resolver can decode or log the question and connection information.
 
 ## Hosting requests
 

@@ -21,6 +21,8 @@ export const RESOLVERS: Readonly<Record<ResolverId, ResolverDefinition>> = {
     id: 'quad9',
     label: 'Quad9',
     privacyUrl: 'https://quad9.net/privacy/policy/',
+    transportNote:
+      'Quad9 requires an end-to-end HTTP/2 or HTTP/3 DNS-over-HTTPS path. A browser, VPN, or inspection proxy that downgrades the request to HTTP/1.1 can make Quad9 unavailable on that path; choose another resolver or a compatible network path.',
   },
 };
 

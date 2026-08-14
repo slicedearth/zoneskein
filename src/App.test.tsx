@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -30,6 +30,74 @@ describe('application shell', () => {
     expect(document.documentElement).toHaveAttribute('data-theme', 'light');
   });
 
+  it('groups tools into native, keyboard-operable navigation disclosures', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    const navigation = screen.getByRole('navigation', { name: 'Primary navigation' });
+    const inspectSummary = within(navigation).getByText('Inspect');
+    const prepareSummary = within(navigation).getByText('Prepare');
+
+    expect(inspectSummary.tagName).toBe('SUMMARY');
+    expect(prepareSummary.tagName).toBe('SUMMARY');
+    expect(inspectSummary.closest('details')).not.toHaveAttribute('open');
+    expect(prepareSummary.closest('details')).not.toHaveAttribute('open');
+
+    inspectSummary.focus();
+    expect(inspectSummary).toHaveFocus();
+    await user.click(inspectSummary);
+    expect(inspectSummary.closest('details')).toHaveAttribute('open');
+    expect(within(navigation).getByRole('link', { name: 'DNSSEC' })).toHaveAttribute(
+      'href',
+      '/dnssec/',
+    );
+    expect(within(navigation).getByRole('link', { name: 'Snapshots' })).toHaveAttribute(
+      'href',
+      '/snapshots/',
+    );
+
+    await user.click(prepareSummary);
+    expect(prepareSummary.closest('details')).toHaveAttribute('open');
+    expect(inspectSummary.closest('details')).not.toHaveAttribute('open');
+
+    window.history.pushState(null, '', '/dmarc/');
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    });
+
+    await waitFor(() => expect(inspectSummary.closest('details')).not.toHaveAttribute('open'));
+    expect(within(navigation).getByRole('link', { name: 'DMARC' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+  });
+
+  it('marks the active nested link without opening its disclosure', () => {
+    window.history.replaceState(null, '', '/dmarc/');
+    render(<App />);
+
+    const navigation = screen.getByRole('navigation', { name: 'Primary navigation' });
+    const activeLink = within(navigation).getByRole('link', { name: 'DMARC' });
+
+    expect(activeLink).toHaveAttribute('aria-current', 'page');
+    expect(activeLink.closest('details')).not.toHaveAttribute('open');
+    expect(within(navigation).getAllByRole('link')).toHaveLength(12);
+  });
+
+  it('updates the document title for known and unknown routes', async () => {
+    window.history.replaceState(null, '', '/lookup/');
+    render(<App />);
+
+    await waitFor(() => expect(document.title).toBe('DNS record lookup — ZoneSkein'));
+
+    window.history.pushState(null, '', '/missing/');
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    });
+
+    await waitFor(() => expect(document.title).toBe('Page not found — ZoneSkein'));
+  });
+
   it('follows browser history and focuses the new main view', async () => {
     render(<App />);
 
@@ -49,6 +117,12 @@ describe('application shell', () => {
     window.history.replaceState(null, '', '/studio/');
     render(<App />);
 
+    const prepareSummary = within(
+      screen.getByRole('navigation', { name: 'Primary navigation' }),
+    ).getByText('Prepare');
+    await user.click(prepareSummary);
+    expect(prepareSummary.closest('details')).toHaveAttribute('open');
+
     await user.type(
       await screen.findByRole('textbox', { name: 'Owner name' }),
       'www.example.com.',
@@ -66,6 +140,7 @@ describe('application shell', () => {
     expect(window.location.pathname).toBe('/workspace/');
     expect(window.history.state).toBeNull();
     expect(document.querySelector('#main-content')).toHaveFocus();
+    expect(prepareSummary.closest('details')).not.toHaveAttribute('open');
     expect(screen.getByLabelText('Intended BIND-style zone text')).toHaveValue(
       'www.example.com. 3600 IN A 192.0.2.10',
     );

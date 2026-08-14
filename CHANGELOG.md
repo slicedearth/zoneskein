@@ -4,6 +4,10 @@ All notable changes to ZoneSkein are documented here.
 
 ## Unreleased
 
+- Reworked the crowded primary navigation into accessible tool groups, introduced a restrained first-party SVG mark, added active-route titles, and tightened responsive workbench spacing and touch targets.
+- Added forward-record select-all and default-reset controls, compact type-major resolver results, keyboard-accessible record tables, stale-result invalidation, and provenance-preserving lookup exports.
+- Added resolver-specific Quad9 transport guidance for browser, VPN, or inspection paths that cannot preserve its required HTTP/2-or-newer DNS-over-HTTPS connection.
+
 - Corrected DNSSEC algorithm policy for RFC 9905: legacy RSA/SHA-1 signatures remain verifiable, but algorithm 5 or 7 DS records can no longer establish a secure delegation.
 - Completed bounded DNSSEC validation for application NODATA, NXDOMAIN, wildcard-positive and wildcard-NODATA proof sets, RFC 9824 compact denial, and authenticated CNAME, DNAME, SVCB, and HTTPS alias continuation.
 - Added fail-closed parser, diagnostic, record, change, and finding limits to Change Lab and replaced repeated dense-record scans with indexed comparison.

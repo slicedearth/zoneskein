@@ -185,7 +185,12 @@ function SnapshotPanel({ snapshot }: { readonly snapshot: SpfSnapshot }) {
           ))}
         </ul>
       ) : null}
-      <div className="table-scroll">
+      <div
+        className="table-scroll"
+        tabIndex={0}
+        role="region"
+        aria-label="SPF generated-network provenance"
+      >
         <table>
           <caption>Generated-network provenance</caption>
           <thead>
@@ -454,7 +459,12 @@ function SenderPanel({ report }: { readonly report: SpfSenderReport }) {
       </article>
       <article className="result-panel">
         <h3>Ordered evaluation trace</h3>
-        <div className="table-scroll">
+        <div
+          className="table-scroll"
+          tabIndex={0}
+          role="region"
+          aria-label="SPF ordered evaluation trace"
+        >
           <table>
             <caption>SPF mechanisms, limits, macros, and DNS evidence</caption>
             <thead>

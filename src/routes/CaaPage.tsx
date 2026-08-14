@@ -13,11 +13,29 @@ import { RESOLVERS } from '../core/doh/resolvers';
 import { WireDnsResolver } from '../core/doh/wire-resolver';
 
 const RESOLVER_IDS = Object.keys(RESOLVERS) as ResolverId[];
+type CaaRunState = 'idle' | 'loading' | 'complete' | 'partial' | 'error' | 'cancelled';
+
+function runStatusMessage(state: CaaRunState): string {
+  switch (state) {
+    case 'idle':
+      return '';
+    case 'loading':
+      return 'CAA inspection in progress.';
+    case 'complete':
+      return 'CAA inspection complete.';
+    case 'partial':
+      return 'CAA inspection complete with partial DNS evidence.';
+    case 'error':
+      return 'CAA inspection could not be completed.';
+    case 'cancelled':
+      return 'The CAA walk was cancelled.';
+  }
+}
 
 export function CaaPage() {
   const [domain, setDomain] = useState('');
   const [resolverId, setResolverId] = useState<ResolverId>('google');
-  const [state, setState] = useState<'idle' | 'loading' | 'complete' | 'cancelled'>('idle');
+  const [state, setState] = useState<CaaRunState>('idle');
   const [error, setError] = useState('');
   const [report, setReport] = useState<CaaDiscoveryReport | null>(null);
   const [issuer, setIssuer] = useState('letsencrypt.org');
@@ -49,6 +67,7 @@ export function CaaPage() {
     const parsed = validateDnsName(domain);
     if (!parsed.ok) {
       setError(parsed.error.message);
+      setState('error');
       return;
     }
     activeRun.current?.cancel();
@@ -58,28 +77,50 @@ export function CaaPage() {
     setReport(null);
     setState('loading');
     const resolver = new WireDnsResolver(RESOLVERS[resolverId]);
-    const discovered = await discoverCaaPolicy(
-      caaParentNames(parsed.value.ascii),
-      (name) => queryPolicyRecords(resolver, run, name, 'CAA'),
-      () => run.cancelled,
-    );
+    let discovered: CaaDiscoveryReport;
+    try {
+      discovered = await discoverCaaPolicy(
+        caaParentNames(parsed.value.ascii),
+        (name) => queryPolicyRecords(resolver, run, name, 'CAA'),
+        () => run.cancelled,
+      );
+    } catch {
+      if (activeRun.current !== run) return;
+      if (run.cancelled) {
+        activeRun.current = null;
+        setState('cancelled');
+        return;
+      }
+      activeRun.current = null;
+      setError(
+        'The CAA inspection could not be completed. Try again or choose another resolver.',
+      );
+      setState('error');
+      return;
+    }
     if (activeRun.current !== run) return;
     if (run.cancelled) {
+      activeRun.current = null;
       setState('cancelled');
       return;
     }
+    activeRun.current = null;
     setReport(discovered);
-    setState('complete');
+    setState(discovered.errors.length === 0 ? 'complete' : 'partial');
   }
 
   const policy = report === null ? null : parseCaaPolicy(report.records);
-  function clear() {
+  function invalidateInspection() {
     activeRun.current?.cancel();
     activeRun.current = null;
-    setDomain('');
     setError('');
     setReport(null);
     setState('idle');
+  }
+
+  function clear() {
+    invalidateInspection();
+    setDomain('');
   }
 
   return (
@@ -99,7 +140,10 @@ export function CaaPage() {
           <input
             id="caa-domain"
             value={domain}
-            onChange={(event) => setDomain(event.currentTarget.value)}
+            onChange={(event) => {
+              invalidateInspection();
+              setDomain(event.currentTarget.value);
+            }}
             placeholder="www.example.com"
             maxLength={2048}
             spellCheck={false}
@@ -110,7 +154,10 @@ export function CaaPage() {
           <select
             id="caa-resolver"
             value={resolverId}
-            onChange={(event) => setResolverId(event.currentTarget.value as ResolverId)}
+            onChange={(event) => {
+              invalidateInspection();
+              setResolverId(event.currentTarget.value as ResolverId);
+            }}
           >
             {RESOLVER_IDS.map((id) => (
               <option key={id} value={id}>
@@ -142,8 +189,14 @@ export function CaaPage() {
           </button>
         </div>
       </form>
-      <div className="run-status" aria-live="polite">
-        {state === 'cancelled' ? 'The CAA walk was cancelled.' : null}
+      <div
+        className="run-status"
+        role="status"
+        aria-label="CAA run status"
+        aria-live="polite"
+        aria-atomic="true"
+      >
+        {runStatusMessage(state)}
       </div>
       {report === null || policy === null ? null : (
         <section className="results" aria-labelledby="caa-result-title">
@@ -213,7 +266,12 @@ export function CaaPage() {
                   : 'No CAA RRset was observed on the bounded parent walk. This permits CA processing to continue; it does not guarantee issuance.'}
               </p>
             ) : (
-              <div className="table-scroll">
+              <div
+                className="table-scroll"
+                tabIndex={0}
+                role="region"
+                aria-label="CAA policy records"
+              >
                 <table>
                   <thead>
                     <tr>

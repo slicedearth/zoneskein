@@ -177,7 +177,12 @@ export function ZoneLintPage() {
             {diagnostics.length === 0 ? (
               <p className="empty-note">No rule fired for this supported syntax subset.</p>
             ) : (
-              <div className="table-scroll">
+              <div
+                className="table-scroll"
+                tabIndex={0}
+                role="region"
+                aria-label="Zone lint diagnostics"
+              >
                 <table>
                   <caption>Zone lint diagnostics</caption>
                   <thead>
@@ -226,7 +231,12 @@ export function ZoneLintPage() {
             {document.records.length === 0 ? (
               <p className="empty-note">No records could be parsed.</p>
             ) : (
-              <div className="table-scroll">
+              <div
+                className="table-scroll"
+                tabIndex={0}
+                role="region"
+                aria-label="Parsed zone records"
+              >
                 <table>
                   <caption>Parsed zone records</caption>
                   <thead>

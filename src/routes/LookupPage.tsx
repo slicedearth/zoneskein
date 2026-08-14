@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { CopyButton } from '../components/CopyButton';
 import { RecordTable } from '../components/RecordTable';
@@ -15,20 +15,51 @@ import {
   type DnsQuestion,
   type DnsRecordType,
   type DnsResponse,
+  type ResolverDefinition,
   type ResolverId,
 } from '../core/dns/types';
 import { DnsQueryRun } from '../core/doh/query-run';
 import { RESOLVERS } from '../core/doh/resolvers';
 import { WireDnsResolver } from '../core/doh/wire-resolver';
 
-const DEFAULT_TYPES = new Set<DnsRecordType>(['A', 'AAAA', 'MX', 'TXT']);
+const DEFAULT_RECORD_TYPES = [
+  'A',
+  'AAAA',
+  'MX',
+  'TXT',
+] as const satisfies readonly DnsRecordType[];
+const FORWARD_RECORD_TYPES = DNS_RECORD_TYPES.filter((type) => type !== 'PTR');
 const RESOLVER_IDS = Object.keys(RESOLVERS) as ResolverId[];
 
-interface QueryResult {
-  readonly error?: DnsQueryError;
-  readonly response?: DnsResponse;
+interface QueryResultBase {
+  readonly question: DnsQuestion;
   readonly resolverId: ResolverId;
-  readonly type: DnsRecordType;
+}
+
+interface QueryFailure extends QueryResultBase {
+  readonly error: DnsQueryError;
+  readonly outcome: 'error';
+}
+
+interface QuerySuccess extends QueryResultBase {
+  readonly outcome: 'response';
+  readonly response: DnsResponse;
+}
+
+type QueryResult = QueryFailure | QuerySuccess;
+
+interface LookupRunDescriptor {
+  readonly comparison: boolean;
+  readonly recordTypes: readonly DnsRecordType[];
+  readonly resolverIds: readonly ResolverId[];
+  readonly startedAt: string;
+  readonly submittedInput: string;
+}
+
+interface CompletedLookupRun {
+  readonly completedAt: string;
+  readonly descriptor: LookupRunDescriptor;
+  readonly results: readonly QueryResult[];
 }
 
 type RunState = 'idle' | 'loading' | 'success' | 'partial' | 'error' | 'cancelled';
@@ -54,172 +85,324 @@ function rawHex(response: DnsResponse): string {
     .join(' ');
 }
 
-function exportText(
-  results: readonly QueryResult[],
-  format: 'plain' | 'bind' | 'json' | 'markdown',
-) {
-  const responses = results.flatMap((result) =>
-    result.response === undefined ? [] : [result.response],
-  );
-  const records = responses.flatMap((response) => response.message.answers);
-  if (format === 'plain') return records.map(recordDataText).join('\n');
-  if (format === 'bind') return records.map(bindRecord).join('\n');
-  if (format === 'json') {
-    return JSON.stringify(
-      responses.map((response) => ({
-        edns: response.message.edns,
-        flags: response.message.flags,
-        messageBytes: response.message.messageBytes,
-        negativeCacheTtl: response.message.negativeCacheTtl,
-        question: response.question,
-        records: response.message.answers.map(recordJson),
-        resolver: response.resolver.label,
-        responseCode: response.message.responseCode,
-      })),
-      null,
-      2,
-    );
-  }
-  const rows = records.map(
-    (record) =>
-      `| ${record.owner} | ${String(record.ttl)} | ${record.type} | ${recordDataText(record).replaceAll('|', '\\|')} |`,
-  );
-  return [
-    '# ZoneSkein DNS lookup',
-    '',
-    '| Owner | TTL | Type | Data |',
-    '| --- | ---: | --- | --- |',
-    ...rows,
-    '',
-    '> Recursive-resolver observations captured at one point in time.',
-  ].join('\n');
+function resolverProvenance(resolver: ResolverDefinition) {
+  return {
+    endpoint: resolver.endpoint,
+    httpMethod: resolver.httpMethod,
+    id: resolver.id,
+    label: resolver.label,
+  };
 }
 
-function ResultPanel({ result }: { readonly result: QueryResult }) {
-  if (result.error !== undefined) {
+function markdownCell(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('\\', '\\\\')
+    .replaceAll('|', '\\|')
+    .replaceAll('\n', '<br>');
+}
+
+function answerRecords(results: readonly QueryResult[]) {
+  return results.flatMap((result) =>
+    result.outcome === 'response' ? result.response.message.answers : [],
+  );
+}
+
+function jsonExport(run: CompletedLookupRun): string {
+  return JSON.stringify(
+    {
+      observations: run.results.map((result) => {
+        const resolver = RESOLVERS[result.resolverId];
+        const context = {
+          question: {
+            name: result.question.name.absolute,
+            type: result.question.type,
+          },
+          resolver: resolverProvenance(resolver),
+        };
+        if (result.outcome === 'error') {
+          return {
+            ...context,
+            error: {
+              code: result.error.code,
+              message: result.error.message,
+              ...(result.error.retryAfterMs === undefined
+                ? {}
+                : { retryAfterMs: result.error.retryAfterMs }),
+            },
+            outcome: result.outcome,
+          };
+        }
+        const { message, cache, queryTimeMs, receivedAt } = result.response;
+        return {
+          ...context,
+          outcome: result.outcome,
+          response: {
+            additionalRecords: message.additionals.map(recordJson),
+            answerRecords: message.answers.map(recordJson),
+            authorityRecords: message.authorities.map(recordJson),
+            cache,
+            edns: message.edns,
+            flags: message.flags,
+            messageBytes: message.messageBytes,
+            negativeCacheTtl: message.negativeCacheTtl,
+            queryTimeMs,
+            receivedAt,
+            responseCode: message.responseCode,
+          },
+        };
+      }),
+      run: {
+        comparison: run.descriptor.comparison,
+        completedAt: run.completedAt,
+        recordTypes: run.descriptor.recordTypes,
+        resolvers: run.descriptor.resolverIds.map((id) => resolverProvenance(RESOLVERS[id])),
+        startedAt: run.descriptor.startedAt,
+        submittedInput: run.descriptor.submittedInput,
+      },
+      schemaVersion: 1,
+      tool: 'lookup',
+    },
+    null,
+    2,
+  );
+}
+
+function markdownExport(run: CompletedLookupRun): string {
+  const lines = [
+    `# ZoneSkein DNS lookup — ${run.descriptor.submittedInput}`,
+    '',
+    `- Started: ${run.descriptor.startedAt}`,
+    `- Completed: ${run.completedAt}`,
+    `- Record types: ${run.descriptor.recordTypes.join(', ')}`,
+    `- Resolvers: ${run.descriptor.resolverIds.map((id) => RESOLVERS[id].label).join(', ')}`,
+    '',
+  ];
+  for (const type of run.descriptor.recordTypes) {
+    lines.push(`## ${type}`, '');
+    for (const result of run.results.filter((candidate) => candidate.question.type === type)) {
+      const resolver = RESOLVERS[result.resolverId];
+      if (result.outcome === 'error') {
+        lines.push(
+          `### ${resolver.label} — ${result.error.code}`,
+          '',
+          `> ${result.error.message.replaceAll('\n', ' ')}`,
+          '',
+        );
+        continue;
+      }
+      const { message } = result.response;
+      const count = message.answers.length;
+      lines.push(
+        `### ${resolver.label} — ${message.responseCode}`,
+        '',
+        `${String(count)} ${count === 1 ? 'answer' : 'answers'} · ${result.response.queryTimeMs.toFixed(1)} ms · cache ${result.response.cache} · AD ${message.flags.authenticatedData ? 'set' : 'clear'}`,
+        '',
+      );
+      if (count === 0) {
+        lines.push('_No answer records returned._', '');
+        continue;
+      }
+      lines.push('| Owner | TTL | Type | Data |', '| --- | ---: | --- | --- |');
+      for (const record of message.answers) {
+        lines.push(
+          `| ${markdownCell(record.owner)} | ${String(record.ttl)} | ${markdownCell(record.type)} | ${markdownCell(recordDataText(record))} |`,
+        );
+      }
+      lines.push('');
+    }
+  }
+  lines.push('> Recursive-resolver observations captured at one point in time.');
+  return lines.join('\n');
+}
+
+function exportText(
+  run: CompletedLookupRun,
+  format: 'plain' | 'bind' | 'json' | 'markdown',
+): string {
+  const records = answerRecords(run.results);
+  if (format === 'plain') return records.map(recordDataText).join('\n');
+  if (format === 'bind') return records.map(bindRecord).join('\n');
+  if (format === 'json') return jsonExport(run);
+  return markdownExport(run);
+}
+
+function resultSummary(response: DnsResponse): string {
+  const count = response.message.answers.length;
+  return `${response.resolver.label}, ${response.message.responseCode}, ${String(count)} ${count === 1 ? 'answer' : 'answers'}, ${response.queryTimeMs.toFixed(1)} milliseconds, cache ${response.cache}, authenticated data ${response.message.flags.authenticatedData ? 'set' : 'clear'}`;
+}
+
+function ResultPanel({
+  collapsedByDefault,
+  result,
+}: {
+  readonly collapsedByDefault: boolean;
+  readonly result: QueryResult;
+}) {
+  const resolver = RESOLVERS[result.resolverId];
+  const [expanded, setExpanded] = useState(
+    () =>
+      result.outcome === 'response' &&
+      (!collapsedByDefault ||
+        result.response.message.responseCode !== 'NOERROR' ||
+        (result.response.message.edns?.extendedErrors.length ?? 0) > 0),
+  );
+  if (result.outcome === 'error') {
     return (
-      <article className="result-panel">
+      <article className="result-panel lookup-result">
         <div className="result-heading">
-          <h3>
-            {RESOLVERS[result.resolverId].label} · {result.type}
-          </h3>
+          <h4>{resolver.label}</h4>
           <StatusBadge tone="error">{result.error.code}</StatusBadge>
         </div>
         <p>{result.error.message}</p>
       </article>
     );
   }
-  const response = result.response;
-  if (response === undefined) return null;
+  const { response } = result;
   const { message } = response;
+  const answerCount = message.answers.length;
   return (
-    <article className="result-panel">
-      <div className="result-heading">
-        <h3>
-          {response.resolver.label} · {result.type}
-        </h3>
+    <details
+      className="result-panel lookup-result"
+      open={expanded}
+      onToggle={(event) => setExpanded(event.currentTarget.open)}
+    >
+      <summary className="result-summary" aria-label={resultSummary(response)}>
+        <strong>{response.resolver.label}</strong>
         <StatusBadge tone={message.responseCode === 'NOERROR' ? 'pass' : 'warning'}>
           {message.responseCode}
         </StatusBadge>
-      </div>
-      <dl className="metadata-grid">
-        <div>
-          <dt>Observed</dt>
-          <dd>{new Date(response.receivedAt).toLocaleString()}</dd>
-        </div>
-        <div>
-          <dt>Query time</dt>
-          <dd>{response.queryTimeMs.toFixed(1)} ms</dd>
-        </div>
-        <div>
-          <dt>Message size</dt>
-          <dd>{message.messageBytes} bytes</dd>
-        </div>
-        <div>
-          <dt>Cache</dt>
-          <dd>{response.cache}</dd>
-        </div>
-        <div>
-          <dt>DoH transport</dt>
-          <dd>RFC 8484 {response.resolver.httpMethod}</dd>
-        </div>
-        {message.negativeCacheTtl === undefined ? null : (
-          <div>
-            <dt>Negative cache TTL</dt>
-            <dd>{message.negativeCacheTtl} seconds</dd>
-          </div>
-        )}
-        {message.edns === undefined ? null : (
-          <div>
-            <dt>EDNS</dt>
-            <dd>
-              v{message.edns.version}, {message.edns.udpPayloadSize} byte UDP size
-            </dd>
-          </div>
-        )}
-      </dl>
-      <div className="flag-list" aria-label="DNS response flags">
-        {Object.entries({
-          AD: message.flags.authenticatedData,
-          CD: message.flags.checkingDisabled,
-          TC: message.flags.truncated,
-          RD: message.flags.recursionDesired,
-          RA: message.flags.recursionAvailable,
-        }).map(([flag, enabled]) => (
-          <span className={enabled ? 'flag-on' : 'flag-off'} key={flag}>
-            {flag} {enabled ? 'set' : 'clear'}
-          </span>
-        ))}
-      </div>
-      {message.edns !== undefined && message.edns.extendedErrors.length > 0 ? (
-        <section className="conclusion-panel partial-panel" aria-label="Extended DNS errors">
-          <StatusBadge tone="warning">Resolver explanation</StatusBadge>
-          <ul className="diagnostic-list">
-            {message.edns.extendedErrors.map((error, index) => (
-              <li key={`${String(error.code)}-${String(index)}`}>
-                <span>
-                  <strong>
-                    EDE {error.code}: {error.name}
-                  </strong>
-                  {error.text === undefined ? '' : ` · ${error.text}`}
+        <span>
+          {answerCount} {answerCount === 1 ? 'answer' : 'answers'}
+        </span>
+        <span>{response.queryTimeMs.toFixed(1)} ms</span>
+        <span>cache {response.cache}</span>
+        <span>AD {message.flags.authenticatedData ? 'set' : 'clear'}</span>
+      </summary>
+      {expanded ? (
+        <>
+          {message.edns !== undefined && message.edns.extendedErrors.length > 0 ? (
+            <section
+              className="conclusion-panel partial-panel"
+              aria-label="Extended DNS errors"
+            >
+              <StatusBadge tone="warning">Resolver explanation</StatusBadge>
+              <ul className="diagnostic-list">
+                {message.edns.extendedErrors.map((error, index) => (
+                  <li key={`${String(error.code)}-${String(index)}`}>
+                    <span>
+                      <strong>
+                        EDE {error.code}: {error.name}
+                      </strong>
+                      {error.text === undefined ? '' : ` · ${error.text}`}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+          <RecordTable
+            compact
+            label={`${response.resolver.label} ${result.question.type} answer records`}
+            records={message.answers}
+          />
+          <details className="protocol-details">
+            <summary>Protocol details</summary>
+            <dl className="metadata-grid">
+              <div>
+                <dt>Observed</dt>
+                <dd>{new Date(response.receivedAt).toLocaleString()}</dd>
+              </div>
+              <div>
+                <dt>Query time</dt>
+                <dd>{response.queryTimeMs.toFixed(1)} ms</dd>
+              </div>
+              <div>
+                <dt>Message size</dt>
+                <dd>{message.messageBytes} bytes</dd>
+              </div>
+              <div>
+                <dt>Cache</dt>
+                <dd>{response.cache}</dd>
+              </div>
+              <div>
+                <dt>DoH transport</dt>
+                <dd>RFC 8484 {response.resolver.httpMethod}</dd>
+              </div>
+              {message.negativeCacheTtl === undefined ? null : (
+                <div>
+                  <dt>Negative cache TTL</dt>
+                  <dd>{message.negativeCacheTtl} seconds</dd>
+                </div>
+              )}
+              {message.edns === undefined ? null : (
+                <div>
+                  <dt>EDNS</dt>
+                  <dd>
+                    v{message.edns.version}, {message.edns.udpPayloadSize} byte UDP size
+                  </dd>
+                </div>
+              )}
+            </dl>
+            <div className="flag-list" aria-label="DNS response flags">
+              {Object.entries({
+                AD: message.flags.authenticatedData,
+                CD: message.flags.checkingDisabled,
+                TC: message.flags.truncated,
+                RD: message.flags.recursionDesired,
+                RA: message.flags.recursionAvailable,
+              }).map(([flag, enabled]) => (
+                <span className={enabled ? 'flag-on' : 'flag-off'} key={flag}>
+                  {flag} {enabled ? 'set' : 'clear'}
                 </span>
-              </li>
-            ))}
-          </ul>
-        </section>
+              ))}
+            </div>
+          </details>
+          {message.authorities.length > 0 ? (
+            <details>
+              <summary>Authority section ({message.authorities.length})</summary>
+              <RecordTable
+                compact
+                label={`${response.resolver.label} ${result.question.type} authority records`}
+                records={message.authorities}
+              />
+            </details>
+          ) : null}
+          {message.additionals.length > 0 ? (
+            <details>
+              <summary>Additional section ({message.additionals.length})</summary>
+              <RecordTable
+                compact
+                label={`${response.resolver.label} ${result.question.type} additional records`}
+                records={message.additionals}
+              />
+            </details>
+          ) : null}
+          <details>
+            <summary>Raw DNS wire message</summary>
+            <p className="detail-note">
+              Exact response bytes in hexadecimal. This is a recursive-resolver response, not an
+              authoritative observation.
+            </p>
+            <pre className="raw-output">{rawHex(response)}</pre>
+          </details>
+        </>
       ) : null}
-      <RecordTable records={message.answers} />
-      {message.authorities.length > 0 ? (
-        <details>
-          <summary>Authority section ({message.authorities.length})</summary>
-          <RecordTable records={message.authorities} />
-        </details>
-      ) : null}
-      {message.additionals.length > 0 ? (
-        <details>
-          <summary>Additional section ({message.additionals.length})</summary>
-          <RecordTable records={message.additionals} />
-        </details>
-      ) : null}
-      <details>
-        <summary>Raw DNS wire message</summary>
-        <p className="detail-note">
-          Exact response bytes in hexadecimal. This is a recursive-resolver response, not an
-          authoritative observation.
-        </p>
-        <pre className="raw-output">{rawHex(response)}</pre>
-      </details>
-    </article>
+    </details>
   );
 }
 
 export function LookupPage() {
   const [input, setInput] = useState('');
-  const [selectedTypes, setSelectedTypes] = useState(DEFAULT_TYPES);
+  const [selectedTypes, setSelectedTypes] = useState<Set<DnsRecordType>>(
+    () => new Set(DEFAULT_RECORD_TYPES),
+  );
   const [resolverId, setResolverId] = useState<ResolverId>('google');
   const [compare, setCompare] = useState(false);
   const [state, setState] = useState<RunState>('idle');
-  const [results, setResults] = useState<readonly QueryResult[]>([]);
+  const [completedRun, setCompletedRun] = useState<CompletedLookupRun | null>(null);
   const [localError, setLocalError] = useState('');
   const activeRun = useRef<DnsQueryRun | null>(null);
 
@@ -227,8 +410,40 @@ export function LookupPage() {
     () => DNS_RECORD_TYPES.filter((type) => selectedTypes.has(type)),
     [selectedTypes],
   );
+  const exports = useMemo(
+    () =>
+      completedRun === null
+        ? null
+        : {
+            bind: exportText(completedRun, 'bind'),
+            json: exportText(completedRun, 'json'),
+            markdown: exportText(completedRun, 'markdown'),
+            plain: exportText(completedRun, 'plain'),
+          },
+    [completedRun],
+  );
+  const resolverNote = compare
+    ? `Comparison includes Quad9. ${RESOLVERS.quad9.transportNote ?? ''}`.trim()
+    : RESOLVERS[resolverId].transportNote;
+
+  useEffect(
+    () => () => {
+      activeRun.current?.cancel();
+      activeRun.current = null;
+    },
+    [],
+  );
+
+  function invalidateRun() {
+    activeRun.current?.cancel();
+    activeRun.current = null;
+    setCompletedRun(null);
+    setLocalError('');
+    setState('idle');
+  }
 
   function toggleType(type: DnsRecordType) {
+    invalidateRun();
     setSelectedTypes((current) => {
       if (type === 'PTR') return current.has('PTR') ? new Set() : new Set(['PTR']);
       const next = current.has('PTR') ? new Set<DnsRecordType>() : new Set(current);
@@ -236,6 +451,16 @@ export function LookupPage() {
       else next.add(type);
       return next;
     });
+  }
+
+  function selectAllForwardTypes() {
+    invalidateRun();
+    setSelectedTypes(new Set(FORWARD_RECORD_TYPES));
+  }
+
+  function resetRecordTypes() {
+    invalidateRun();
+    setSelectedTypes(new Set(DEFAULT_RECORD_TYPES));
   }
 
   async function submit(event: React.SyntheticEvent<HTMLFormElement>) {
@@ -259,9 +484,16 @@ export function LookupPage() {
     activeRun.current?.cancel();
     const run = new DnsQueryRun();
     activeRun.current = run;
-    setResults([]);
+    setCompletedRun(null);
     setState('loading');
-    const targetResolvers = compare ? RESOLVER_IDS : [resolverId];
+    const targetResolvers = compare ? [...RESOLVER_IDS] : [resolverId];
+    const descriptor: LookupRunDescriptor = {
+      comparison: compare,
+      recordTypes: questions.map((question) => question.type),
+      resolverIds: [...targetResolvers],
+      startedAt: new Date().toISOString(),
+      submittedInput: input.trim(),
+    };
     const clients = Object.fromEntries(
       targetResolvers.map((targetResolver) => [
         targetResolver,
@@ -269,8 +501,8 @@ export function LookupPage() {
       ]),
     ) as Partial<Record<ResolverId, WireDnsResolver>>;
     const settled = await Promise.all(
-      targetResolvers.flatMap((targetResolver) =>
-        questions.map(async (question): Promise<QueryResult> => {
+      questions.flatMap((question) =>
+        targetResolvers.map(async (targetResolver): Promise<QueryResult> => {
           try {
             const client = clients[targetResolver];
             if (client === undefined) throw new Error('Resolver client was not created.');
@@ -278,17 +510,34 @@ export function LookupPage() {
               checkingDisabled: false,
               dnssecOk: true,
             });
-            return { resolverId: targetResolver, response, type: question.type };
+            return {
+              outcome: 'response',
+              question,
+              resolverId: targetResolver,
+              response,
+            };
           } catch (cause) {
-            return { error: asError(cause), resolverId: targetResolver, type: question.type };
+            return {
+              error: asError(cause),
+              outcome: 'error',
+              question,
+              resolverId: targetResolver,
+            };
           }
         }),
       ),
     );
     if (activeRun.current !== run) return;
-    setResults(settled);
-    const successes = settled.filter((result) => result.response !== undefined).length;
-    const cancelled = settled.every((result) => result.error?.code === 'aborted');
+    activeRun.current = null;
+    setCompletedRun({
+      completedAt: new Date().toISOString(),
+      descriptor,
+      results: settled,
+    });
+    const successes = settled.filter((result) => result.outcome === 'response').length;
+    const cancelled = settled.every(
+      (result) => result.outcome === 'error' && result.error.code === 'aborted',
+    );
     setState(
       cancelled
         ? 'cancelled'
@@ -304,13 +553,9 @@ export function LookupPage() {
     activeRun.current?.cancel();
   }
 
-  function clear() {
-    activeRun.current?.cancel();
-    activeRun.current = null;
+  function clearQueryAndResults() {
+    invalidateRun();
     setInput('');
-    setResults([]);
-    setLocalError('');
-    setState('idle');
   }
 
   return (
@@ -330,7 +575,10 @@ export function LookupPage() {
             id="lookup-name"
             name="name"
             value={input}
-            onChange={(event) => setInput(event.currentTarget.value)}
+            onChange={(event) => {
+              invalidateRun();
+              setInput(event.currentTarget.value);
+            }}
             placeholder={selectedTypes.has('PTR') ? '2001:db8::1' : 'example.com'}
             maxLength={2048}
             autoCapitalize="none"
@@ -343,7 +591,11 @@ export function LookupPage() {
           <select
             id="resolver"
             value={resolverId}
-            onChange={(event) => setResolverId(event.currentTarget.value as ResolverId)}
+            aria-describedby={resolverNote === undefined ? undefined : 'lookup-resolver-note'}
+            onChange={(event) => {
+              invalidateRun();
+              setResolverId(event.currentTarget.value as ResolverId);
+            }}
             disabled={compare}
           >
             {RESOLVER_IDS.map((id) => (
@@ -352,17 +604,35 @@ export function LookupPage() {
               </option>
             ))}
           </select>
+          {resolverNote === undefined ? null : (
+            <small id="lookup-resolver-note">{resolverNote}</small>
+          )}
         </div>
         <label className="check-control compare-control">
           <input
             type="checkbox"
             checked={compare}
-            onChange={(event) => setCompare(event.currentTarget.checked)}
+            onChange={(event) => {
+              invalidateRun();
+              setCompare(event.currentTarget.checked);
+            }}
           />
           Compare all allowlisted resolvers
         </label>
         <fieldset className="record-picker">
           <legend>Record types</legend>
+          <div className="record-picker-actions">
+            <button className="quiet-button" type="button" onClick={selectAllForwardTypes}>
+              Select all
+            </button>
+            <button className="quiet-button" type="button" onClick={resetRecordTypes}>
+              Reset to defaults
+            </button>
+          </div>
+          <p className="detail-note record-picker-note">
+            Select all includes all 17 forward record types. PTR remains a separate
+            reverse-address mode.
+          </p>
           <div>
             {DNS_RECORD_TYPES.map((type) => (
               <label className="check-control" key={type}>
@@ -390,47 +660,92 @@ export function LookupPage() {
               Cancel
             </button>
           ) : null}
-          <button className="quiet-button" type="button" onClick={clear}>
-            Clear
+          <button className="quiet-button" type="button" onClick={clearQueryAndResults}>
+            Clear query and results
           </button>
         </div>
       </form>
 
-      <div className="run-status" aria-live="polite">
+      <div
+        className="run-status"
+        role="status"
+        aria-label="DNS lookup status"
+        aria-live="polite"
+        aria-atomic="true"
+      >
         {state === 'loading' ? 'DNS questions are in progress.' : null}
-        {state === 'success' ? `Completed ${String(results.length)} DNS questions.` : null}
+        {state === 'success' && completedRun !== null
+          ? `Completed ${String(completedRun.results.length)} DNS questions.`
+          : null}
         {state === 'partial' ? 'The run completed with partial results.' : null}
         {state === 'error' ? 'No DNS question completed successfully.' : null}
         {state === 'cancelled' ? 'The run was cancelled.' : null}
       </div>
 
-      {results.length > 0 ? (
-        <section className="results" aria-labelledby="lookup-results-title">
+      {completedRun === null || exports === null ? null : (
+        <section className="results lookup-results" aria-labelledby="lookup-results-title">
           <div className="section-heading">
             <div>
               <p className="eyebrow">Observed evidence</p>
-              <h2 id="lookup-results-title">Lookup results</h2>
+              <h2 id="lookup-results-title">
+                Lookup results for {completedRun.descriptor.submittedInput}
+              </h2>
             </div>
             <div className="export-actions" aria-label="Copy results">
-              <CopyButton label="Copy plain" text={exportText(results, 'plain')} />
-              <CopyButton label="Copy BIND" text={exportText(results, 'bind')} />
-              <CopyButton label="Copy JSON" text={exportText(results, 'json')} />
-              <CopyButton label="Copy Markdown" text={exportText(results, 'markdown')} />
+              {completedRun.descriptor.resolverIds.length > 1 ? (
+                <>
+                  <button
+                    className="quiet-button"
+                    type="button"
+                    disabled
+                    title="Use JSON or Markdown to preserve resolver provenance and failures."
+                  >
+                    Plain answers unavailable
+                  </button>
+                  <button
+                    className="quiet-button"
+                    type="button"
+                    disabled
+                    title="Use JSON or Markdown to preserve resolver provenance and failures."
+                  >
+                    BIND answers unavailable
+                  </button>
+                </>
+              ) : (
+                <>
+                  <CopyButton label="Copy plain answers" text={exports.plain} />
+                  <CopyButton label="Copy BIND answers" text={exports.bind} />
+                </>
+              )}
+              <CopyButton label="Copy JSON evidence" text={exports.json} />
+              <CopyButton label="Copy Markdown evidence" text={exports.markdown} />
               <SnapshotButton
-                content={exportText(results, 'json')}
-                title={`DNS lookup — ${input.trim()}`}
+                content={exports.json}
+                title={`DNS lookup — ${completedRun.descriptor.submittedInput}`}
                 tool="lookup"
               />
             </div>
           </div>
-          {results.map((result, index) => (
-            <ResultPanel
-              result={result}
-              key={`${result.resolverId}-${result.type}-${String(index)}`}
-            />
+          {completedRun.descriptor.recordTypes.map((type) => (
+            <section
+              className="lookup-result-group"
+              aria-labelledby={`lookup-result-group-${type.toLowerCase()}`}
+              key={type}
+            >
+              <h3 id={`lookup-result-group-${type.toLowerCase()}`}>{type} records</h3>
+              {completedRun.results
+                .filter((result) => result.question.type === type)
+                .map((result) => (
+                  <ResultPanel
+                    collapsedByDefault={completedRun.descriptor.comparison}
+                    result={result}
+                    key={`${result.question.type}-${result.resolverId}`}
+                  />
+                ))}
+            </section>
           ))}
         </section>
-      ) : null}
+      )}
     </div>
   );
 }

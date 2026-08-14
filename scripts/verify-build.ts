@@ -15,6 +15,7 @@ const REQUIRED_ROOT_FILES = new Set([
   '_redirects',
   'favicon.svg',
   'index.html',
+  'logo.svg',
   'robots.txt',
 ]);
 const ALLOWED_ASSET_EXTENSIONS = new Set(['.css', '.js']);
@@ -98,6 +99,7 @@ await Promise.all([
   requireExactCopy('public/_headers', '_headers'),
   requireExactCopy('public/_redirects', '_redirects'),
   requireExactCopy('public/favicon.svg', 'favicon.svg'),
+  requireExactCopy('public/logo.svg', 'logo.svg'),
   requireExactCopy('public/robots.txt', 'robots.txt'),
 ]);
 

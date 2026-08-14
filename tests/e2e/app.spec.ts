@@ -102,6 +102,7 @@ test('lookup decodes a mocked DNS wire answer', async ({ page }) => {
 
   await expect(page.getByText('Completed 1 DNS questions.')).toBeVisible();
   await expect(page.getByText('192.0.2.25', { exact: true })).toBeVisible();
+  await page.getByText('Protocol details', { exact: true }).click();
   await expect(page.getByText('56 bytes')).toBeVisible();
 });
 

@@ -840,7 +840,12 @@ export function ChangeWorkspacePage({
         {workspace.analysis.changes.length === 0 ? null : (
           <article className="result-panel">
             <h3>Analysed changes</h3>
-            <div className="table-scroll">
+            <div
+              className="table-scroll"
+              tabIndex={0}
+              role="region"
+              aria-label="Analysed workspace changes"
+            >
               <table>
                 <caption>Changes retained in this workspace</caption>
                 <thead>

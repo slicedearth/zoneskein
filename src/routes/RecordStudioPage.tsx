@@ -825,7 +825,12 @@ export function RecordStudioPage({ onCreateWorkspace }: RecordStudioPageProps = 
                 {result.txtChunks.length} chunk{result.txtChunks.length === 1 ? '' : 's'}
               </StatusBadge>
             </div>
-            <div className="table-scroll">
+            <div
+              className="table-scroll"
+              tabIndex={0}
+              role="region"
+              aria-label="TXT character-string chunks"
+            >
               <table>
                 <caption>TXT chunks split at UTF-8 octet boundaries</caption>
                 <thead>
@@ -936,7 +941,12 @@ export function RecordStudioPage({ onCreateWorkspace }: RecordStudioPageProps = 
               Add a valid draft to build a local set. Canonically identical records are ignored.
             </p>
           ) : (
-            <div className="table-scroll">
+            <div
+              className="table-scroll"
+              tabIndex={0}
+              role="region"
+              aria-label="Temporary DNS record working set"
+            >
               <table>
                 <caption>DNS records in the temporary local working set</caption>
                 <thead>
@@ -989,7 +999,12 @@ export function RecordStudioPage({ onCreateWorkspace }: RecordStudioPageProps = 
                 No rule fired for the supported zone-snippet syntax and record set.
               </p>
             ) : (
-              <div className="table-scroll">
+              <div
+                className="table-scroll"
+                tabIndex={0}
+                role="region"
+                aria-label="Working-set lint diagnostics"
+              >
                 <table>
                   <caption>Local diagnostics for the DNS record working set</caption>
                   <thead>

@@ -1,8 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="ZoneSkein">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <rect width="64" height="64" rx="14" fill="#102126"/>
-  <path d="M13 20h15c8 0 8 12 16 12h7M13 44h15c8 0 8-12 16-12h7" fill="none" stroke="#79dfc2" stroke-width="5" stroke-linecap="round"/>
-  <circle cx="13" cy="20" r="4" fill="#f2b66d"/>
-  <circle cx="13" cy="44" r="4" fill="#f2b66d"/>
-  <circle cx="51" cy="32" r="4" fill="#79dfc2"/>
+  <path d="M12 47h11c14 0 14-30 28-30h1" fill="none" stroke="#f2b66d" stroke-width="5" stroke-linecap="round"/>
+  <path d="M12 17h11c14 0 14 30 28 30h1" fill="none" stroke="#102126" stroke-width="9" stroke-linecap="round"/>
+  <path d="M12 17h11c14 0 14 30 28 30h1" fill="none" stroke="#79dfc2" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="12" cy="17" r="4" fill="#79dfc2"/>
+  <circle cx="52" cy="47" r="4" fill="#79dfc2"/>
+  <circle cx="12" cy="47" r="4" fill="#f2b66d"/>
+  <circle cx="52" cy="17" r="4" fill="#f2b66d"/>
 </svg>
-

@@ -1,18 +1,23 @@
-import { bindRecord } from '../core/dns/presentation';
 import { parseRecordView } from '../core/dns/records';
 import type { DnsRecord } from '../core/dns/types';
 
 interface RecordTableProps {
+  readonly compact?: boolean;
+  readonly label?: string;
   readonly records: readonly DnsRecord[];
 }
 
-export function RecordTable({ records }: RecordTableProps) {
+export function RecordTable({
+  compact = false,
+  label = 'DNS resource records',
+  records,
+}: RecordTableProps) {
   if (records.length === 0) return <p className="empty-note">No records in this section.</p>;
 
   return (
-    <div className="table-scroll">
-      <table>
-        <caption className="visually-hidden">DNS resource records</caption>
+    <div aria-label={`${label} table`} className="table-scroll" role="region" tabIndex={0}>
+      <table className="record-table">
+        <caption className="visually-hidden">{label}</caption>
         <thead>
           <tr>
             <th scope="col">Owner</th>
@@ -32,16 +37,29 @@ export function RecordTable({ records }: RecordTableProps) {
                 <td>
                   <code className="record-value">{view.text}</code>
                   {view.fields.length > 1 ? (
-                    <dl className="record-fields">
-                      {view.fields.map((item) => (
-                        <div key={item.label}>
-                          <dt>{item.label}</dt>
-                          <dd>{item.value}</dd>
-                        </div>
-                      ))}
-                    </dl>
+                    compact ? (
+                      <details className="record-fields-details">
+                        <summary>Parsed fields</summary>
+                        <dl className="record-fields">
+                          {view.fields.map((item) => (
+                            <div key={item.label}>
+                              <dt>{item.label}</dt>
+                              <dd>{item.value}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      </details>
+                    ) : (
+                      <dl className="record-fields">
+                        {view.fields.map((item) => (
+                          <div key={item.label}>
+                            <dt>{item.label}</dt>
+                            <dd>{item.value}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                    )
                   ) : null}
-                  <span className="visually-hidden">{bindRecord(record)}</span>
                 </td>
               </tr>
             );

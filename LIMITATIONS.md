@@ -6,7 +6,7 @@ ZoneSkein queries recursive resolvers, not authoritative nameservers directly. R
 
 When supplied, Extended DNS Errors are resolver-provided explanations rather than independently verified conclusions. Negative-cache guidance uses the lesser of the authority SOA TTL and SOA MINIMUM field; a response without the required SOA is not cached as a negative answer by ZoneSkein. Resolution failures never inherit authority TTLs: repeated failures use a bounded in-memory backoff from five seconds to five minutes and a later successful response clears that failure history.
 
-The browser must permit cross-origin DNS-over-HTTPS requests. Enterprise policy, extensions, regional resolver behaviour, or temporary CORS changes may block a resolver independently of DNS itself.
+The browser must permit cross-origin DNS-over-HTTPS requests. Enterprise policy, extensions, regional resolver behaviour, or temporary CORS changes may block a resolver independently of DNS itself. Quad9 requires an end-to-end HTTP/2 or HTTP/3 path for DNS-over-HTTPS; a browser, VPN, inspection product, or network proxy that forces HTTP/1.1 can make Quad9 unavailable without establishing anything about the queried DNS name. ZoneSkein does not proxy or silently substitute that request.
 
 ## DNSSEC
 

@@ -44,12 +44,58 @@ const ZoneLintPage = lazy(() =>
 
 type Theme = 'light' | 'dark';
 
+interface NavigationLink {
+  path: string;
+  label: string;
+}
+
+const inspectLinks = [
+  { path: 'lookup/', label: 'Lookup' },
+  { path: 'dnssec/', label: 'DNSSEC' },
+  { path: 'spf/', label: 'SPF' },
+  { path: 'dmarc/', label: 'DMARC' },
+  { path: 'dkim/', label: 'DKIM' },
+  { path: 'caa/', label: 'CAA' },
+] as const satisfies readonly NavigationLink[];
+
+const prepareLinks = [
+  { path: 'zone-lint/', label: 'Zone lint' },
+  { path: 'studio/', label: 'Record Studio' },
+  { path: 'diff/', label: 'Change Lab' },
+  { path: 'workspace/', label: 'Change Workspace' },
+] as const satisfies readonly NavigationLink[];
+
+const directLinks = [
+  { path: 'snapshots/', label: 'Snapshots' },
+  { path: 'about/', label: 'About' },
+] as const satisfies readonly NavigationLink[];
+
+const routeTitles: Readonly<Record<string, string>> = {
+  '': 'ZoneSkein — Untangle DNS.',
+  about: 'About — ZoneSkein',
+  caa: 'CAA inspection — ZoneSkein',
+  diff: 'Change Lab — ZoneSkein',
+  dkim: 'DKIM inspection — ZoneSkein',
+  dmarc: 'DMARC analysis — ZoneSkein',
+  dnssec: 'DNSSEC inspection — ZoneSkein',
+  lookup: 'DNS record lookup — ZoneSkein',
+  snapshots: 'Local snapshots — ZoneSkein',
+  spf: 'SPF analysis — ZoneSkein',
+  studio: 'Record Studio — ZoneSkein',
+  workspace: 'Change Workspace — ZoneSkein',
+  'zone-lint': 'Zone lint — ZoneSkein',
+};
+
 function applicationPath(): string {
   return window.location.pathname.replace(/^\/+|\/+$/g, '');
 }
 
 function href(path: string): string {
   return `/${path}`;
+}
+
+function normalisePath(path: string): string {
+  return path.replace(/^\/+|\/+$/g, '');
 }
 
 const tools = [
@@ -83,6 +129,7 @@ export function App() {
       : 'dark',
   );
   const [route, setRoute] = useState(() => applicationPath());
+  const [openNavGroups, setOpenNavGroups] = useState({ inspect: false, prepare: false });
   const [workspace, setWorkspace] = useState<ChangeWorkspace | null>(null);
   const [changeLabInput, setChangeLabInput] = useState<ChangeLabInput | undefined>();
   const workspaceRef = useRef<ChangeWorkspace | null>(null);
@@ -92,8 +139,14 @@ export function App() {
   }, [theme]);
 
   useEffect(() => {
+    document.title = routeTitles[route] ?? 'Page not found — ZoneSkein';
+  }, [route]);
+
+  useEffect(() => {
     const updateRoute = () => {
-      setRoute(applicationPath());
+      const nextRoute = applicationPath();
+      setRoute(nextRoute);
+      setOpenNavGroups({ inspect: false, prepare: false });
       queueMicrotask(() => document.querySelector<HTMLElement>('#main-content')?.focus());
     };
     window.addEventListener('popstate', updateRoute);
@@ -102,7 +155,9 @@ export function App() {
 
   function openRoute(path: string): void {
     window.history.pushState(null, '', href(path));
-    setRoute(path.replace(/^\/+|\/+$/g, ''));
+    const nextRoute = normalisePath(path);
+    setRoute(nextRoute);
+    setOpenNavGroups({ inspect: false, prepare: false });
     queueMicrotask(() => document.querySelector<HTMLElement>('#main-content')?.focus());
   }
 
@@ -140,23 +195,75 @@ export function App() {
   return (
     <div className="app-shell">
       <header className="site-header">
-        <a className="brand" href={href('')} aria-label="ZoneSkein home">
-          <img src={href('favicon.svg')} alt="" width="34" height="34" />
+        <a
+          className="brand"
+          href={href('')}
+          aria-current={route === '' ? 'page' : undefined}
+          aria-label="ZoneSkein home"
+        >
+          <img src={href('logo.svg')} alt="" width="42" height="42" />
           <span>ZoneSkein</span>
         </a>
-        <nav aria-label="Primary navigation">
-          <a href={href('lookup/')}>Lookup</a>
-          <a href={href('dnssec/')}>DNSSEC</a>
-          <a href={href('spf/')}>SPF</a>
-          <a href={href('zone-lint/')}>Zone lint</a>
-          <a href={href('studio/')}>Record Studio</a>
-          <a href={href('diff/')}>Change Lab</a>
-          <a href={href('workspace/')}>Change Workspace</a>
-          <a href={href('dmarc/')}>DMARC</a>
-          <a href={href('dkim/')}>DKIM</a>
-          <a href={href('caa/')}>CAA</a>
-          <a href={href('snapshots/')}>Snapshots</a>
-          <a href={href('about/')}>About</a>
+        <nav className="primary-nav" aria-label="Primary navigation">
+          <details
+            className="nav-group"
+            onToggle={(event) => {
+              const open = event.currentTarget.open;
+              setOpenNavGroups((current) => ({
+                ...current,
+                inspect: open,
+                prepare: open ? false : current.prepare,
+              }));
+            }}
+            open={openNavGroups.inspect}
+          >
+            <summary>Inspect</summary>
+            <div className="nav-group-links">
+              {inspectLinks.map((link) => (
+                <a
+                  aria-current={normalisePath(link.path) === route ? 'page' : undefined}
+                  href={href(link.path)}
+                  key={link.path}
+                >
+                  {link.label}
+                </a>
+              ))}
+            </div>
+          </details>
+          <details
+            className="nav-group"
+            onToggle={(event) => {
+              const open = event.currentTarget.open;
+              setOpenNavGroups((current) => ({
+                ...current,
+                inspect: open ? false : current.inspect,
+                prepare: open,
+              }));
+            }}
+            open={openNavGroups.prepare}
+          >
+            <summary>Prepare</summary>
+            <div className="nav-group-links">
+              {prepareLinks.map((link) => (
+                <a
+                  aria-current={normalisePath(link.path) === route ? 'page' : undefined}
+                  href={href(link.path)}
+                  key={link.path}
+                >
+                  {link.label}
+                </a>
+              ))}
+            </div>
+          </details>
+          {directLinks.map((link) => (
+            <a
+              aria-current={normalisePath(link.path) === route ? 'page' : undefined}
+              href={href(link.path)}
+              key={link.path}
+            >
+              {link.label}
+            </a>
+          ))}
         </nav>
         <button
           className="quiet-button"

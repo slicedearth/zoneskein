@@ -297,7 +297,12 @@ export class WireDnsResolver implements DnsResolver {
       }
       throw new DnsQueryError(
         'transport-error',
-        'The DNS request failed before a valid resolver response was received.',
+        [
+          'The HTTPS transport failed before a valid resolver response was received.',
+          this.definition.transportNote,
+        ]
+          .filter((part): part is string => part !== undefined)
+          .join(' '),
       );
     } finally {
       composed.dispose();
