@@ -18,16 +18,13 @@ describe('DNS name validation', () => {
     });
   });
 
-  it('accepts a bare hostname accidentally wrapped in an HTTP URL', () => {
-    expect(validateDnsName('https://example.com/')).toMatchObject({
-      ok: true,
-      value: { ascii: 'example.com' },
-    });
-  });
-
   it.each([
+    ['https://example.com/', 'url-components'],
     ['https://user@example.com', 'url-components'],
     ['https://example.com/path', 'url-components'],
+    ['example.com?ignored', 'invalid-hostname'],
+    ['example.com#ignored', 'invalid-hostname'],
+    ['example%2ecom', 'invalid-hostname'],
     ['example.com:443', 'invalid-hostname'],
     ['*.example.com', 'wildcard'],
     ['a..example', 'invalid-label'],

@@ -258,6 +258,22 @@ describe('DMARC policy parser', () => {
     expect(malformedUri.diagnostics.map((item) => item.code)).toContain('report-uri-invalid');
   });
 
+  it('rejects reporting URIs whose mailto query fields could add recipients', () => {
+    const policy = parseDmarcRecord(
+      'v=DMARC1; p=none; rua=mailto:reports@example.com?bcc=copy@attacker.test; ruf=mailto:forensic@example.com#fragment',
+      'example.com',
+    );
+
+    expect(policy.valid).toBe(false);
+    expect(policy.destinations).toHaveLength(2);
+    expect(policy.destinations.every((destination) => destination.domain === undefined)).toBe(
+      true,
+    );
+    expect(
+      policy.diagnostics.filter((item) => item.code === 'report-uri-invalid'),
+    ).toHaveLength(2);
+  });
+
   it('selects organisational and public-suffix policies from tree-walk markers', () => {
     const organizational = parseDmarcRecord('v=DMARC1; p=reject; psd=n', 'example.com');
     const selection = selectDmarcPolicy('mail.example.com', [

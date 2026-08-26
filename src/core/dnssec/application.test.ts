@@ -406,6 +406,13 @@ describe('application RDATA canonicalisation', () => {
     const address = new Uint8Array([192, 0, 2, 1]);
     expect(canonicalRdata(record('A', '192.0.2.1', address))).toEqual(address);
     expect(canonicalRdata(record('TXT', [], new Uint8Array([3, 97, 98])))).toBeNull();
+    expect(canonicalRdata(record('TXT', [], new Uint8Array()))).toBeNull();
+    expect(
+      canonicalRdata(record('CAA', {}, new Uint8Array([0, 5, 105, 115, 115, 117]))),
+    ).toBeNull();
+    expect(
+      canonicalRdata(record('CAA', {}, new Uint8Array([0, 1, 59, 118, 97, 108, 117, 101]))),
+    ).toBeNull();
     expect(canonicalRdata(record('SVCB', {}, new Uint8Array([0, 1, 0xc0, 0])))).toBeNull();
     expect(canonicalRdata(record('TYPE1234', {}, new Uint8Array([1])))).toBeNull();
   });

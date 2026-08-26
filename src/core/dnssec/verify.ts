@@ -1,6 +1,7 @@
 import { toType } from '@dnsquery/dns-packet/types.js';
 
 import type { DnsRecord } from '../dns/types';
+import { parseCaaWireData } from '../dns/caa-wire';
 import { canVerifyRrsigAlgorithm, DNSSEC_RSA_MINIMUM_MODULUS_BITS } from './algorithm-policy';
 import { parseDnskey, parseRrsig } from './records';
 import type { DnskeyInfo, RrsigInfo, SignatureVerification } from './types';
@@ -219,13 +220,11 @@ function canonicalSvcbRdata(raw: Uint8Array): Uint8Array | null {
 function validOpaqueRdata(record: DnsRecord): boolean {
   if (record.type === 'A') return record.rawRdata.length === 4;
   if (record.type === 'AAAA') return record.rawRdata.length === 16;
-  if (record.type === 'TLSA') return record.rawRdata.length >= 3;
-  if (record.type === 'ZONEMD') return record.rawRdata.length >= 18;
-  if (record.type === 'CAA') {
-    const tagLength = record.rawRdata[1];
-    return tagLength !== undefined && tagLength > 0 && tagLength + 2 <= record.rawRdata.length;
-  }
+  if (record.type === 'TLSA') return record.rawRdata.length >= 4;
+  if (record.type === 'ZONEMD') return record.rawRdata.length >= 7;
+  if (record.type === 'CAA') return parseCaaWireData(record.rawRdata) !== null;
   if (record.type === 'TXT') {
+    if (record.rawRdata.length === 0) return false;
     let offset = 0;
     while (offset < record.rawRdata.length) {
       const length = record.rawRdata[offset];
@@ -239,7 +238,14 @@ function validOpaqueRdata(record: DnsRecord): boolean {
 
 export function canonicalRdata(record: DnsRecord): Uint8Array | null {
   const bound = boundCanonicalRdata(record);
-  if (bound !== undefined) return bound;
+  if (bound !== undefined) {
+    if (
+      ['A', 'AAAA', 'CAA', 'TLSA', 'TXT', 'ZONEMD'].includes(record.type) &&
+      (!validOpaqueRdata(record) || compareBytes(bound, record.rawRdata) !== 0)
+    )
+      return null;
+    return bound;
+  }
   if (
     record.type === 'DNSKEY' ||
     record.type === 'DS' ||

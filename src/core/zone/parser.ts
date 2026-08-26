@@ -452,7 +452,7 @@ export function parseZoneSnippet(source: string, options: ZoneParseOptions = {})
     if (budget.hasExceeded()) break;
     const first = parts[0];
     if (first === undefined) continue;
-    if (first.value.startsWith('$')) {
+    if (!first.quoted && first.raw.startsWith('$')) {
       const directive = first.value.toUpperCase();
       const argument = parts[1]?.value;
       if (directive === '$ORIGIN' && argument !== undefined) {

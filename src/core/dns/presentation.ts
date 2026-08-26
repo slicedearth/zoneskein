@@ -55,7 +55,12 @@ function quotedOctets(bytes: Uint8Array): string {
 function escapedLabelOctets(bytes: Uint8Array): string {
   return [...bytes]
     .map((byte) =>
-      byte >= 0x20 && byte <= 0x7e && byte !== 0x22 && byte !== 0x2e && byte !== 0x5c
+      (byte >= 0x30 && byte <= 0x39) ||
+      (byte >= 0x41 && byte <= 0x5a) ||
+      (byte >= 0x61 && byte <= 0x7a) ||
+      byte === 0x2a ||
+      byte === 0x2d ||
+      byte === 0x5f
         ? String.fromCharCode(byte)
         : `\\${String(byte).padStart(3, '0')}`,
     )

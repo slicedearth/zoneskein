@@ -35,8 +35,8 @@ function rawResponse(
       ? []
       : [
           ...answer.owner,
-          0,
-          answer.type,
+          answer.type >>> 8,
+          answer.type & 0xff,
           0,
           1,
           0,
@@ -287,5 +287,59 @@ describe('DNS wire hardening', () => {
     expect(() => decodeDnsMessage(concat(rawResponse(name('example.com')), [0]))).toThrow(
       /trailing bytes/iu,
     );
+  });
+
+  it.each([
+    ['A', 1, [192, 0, 2]],
+    ['A', 1, [192, 0, 2, 1, 99]],
+    ['AAAA', 28, new Array(15).fill(0)],
+    ['AAAA', 28, new Array(17).fill(0)],
+  ])('rejects %s RDATA that does not have its exact wire length', (_type, type, data) => {
+    const bytes = rawResponse(name('example.com'), {
+      data,
+      owner: [0xc0, 0x0c],
+      type,
+    });
+
+    expect(() => decodeDnsMessage(bytes)).toThrow(/RDATA/iu);
+  });
+
+  it('rebuilds CAA policy fields from bounded wire octets', () => {
+    const bytes = rawResponse(name('example.com'), {
+      data: [0x80, 5, ...ascii('issue'), ...ascii('ca.example')],
+      owner: [0xc0, 0x0c],
+      type: 257,
+    });
+
+    expect(decodeDnsMessage(bytes).answers[0]?.data).toEqual({
+      flags: 128,
+      issuerCritical: true,
+      tag: 'issue',
+      value: 'ca.example',
+    });
+  });
+
+  it('rejects a CAA tag length that crosses the declared RDATA boundary', () => {
+    const bytes = rawResponse(name('example.com'), {
+      data: [0, 8, ...ascii('issue')],
+      owner: [0xc0, 0x0c],
+      type: 257,
+    });
+
+    expect(() => decodeDnsMessage(bytes)).toThrow(/CAA RDATA/iu);
+  });
+
+  it('keeps escaped and non-ASCII CAA value octets distinguishable', () => {
+    const caa = (value: readonly number[]) =>
+      decodeDnsMessage(
+        rawResponse(name('example.com'), {
+          data: [0, 5, ...ascii('issue'), ...value],
+          owner: [0xc0, 0x0c],
+          type: 257,
+        }),
+      ).answers[0]?.data as { readonly value: string };
+
+    expect(caa(ascii('\\128')).value).toBe('\\092128');
+    expect(caa([128]).value).toBe('\\128');
   });
 });

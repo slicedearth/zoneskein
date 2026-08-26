@@ -53,6 +53,14 @@ export function dmarcReportDestinationHost(uri: string): string | null {
 
   let host: string;
   if (parsed.protocol === 'mailto:') {
+    if (
+      parsed.search !== '' ||
+      parsed.hash !== '' ||
+      parsed.username !== '' ||
+      parsed.password !== '' ||
+      parsed.host !== ''
+    )
+      return null;
     let address: string;
     try {
       address = decodeURIComponent(parsed.pathname);
@@ -60,7 +68,13 @@ export function dmarcReportDestinationHost(uri: string): string | null {
       return null;
     }
     const at = address.lastIndexOf('@');
-    if (at < 1 || at === address.length - 1 || address.includes(',')) return null;
+    if (
+      at < 1 ||
+      at === address.length - 1 ||
+      at !== address.indexOf('@') ||
+      address.includes(',')
+    )
+      return null;
     host = address.slice(at + 1);
   } else {
     host = parsed.hostname;

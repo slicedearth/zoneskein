@@ -1,6 +1,7 @@
 import { toString as dnsTypeName, toType } from '@dnsquery/dns-packet/types.js';
 
 import type { DnsRecord, DnsResponse, DnsSection } from '../dns/types';
+import { parseCaaWireData } from '../dns/caa-wire';
 
 interface WireName {
   readonly canonical: Uint8Array;
@@ -368,10 +369,10 @@ function canonicalApplicationRdata(
     record.typeCode === 48 ||
     record.typeCode === 50 ||
     record.typeCode === 52 ||
-    record.typeCode === 63 ||
-    record.typeCode === 257
+    record.typeCode === 63
   )
     return raw;
+  if (record.typeCode === 257) return parseCaaWireData(raw) === null ? null : raw;
   if ([2, 5, 12, 39].includes(record.typeCode))
     return canonicalNameRdata(message, record.rdataOffset, record.rdataEnd, work);
   if (record.typeCode === 15) {
@@ -518,9 +519,13 @@ function cloneBoundRecord(
           typeCode: wire.typeCode,
         };
   }
+  const boundedRaw = rawSlice(response.message.raw, wire);
+  const boundedCaa = wire.typeCode === 257 ? parseCaaWireData(boundedRaw) : undefined;
+  if (boundedCaa === null) return null;
   const clone = {
     ...source,
     class: 'IN',
+    ...(boundedCaa === undefined ? {} : { data: boundedCaa }),
     owner: wire.owner.safeText,
     section: wire.section,
     ttl: wire.ttl,

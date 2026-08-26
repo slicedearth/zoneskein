@@ -155,4 +155,26 @@ describe('DMARC external report authorisation', () => {
       ),
     ).toBeNull();
   });
+
+  it('rejects mailto query fields, fragments, and encoded recipient ambiguity', () => {
+    for (const uri of [
+      'mailto:reports@example.net?bcc=leak@attacker.test',
+      'mailto:reports@example.net#fragment',
+      'mailto:reports@example.net%3Fbcc%3Dleak%40attacker.test',
+      'mailto:reports@example.net%2Ccopy@attacker.test',
+    ]) {
+      expect(dmarcReportDestinationHost(uri)).toBeNull();
+      expect(evaluateDmarcReportAuthorization(uri, ['v=DMARC1']).status).toBe('unauthorized');
+    }
+  });
+
+  it('fails closed when a same-host override contains mailto query fields', () => {
+    const result = evaluateDmarcReportAuthorization('mailto:old@reports.example.net', [
+      'v=DMARC1; rua=mailto:new@reports.example.net?bcc=copy@reports.example.net',
+    ]);
+
+    expect(result.authorized).toBe(false);
+    expect(result.status).toBe('unauthorized');
+    expect(result.selectedUris).toEqual([]);
+  });
 });

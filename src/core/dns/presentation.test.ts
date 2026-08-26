@@ -103,6 +103,19 @@ describe('DNS master-file presentation', () => {
     expect(parseZoneSnippet(output).records[0]?.owner).toBe('a\\046b.example.');
   });
 
+  it('decimal-escapes every active master-file owner metacharacter', () => {
+    const label = new TextEncoder().encode('$ORIGIN evil;(@)');
+    const output = bindRecord({
+      ...record('A', '192.0.2.1', Uint8Array.from([192, 0, 2, 1])),
+      canonicalOwnerWire: Uint8Array.from([label.length, ...label, 0]),
+    });
+
+    expect(output).toBe('\\036ORIGIN\\032evil\\059\\040\\064\\041. 300 IN A 192.0.2.1');
+    const parsed = parseZoneSnippet(output);
+    expect(parsed.records).toHaveLength(1);
+    expect(parsed.diagnostics).toEqual([]);
+  });
+
   it('uses RFC 3597 generic RDATA for unsupported or malformed decoded values', () => {
     const unsupported = bindRecord(
       record('HTTPS', { unsafe: '\n; injected' }, Uint8Array.from([0, 1, 0])),

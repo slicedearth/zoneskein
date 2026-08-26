@@ -27,30 +27,10 @@ function error(code: DnsNameErrorCode, message: string): Result<never, DnsNameEr
 
 function extractAccidentalUrl(value: string): Result<string, DnsNameError> {
   if (!value.includes('://')) return success(value);
-
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    return error('invalid-hostname', 'The value looks like a URL but could not be parsed.');
-  }
-
-  if (
-    (url.protocol !== 'http:' && url.protocol !== 'https:') ||
-    url.username !== '' ||
-    url.password !== '' ||
-    url.port !== '' ||
-    (url.pathname !== '' && url.pathname !== '/') ||
-    url.search !== '' ||
-    url.hash !== ''
-  ) {
-    return error(
-      'url-components',
-      'Enter a DNS name only. URLs with credentials, ports, paths, queries, or fragments are not accepted.',
-    );
-  }
-
-  return success(url.hostname);
+  return error(
+    'url-components',
+    'Enter a DNS name only. Remove the URL scheme and any credentials, port, path, query, or fragment.',
+  );
 }
 
 export function validateDnsName(input: string): Result<ValidatedDnsName, DnsNameError> {
@@ -80,7 +60,7 @@ export function validateDnsName(input: string): Result<ValidatedDnsName, DnsName
       unicode: false,
     });
   }
-  if (source.length === 0 || /[\s/@\\:[\]]/u.test(source)) {
+  if (source.length === 0 || /[\s%#?/@\\:[\]]/u.test(source)) {
     return error(
       'invalid-hostname',
       'Enter a hostname without a scheme, path, port, or address syntax.',
@@ -93,6 +73,16 @@ export function validateDnsName(input: string): Result<ValidatedDnsName, DnsName
   let ascii: string;
   try {
     const parsed = new URL(`https://${source}/`);
+    if (
+      parsed.username !== '' ||
+      parsed.password !== '' ||
+      parsed.port !== '' ||
+      parsed.pathname !== '/' ||
+      parsed.search !== '' ||
+      parsed.hash !== ''
+    ) {
+      return error('invalid-hostname', 'Enter a DNS name without URL components.');
+    }
     ascii = parsed.hostname.toLowerCase();
   } catch {
     return error('invalid-hostname', 'The hostname could not be converted to IDNA ASCII.');

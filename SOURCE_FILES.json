@@ -88,6 +88,7 @@
   "src/core/dmarc/types.ts",
   "src/core/dns/answer-chain.test.ts",
   "src/core/dns/answer-chain.ts",
+  "src/core/dns/caa-wire.ts",
   "src/core/dns/fixtures.test.ts",
   "src/core/dns/ip.test.ts",
   "src/core/dns/ip.ts",

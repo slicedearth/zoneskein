@@ -4,6 +4,16 @@ import { lintZoneSnippet } from './lint';
 import { parseZoneSnippet, ZONE_ANALYSIS_LIMITS } from './parser';
 
 describe('zone-snippet parser', () => {
+  it('does not reinterpret an escaped directive name used as an owner', () => {
+    const document = parseZoneSnippet(
+      '\\036ORIGIN\\032evil\\059\\040\\064\\041. 300 IN A 192.0.2.1',
+    );
+
+    expect(document.diagnostics).toEqual([]);
+    expect(document.records).toHaveLength(1);
+    expect(document.records[0]?.owner).toBe('\\036origin\\032evil\\059\\040\\064\\041.');
+  });
+
   it('handles comments, directives, multiline records, relative names, and owner inheritance', () => {
     const document = parseZoneSnippet(`
 $ORIGIN example.com.

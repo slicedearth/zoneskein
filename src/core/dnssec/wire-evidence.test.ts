@@ -6,7 +6,7 @@ import { resolverById } from '../doh/resolvers';
 import { validateApplicationRrset } from './application';
 import { parseDnskey } from './records';
 import type { DnskeyInfo } from './types';
-import { canonicalName } from './verify';
+import { canonicalName, canonicalRdata } from './verify';
 import { boundDenialRecords, boundRrset, wireQuestionMatches } from './wire-evidence';
 
 const NOW = 1_800_000_000;
@@ -207,6 +207,37 @@ async function mxWireResponse(
 }
 
 describe('lossless DNSSEC wire evidence binding', () => {
+  it('does not let a bound CAA record bypass structural validation', () => {
+    const question = wireName('mail', 'example');
+    const caa = new Uint8Array([0, 5, ...new TextEncoder().encode('issueca.example')]);
+    const decoded = response(
+      dnsResponseWire(question, 257, [resourceRecord(pointer(12), 257, caa)]),
+      'CAA',
+    );
+    const fixture: DnsResponse = {
+      ...decoded,
+      message: {
+        ...decoded.message,
+        answers: decoded.message.answers.map((record) => ({
+          ...record,
+          data: { flags: 0, issuerCritical: false, tag: 'issue', value: 'attacker.test' },
+        })),
+      },
+    };
+    const bound = boundRrset(fixture, 'answer', 'mail.example.', 'CAA')?.[0];
+    if (bound === undefined) throw new Error('CAA fixture was not bound.');
+
+    expect(canonicalRdata(bound)).toEqual(caa);
+    expect(bound.data).toEqual({
+      flags: 0,
+      issuerCritical: false,
+      tag: 'issue',
+      value: 'ca.example',
+    });
+    bound.rawRdata[1] = 15;
+    expect(canonicalRdata(bound)).toBeNull();
+  });
+
   it('verifies independently signed mixed-case MX RDATA containing compression', async () => {
     const signer = await testSigner();
     const fixture = await mxWireResponse(signer);
@@ -288,12 +319,12 @@ describe('lossless DNSSEC wire evidence binding', () => {
     const question = wireName('mail', 'example');
     const exampleLabelOffset = 12 + 1 + 4;
     const srvRdata = join(uint16(1), uint16(2), uint16(443), pointer(exampleLabelOffset));
-    const fixture = response(
-      dnsResponseWire(question, 33, [resourceRecord(pointer(12), 33, srvRdata)]),
-      'SRV',
-    );
-
-    expect(boundRrset(fixture, 'answer', 'mail.example.', 'SRV')).toBeNull();
+    expect(() =>
+      response(
+        dnsResponseWire(question, 33, [resourceRecord(pointer(12), 33, srvRdata)]),
+        'SRV',
+      ),
+    ).toThrow(/prohibited compression/iu);
   });
 
   it('binds the zero identifier and response flags to the original DNS header', () => {
