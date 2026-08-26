@@ -33,7 +33,7 @@ jobs:
           test "$(git rev-list -n 1 "refs/tags/$RELEASE_TAG")" = "$RELEASE_REVISION"
           git fetch --no-tags origin main:refs/remotes/origin/main
           git merge-base --is-ancestor "$RELEASE_REVISION" refs/remotes/origin/main
-      - uses: actions/setup-node@e51e5fe84fc33b4c73ebe40526b2694712b5b858 # post-v7.0.0 security fix
+      - uses: actions/setup-node@94196ee1d15439c1b6651cd87ef14e88ec435966 # post-v7.0.0 security fix
         with:
           cache: npm
           node-version: 24.19.0
