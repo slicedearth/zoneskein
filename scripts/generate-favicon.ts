@@ -9,11 +9,13 @@ const sourcePath = resolve(root, 'public/logo.svg');
 const faviconPath = resolve(root, 'public/favicon.ico');
 const appleTouchIconPath = resolve(root, 'public/apple-touch-icon.png');
 const socialCardPath = resolve(root, 'public/social-card.jpg');
+const socialCardSha256 = '3ec4db71df64596b0ae980440a45c5864f8689ca25b56ba82f9032d4f2b31488';
 const displayFontPath = resolve(
   root,
   'node_modules/@fontsource-variable/bricolage-grotesque/files/bricolage-grotesque-latin-wght-normal.woff2',
 );
 const sizes = [16, 32, 48, 64, 128, 256] as const;
+const checking = process.argv.includes('--check');
 
 function encodeIco(images: readonly Buffer[]): Buffer {
   const directory = Buffer.alloc(6 + images.length * 16);
@@ -40,7 +42,7 @@ function encodeIco(images: readonly Buffer[]): Buffer {
 }
 
 async function writeOrCheck(path: string, value: Buffer): Promise<void> {
-  if (process.argv.includes('--check')) {
+  if (checking) {
     const committed = await readFile(path);
     if (!committed.equals(value)) {
       throw new Error(`${path.slice(root.length + 1)} is not current.`);
@@ -53,6 +55,7 @@ async function writeOrCheck(path: string, value: Buffer): Promise<void> {
 const [svg, displayFont] = await Promise.all([readFile(sourcePath), readFile(displayFontPath)]);
 const sourceUrl = `data:image/svg+xml;base64,${svg.toString('base64')}`;
 const displayFontUrl = `data:font/woff2;base64,${displayFont.toString('base64')}`;
+
 const browser = await chromium.launch({ headless: true });
 const images: Buffer[] = [];
 let appleTouchIcon: Buffer;
@@ -147,17 +150,28 @@ const ico = encodeIco(images);
 await Promise.all([
   writeOrCheck(faviconPath, ico),
   writeOrCheck(appleTouchIconPath, appleTouchIcon),
-  writeOrCheck(socialCardPath, socialCard),
 ]);
 
-const action = process.argv.includes('--check') ? 'Verified' : 'Generated';
+let reportedSocialCard = socialCard;
+if (checking) {
+  reportedSocialCard = await readFile(socialCardPath);
+  const digest = createHash('sha256').update(reportedSocialCard).digest('hex');
+  if (digest !== socialCardSha256)
+    throw new Error('public/social-card.jpg does not match its reviewed canonical asset.');
+} else {
+  await writeFile(socialCardPath, socialCard);
+}
+
+const action = checking ? 'Verified' : 'Generated';
 for (const [name, asset] of [
   ['public/favicon.ico', ico],
   ['public/apple-touch-icon.png', appleTouchIcon],
-  ['public/social-card.jpg', socialCard],
 ] as const) {
   const digest = createHash('sha256').update(asset).digest('hex');
   process.stdout.write(
     `${action} ${name} (${String(asset.length)} octets, sha256-${digest}).\n`,
   );
 }
+process.stdout.write(
+  `${action} public/social-card.jpg (${String(reportedSocialCard.length)} octets, sha256-${createHash('sha256').update(reportedSocialCard).digest('hex')}).\n`,
+);
