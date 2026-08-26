@@ -454,6 +454,14 @@ function SenderPanel({
   const { evaluation, resolverId } = report;
   const markdown = senderMarkdown(evaluation, resolverId);
   const dmarcEvidence = evidenceFromSpf(evaluation, resolverId);
+  const dmarcDisclosure =
+    dmarcEvidence?.spf === undefined
+      ? ''
+      : dmarcEvidence.spf.result !== 'pass'
+        ? ' The separate DMARC hand-off contains only the non-pass SPF result, capture time, and resolver identifier; it omits the unauthenticated policy and HELO domains, mailbox local part, client IP, receiver, policy text, and trace.'
+        : dmarcEvidence.spf.identitySource === 'helo'
+          ? ' The separate DMARC hand-off contains the SPF pass, its authenticated HELO-derived identity domain, identity source, capture time, and resolver identifier. A null reverse path makes HELO the protocol-relevant SPF identity; the hand-off still excludes the mailbox local part, client IP, receiver, policy text, and trace.'
+          : ' The separate DMARC hand-off contains the SPF pass, its authenticated MAIL FROM domain, identity source, capture time, and resolver identifier; it excludes the mailbox local part, client IP, HELO input, receiver, policy text, and trace.';
   const json = JSON.stringify(
     {
       ...evaluation,
@@ -623,9 +631,7 @@ function SenderPanel({
         that the SPF policy itself requires, and it does not save this evaluation automatically.
         Copying either export places the supplied mailbox, client IP, and derived evidence on
         your clipboard.
-        {dmarcEvidence === null
-          ? ''
-          : ' The separate DMARC hand-off contains only the SPF result, authenticated MAIL FROM domain, capture time, and resolver identifier; it excludes the mailbox local part, client IP, HELO input, receiver, policy text, and trace.'}
+        {dmarcDisclosure}
       </p>
     </section>
   );

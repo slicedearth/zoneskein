@@ -53,6 +53,101 @@ describe('DMARC identifier alignment', () => {
     );
   });
 
+  it('keeps reconstructed unbound DKIM evidence conditional until explicitly acknowledged', () => {
+    const provenance = {
+      capturedAt: '2026-08-26T00:00:00.000Z',
+      correlation: 'unbound' as const,
+      reconstructed: true,
+      resolverId: 'google',
+      source: 'dkim-message' as const,
+    };
+    const qualified = evaluate({
+      dkimDomains: ['mail.example.com'],
+      dkimEvidence: [{ domain: 'mail.example.com', provenance }],
+    });
+    const acknowledged = evaluate({
+      dkimDomains: ['mail.example.com'],
+      dkimEvidence: [{ domain: 'mail.example.com', provenance }],
+      evidenceAcknowledged: true,
+    });
+
+    expect(qualified.result).toBe('indeterminate');
+    expect(qualified.reason).toMatch(/explicitly acknowledged/iu);
+    expect(qualified.evidence[0]).toMatchObject({
+      acknowledged: false,
+      provenance,
+      status: 'aligned',
+    });
+    expect(qualified.evidence[0]?.qualification).toMatch(/line endings were reconstructed/iu);
+    expect(acknowledged.result).toBe('pass');
+    expect(acknowledged.reason).toMatch(/conditionally passes/iu);
+    expect(acknowledged.evidence[0]?.acknowledged).toBe(true);
+  });
+
+  it('retains HELO-derived SPF provenance in a conditional alignment decision', () => {
+    const result = evaluate({
+      spf: {
+        domain: 'mail.example.com',
+        provenance: {
+          capturedAt: '2026-08-26T00:00:00.000Z',
+          correlation: 'unbound',
+          identitySource: 'helo',
+          resolverId: 'cloudflare',
+          source: 'spf-sender',
+        },
+        result: 'pass',
+      },
+    });
+
+    expect(result.result).toBe('indeterminate');
+    expect(result.evidence.at(-1)).toMatchObject({
+      provenance: { identitySource: 'helo', source: 'spf-sender' },
+      status: 'aligned',
+    });
+    expect(result.evidence.at(-1)?.qualification).toMatch(/HELO-derived/iu);
+  });
+
+  it('rejects provenance attributed to the wrong authentication method', () => {
+    const result = evaluate({
+      dkimDomains: ['mail.example.com'],
+      dkimEvidence: [
+        {
+          domain: 'mail.example.com',
+          provenance: {
+            capturedAt: '2026-08-26T00:00:00.000Z',
+            correlation: 'unbound',
+            resolverId: 'google',
+            source: 'spf-sender',
+          },
+        },
+      ],
+    });
+
+    expect(result.result).toBe('permerror');
+    expect(result.reason).toMatch(/provenance is malformed/iu);
+  });
+
+  it('keeps future-dated imported evidence visibly qualified', () => {
+    const result = evaluate({
+      dkimDomains: ['mail.example.com'],
+      dkimEvidence: [
+        {
+          domain: 'mail.example.com',
+          provenance: {
+            capturedAt: '2099-01-01T00:00:00.000Z',
+            correlation: 'unbound',
+            reconstructed: false,
+            resolverId: 'google',
+            source: 'dkim-message',
+          },
+        },
+      ],
+    });
+
+    expect(result.result).toBe('indeterminate');
+    expect(result.evidence[0]?.qualification).toContain('2099-01-01T00:00:00.000Z');
+  });
+
   it('does not confuse a sibling domain with strict alignment', () => {
     const result = evaluate({ dkimDomains: ['news.example.com'] });
 

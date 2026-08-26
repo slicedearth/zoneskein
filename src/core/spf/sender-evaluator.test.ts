@@ -88,6 +88,7 @@ describe('sender-context SPF evaluation', () => {
 
     expect(evaluation.result).toBe('pass');
     expect(evaluation.identity).toBe('postmaster@mail.sender.test');
+    expect(evaluation.identitySource).toBe('helo');
     expect(evaluation.domain).toBe('mail.sender.test');
   });
 
@@ -103,6 +104,7 @@ describe('sender-context SPF evaluation', () => {
     const macro = await evaluateSpfSender(context({ heloDomain: '[192.0.2.1]' }), macroDns);
 
     expect(direct.result).toBe('pass');
+    expect(direct.identitySource).toBe('mail-from');
     expect(directDns.calls).toEqual(['TXT|sender.test']);
     expect(macro.result).toBe('permerror');
     expect(macroDns.calls).toEqual(['TXT|sender.test']);

@@ -7,6 +7,7 @@ import {
   discoverAndEvaluateDmarcAlignment,
   type DmarcAlignmentDiscoveryResult,
 } from '../core/dmarc/alignment-discovery';
+import type { DmarcAuthenticationProvenance } from '../core/dmarc/alignment';
 import {
   DmarcDiscoverySession,
   type DmarcDiscoveryResult,
@@ -63,6 +64,8 @@ interface PolicyReport {
 
 interface DmarcAlignmentReport extends DmarcAlignmentDiscoveryResult {
   readonly capturedAt: string;
+  readonly evidenceAcknowledged: boolean;
+  readonly priorEvidence?: MailAuthenticationEvidence;
   readonly resolverId: ResolverId;
 }
 
@@ -159,7 +162,9 @@ function alignmentEvidence(report: DmarcAlignmentReport): string {
     {
       capturedAt: report.capturedAt,
       evidence: report.evaluation?.evidence,
-      evidenceSchema: 'zoneskein-dmarc-alignment-v1',
+      evidenceAcknowledged: report.evidenceAcknowledged,
+      evidenceSchema: 'zoneskein-dmarc-alignment-v2',
+      fromDomain: report.evaluation?.fromDomain,
       identifierBoundaries: report.identifierDiscoveries.map(({ discovery, domain }) => ({
         domain,
         organizationalDomain: discovery.organizationalDomain,
@@ -174,6 +179,7 @@ function alignmentEvidence(report: DmarcAlignmentReport): string {
       policyAssessment: report.policyDiscovery.selected?.assessment,
       policyBoundary: report.policyDiscovery.organizationalDomain,
       policyDomain: report.policyDomain,
+      priorAuthentication: report.priorEvidence,
       questionsUsed: report.questionsUsed,
       reason: report.reason,
       resolver: { id: report.resolverId, label: RESOLVERS[report.resolverId].label },
@@ -181,7 +187,8 @@ function alignmentEvidence(report: DmarcAlignmentReport): string {
     },
     {
       capturedAt: report.capturedAt,
-      evidenceSchema: 'zoneskein-dmarc-alignment-v1',
+      evidenceAcknowledged: report.evidenceAcknowledged,
+      evidenceSchema: 'zoneskein-dmarc-alignment-v2',
       policyDomain: report.policyDomain,
       resolver: { id: report.resolverId, label: RESOLVERS[report.resolverId].label },
       result: report.result,
@@ -458,6 +465,9 @@ function DmarcPolicyResults({ report }: { readonly report: PolicyReport }) {
 
 function DmarcAlignmentResults({ report }: { readonly report: DmarcAlignmentReport }) {
   const assessment = report.policyDiscovery.selected?.assessment;
+  const qualifiedEvidence = report.evaluation?.evidence.filter(
+    (item) => item.qualification !== undefined,
+  );
   return (
     <section className="results" aria-labelledby="dmarc-alignment-result-title">
       <div className="section-heading">
@@ -474,6 +484,14 @@ function DmarcAlignmentResults({ report }: { readonly report: DmarcAlignmentRepo
         <StatusBadge tone={resultTone(report.result)}>{report.result}</StatusBadge>
         <p>{report.reason}</p>
       </article>
+      {qualifiedEvidence === undefined || qualifiedEvidence.length === 0 ? null : (
+        <p className="snapshot-warning">
+          This result uses qualified prior authentication evidence.{' '}
+          {report.evidenceAcknowledged
+            ? 'The relationship was explicitly acknowledged, so any pass is conditional.'
+            : 'The relationship was not acknowledged, so aligned prior evidence cannot assert a pass.'}
+        </p>
+      )}
       {assessment === undefined ? null : (
         <article className="result-panel">
           <h3>Assessment policy</h3>
@@ -522,7 +540,17 @@ function DmarcAlignmentResults({ report }: { readonly report: DmarcAlignmentRepo
                     <td>
                       <StatusBadge tone={evidenceTone(item.status)}>{item.status}</StatusBadge>
                     </td>
-                    <td>{item.reason}</td>
+                    <td>
+                      <p>{item.reason}</p>
+                      {item.qualification === undefined ? null : (
+                        <small>
+                          {item.qualification}{' '}
+                          {item.acknowledged
+                            ? 'The user acknowledged this qualification for the current run.'
+                            : 'This qualification was not acknowledged for the current run.'}
+                        </small>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -564,6 +592,7 @@ export function DmarcPage({ initialEvidence, onEvidenceChange }: DmarcPageProps 
   const [spfResult, setSpfResult] = useState<SpfResult>(initialEvidence?.spf?.result ?? 'none');
   const [spfDomain, setSpfDomain] = useState(initialEvidence?.spf?.domain ?? '');
   const [transferredEvidence, setTransferredEvidence] = useState(initialEvidence ?? null);
+  const [evidenceAcknowledged, setEvidenceAcknowledged] = useState(false);
   const [evidenceInput, setEvidenceInput] = useState('');
   const [evidenceError, setEvidenceError] = useState('');
   const [resolverId, setResolverId] = useState<ResolverId>('google');
@@ -659,12 +688,44 @@ export function DmarcPage({ initialEvidence, onEvidenceChange }: DmarcPageProps 
     try {
       if (mode === 'policy') await inspectPolicy(lookup, run, capturedAt, selectedResolverId);
       else {
+        const dkimEvidence = dkim.domains.map((dkimDomain) => {
+          const transferred = transferredEvidence?.dkim.find(
+            (entry) => entry.domain === dkimDomain,
+          );
+          const provenance: DmarcAuthenticationProvenance =
+            transferred === undefined
+              ? { correlation: 'unbound', source: 'manual' }
+              : {
+                  capturedAt: transferred.capturedAt,
+                  correlation: 'unbound',
+                  reconstructed: transferred.reconstructed,
+                  resolverId: transferred.resolverId,
+                  source: transferred.source,
+                };
+          return { domain: dkimDomain, provenance };
+        });
+        const transferredSpf = transferredEvidence?.spf;
+        const spfProvenance: DmarcAuthenticationProvenance =
+          transferredSpf === undefined
+            ? { correlation: 'unbound', source: 'manual' }
+            : {
+                capturedAt: transferredSpf.capturedAt,
+                correlation: 'unbound',
+                ...(transferredSpf.identitySource === undefined
+                  ? {}
+                  : { identitySource: transferredSpf.identitySource }),
+                resolverId: transferredSpf.resolverId,
+                source: transferredSpf.source,
+              };
         const result = await discoverAndEvaluateDmarcAlignment(
           {
+            dkimEvidence,
             dkimDomains: dkim.domains,
+            evidenceAcknowledged,
             fromDomain: parsed.value.ascii,
             spf: {
               ...(spfDomain.trim() === '' ? {} : { domain: spfDomain }),
+              provenance: spfProvenance,
               result: spfResult,
             },
           },
@@ -673,7 +734,13 @@ export function DmarcPage({ initialEvidence, onEvidenceChange }: DmarcPageProps 
           () => run.cancelled,
         );
         if (activeRun.current === run && !run.cancelled)
-          setAlignmentReport({ ...result, capturedAt, resolverId: selectedResolverId });
+          setAlignmentReport({
+            ...result,
+            capturedAt,
+            evidenceAcknowledged,
+            ...(transferredEvidence === null ? {} : { priorEvidence: transferredEvidence }),
+            resolverId: selectedResolverId,
+          });
       }
       if (activeRun.current === run) setState(run.cancelled ? 'cancelled' : 'complete');
     } catch (cause) {
@@ -693,6 +760,8 @@ export function DmarcPage({ initialEvidence, onEvidenceChange }: DmarcPageProps 
   }
 
   function detachTransferredEvidence() {
+    resetResults();
+    setEvidenceAcknowledged(false);
     if (transferredEvidence === null) return;
     setTransferredEvidence(null);
     onEvidenceChange?.(null);
@@ -704,6 +773,7 @@ export function DmarcPage({ initialEvidence, onEvidenceChange }: DmarcPageProps 
     setDkimDomains(evidence.dkim.map((entry) => entry.domain).join('\n'));
     setSpfResult(evidence.spf?.result ?? 'none');
     setSpfDomain(evidence.spf?.domain ?? '');
+    setEvidenceAcknowledged(false);
     setTransferredEvidence(evidence);
     setEvidenceInput('');
     setEvidenceError('');
@@ -724,6 +794,7 @@ export function DmarcPage({ initialEvidence, onEvidenceChange }: DmarcPageProps 
     setDkimDomains('');
     setSpfResult('none');
     setSpfDomain('');
+    setEvidenceAcknowledged(false);
     setTransferredEvidence(null);
     setEvidenceInput('');
     setEvidenceError('');
@@ -736,6 +807,7 @@ export function DmarcPage({ initialEvidence, onEvidenceChange }: DmarcPageProps 
     setDkimDomains('');
     setSpfResult('none');
     setSpfDomain('');
+    setEvidenceAcknowledged(false);
     setTransferredEvidence(null);
     setEvidenceInput('');
     setEvidenceError('');
@@ -811,13 +883,39 @@ export function DmarcPage({ initialEvidence, onEvidenceChange }: DmarcPageProps 
                   : 'passing DKIM domains'}
                 {transferredEvidence.spf === undefined
                   ? ' and no SPF result.'
-                  : ` and an SPF ${transferredEvidence.spf.result} result for ${transferredEvidence.spf.domain}.`}
+                  : transferredEvidence.spf.domain === undefined
+                    ? ` and an SPF ${transferredEvidence.spf.result} result with no unauthenticated domain retained.`
+                    : ` and an SPF ${transferredEvidence.spf.result} result for its authenticated ${transferredEvidence.spf.identitySource === 'helo' ? 'HELO-derived' : 'MAIL FROM'} domain ${transferredEvidence.spf.domain}.`}
               </p>
               <p className="detail-note">
                 Created {new Date(transferredEvidence.createdAt).toLocaleString()}. The transfer
                 does not contain raw messages, mailbox local parts, client IP addresses,
                 selectors, policy text, or DNS traces. Resolver identifiers are inert provenance
                 and do not change the resolver selected below.
+              </p>
+              <ul>
+                {transferredEvidence.dkim.map((entry) => (
+                  <li key={`dkim-${entry.domain}`}>
+                    DKIM {entry.domain}: captured {new Date(entry.capturedAt).toLocaleString()}
+                    {' · '}resolver {entry.resolverId}
+                    {entry.reconstructed ? ' · reconstructed line endings' : ''}
+                  </li>
+                ))}
+                {transferredEvidence.spf === undefined ? null : (
+                  <li>
+                    SPF {transferredEvidence.spf.result}: captured{' '}
+                    {new Date(transferredEvidence.spf.capturedAt).toLocaleString()}
+                    {' · '}resolver {transferredEvidence.spf.resolverId}
+                    {transferredEvidence.spf.identitySource === undefined
+                      ? ''
+                      : ` · ${transferredEvidence.spf.identitySource === 'helo' ? 'HELO-derived' : 'MAIL FROM'} identity`}
+                  </li>
+                )}
+              </ul>
+              <p className="snapshot-warning">
+                This hand-off is not cryptographically bound to the visible From domain or a
+                common message context. Confirm that relationship below before a conditional
+                pass can be asserted.
               </p>
               {transferredEvidence.dkim.some((entry) => entry.reconstructed) ? (
                 <p className="snapshot-warning">
@@ -873,7 +971,11 @@ export function DmarcPage({ initialEvidence, onEvidenceChange }: DmarcPageProps 
             id="dmarc-domain"
             value={domain}
             disabled={state === 'loading'}
-            onChange={(event) => setDomain(event.currentTarget.value)}
+            onChange={(event) => {
+              resetResults();
+              if (mode === 'alignment') setEvidenceAcknowledged(false);
+              setDomain(event.currentTarget.value);
+            }}
             placeholder="mail.example.com"
             maxLength={2048}
             autoCapitalize="none"
@@ -909,8 +1011,9 @@ export function DmarcPage({ initialEvidence, onEvidenceChange }: DmarcPageProps 
                 signature that passed. Enter one domain per line; maximum 20.
               </small>
               <small>
-                ZoneSkein trusts the earlier results you enter here. This alignment check does
-                not verify the signatures again or rerun SPF.
+                This alignment check does not verify the signatures again or rerun SPF. Manual
+                values remain unbound prior evidence and require the explicit confirmation below
+                before they can support a conditional pass.
               </small>
             </div>
             <div className="field-group">
@@ -953,6 +1056,24 @@ export function DmarcPage({ initialEvidence, onEvidenceChange }: DmarcPageProps 
                 postmaster identity.
               </small>
             </div>
+            <label className="check-control field-wide">
+              <input
+                type="checkbox"
+                checked={evidenceAcknowledged}
+                disabled={state === 'loading'}
+                onChange={(event) => {
+                  resetResults();
+                  setEvidenceAcknowledged(event.currentTarget.checked);
+                }}
+              />
+              I confirm these prior SPF and DKIM results belong to this message and visible From
+              context
+            </label>
+            <p className="detail-note field-wide">
+              Without this confirmation, an otherwise aligned prior identifier remains
+              indeterminate. Confirmation permits only a conditional pass; capture and
+              reconstruction qualifications remain visible and exported.
+            </p>
           </>
         ) : null}
         <div className="field-group">

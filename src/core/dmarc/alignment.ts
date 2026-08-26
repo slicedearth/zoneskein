@@ -18,9 +18,24 @@ export type DmarcIdentifierStatus =
 
 export type DmarcBoundaryStatus = 'complete' | 'temperror' | 'permerror' | 'indeterminate';
 
+export interface DmarcAuthenticationProvenance {
+  readonly capturedAt?: string;
+  readonly correlation: 'unbound';
+  readonly identitySource?: 'helo' | 'mail-from';
+  readonly reconstructed?: boolean;
+  readonly resolverId?: string;
+  readonly source: 'dkim-message' | 'manual' | 'spf-sender';
+}
+
+export interface DmarcDkimAuthentication {
+  readonly domain: string;
+  readonly provenance?: DmarcAuthenticationProvenance;
+}
+
 export interface DmarcSpfAuthentication {
   /** The RFC5321.MailFrom domain, including the synthetic postmaster@HELO identity for a null path. */
   readonly domain?: string;
+  readonly provenance?: DmarcAuthenticationProvenance;
   readonly result: DmarcSpfResult;
 }
 
@@ -38,8 +53,12 @@ export interface DmarcAlignmentInput {
   readonly authenticatedOrganizationalDomainStatuses?: Readonly<
     Record<string, DmarcBoundaryStatus>
   >;
+  /** Prior-evidence metadata associated with each supplied DKIM domain. */
+  readonly dkimEvidence?: readonly DmarcDkimAuthentication[];
   /** The d= domains from DKIM signatures that have already passed verification. */
   readonly dkimDomains: readonly string[];
+  /** Explicit acknowledgement that qualified prior evidence belongs to this assessment context. */
+  readonly evidenceAcknowledged?: boolean;
   /** The single domain extracted from RFC5322.From. */
   readonly fromDomain: string;
   /** The boundary selected by tree walk for fromDomain. */
@@ -50,11 +69,14 @@ export interface DmarcAlignmentInput {
 }
 
 export interface DmarcIdentifierEvidence {
+  readonly acknowledged?: boolean;
   readonly authenticated: boolean;
   readonly domain?: string;
   readonly method: 'dkim' | 'spf';
   readonly mode: DmarcAlignmentMode;
   readonly organizationalDomain?: string;
+  readonly provenance?: DmarcAuthenticationProvenance;
+  readonly qualification?: string;
   readonly reason: string;
   readonly status: DmarcIdentifierStatus;
 }
@@ -100,6 +122,96 @@ function normaliseDomain(value: unknown): NormalisedDomain | null {
   )
     return null;
   return { normalised: parsed.value.ascii, supplied: value };
+}
+
+function isAuthenticationProvenance(
+  value: unknown,
+  method: DmarcIdentifierEvidence['method'],
+): value is DmarcAuthenticationProvenance {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const item = value as Readonly<Record<string, unknown>>;
+  const allowed = new Set([
+    'capturedAt',
+    'correlation',
+    'identitySource',
+    'reconstructed',
+    'resolverId',
+    'source',
+  ]);
+  if (Object.keys(item).some((key) => !allowed.has(key)) || item['correlation'] !== 'unbound')
+    return false;
+  const source = item['source'];
+  if (source !== 'dkim-message' && source !== 'manual' && source !== 'spf-sender') return false;
+  if (
+    source !== 'manual' &&
+    ((method === 'dkim' && source !== 'dkim-message') ||
+      (method === 'spf' && source !== 'spf-sender'))
+  )
+    return false;
+  const timestamp = item['capturedAt'];
+  if (timestamp !== undefined) {
+    if (typeof timestamp !== 'string') return false;
+    const time = Date.parse(timestamp);
+    if (!Number.isFinite(time) || new Date(time).toISOString() !== timestamp) return false;
+  }
+  if (
+    item['identitySource'] !== undefined &&
+    item['identitySource'] !== 'helo' &&
+    item['identitySource'] !== 'mail-from'
+  )
+    return false;
+  if (item['reconstructed'] !== undefined && typeof item['reconstructed'] !== 'boolean')
+    return false;
+  const resolver = item['resolverId'];
+  if (
+    resolver !== undefined &&
+    (typeof resolver !== 'string' || resolver.length < 1 || resolver.length > 64)
+  )
+    return false;
+  if (source === 'manual')
+    return (
+      timestamp === undefined &&
+      resolver === undefined &&
+      item['identitySource'] === undefined &&
+      item['reconstructed'] === undefined
+    );
+  if (timestamp === undefined || resolver === undefined) return false;
+  if (source === 'dkim-message')
+    return typeof item['reconstructed'] === 'boolean' && item['identitySource'] === undefined;
+  return item['reconstructed'] === undefined;
+}
+
+function qualifiedEvidence(
+  evidence: DmarcIdentifierEvidence,
+  provenance: DmarcAuthenticationProvenance | undefined,
+  acknowledged: boolean,
+): DmarcIdentifierEvidence {
+  if (provenance === undefined) return evidence;
+  if (!isAuthenticationProvenance(provenance, evidence.method))
+    return {
+      ...evidence,
+      authenticated: false,
+      reason: 'Prior authentication provenance is malformed, so it cannot support alignment.',
+      status: 'permerror',
+    };
+  const source =
+    provenance.source === 'manual'
+      ? 'This authentication result was entered manually and was not reverified.'
+      : `This ${provenance.source === 'dkim-message' ? 'DKIM' : 'SPF'} result was captured${provenance.capturedAt === undefined ? '' : ` at ${provenance.capturedAt}`}${provenance.resolverId === undefined ? '' : ` through resolver ${provenance.resolverId}`}.`;
+  const reconstruction =
+    provenance.reconstructed === true
+      ? ' Its message line endings were reconstructed before verification.'
+      : '';
+  const identity =
+    provenance.identitySource === 'helo'
+      ? ' Its authenticated SPF identity was HELO-derived for a null reverse path.'
+      : '';
+  return {
+    ...evidence,
+    acknowledged,
+    provenance,
+    qualification: `${source}${reconstruction}${identity} It is not cryptographically bound to the visible From domain or a common message context.`,
+  };
 }
 
 function withinDomain(domain: string, boundary: string): boolean {
@@ -324,7 +436,7 @@ function isSpfResult(value: unknown): value is DmarcSpfResult {
   );
 }
 
-function assessSpf(
+function assessSpfIdentifier(
   spf: DmarcSpfAuthentication,
   mode: DmarcAlignmentMode,
   fromDomain: string,
@@ -394,12 +506,38 @@ function assessSpf(
   };
 }
 
+function assessSpf(
+  spf: DmarcSpfAuthentication,
+  mode: DmarcAlignmentMode,
+  fromDomain: string,
+  authorBoundary: string | undefined,
+  authorBoundaryStatus: DmarcBoundaryStatus,
+  boundaries: Readonly<Record<string, string>> | undefined,
+  boundaryStatuses: Readonly<Record<string, DmarcBoundaryStatus>> | undefined,
+  acknowledged: boolean,
+): DmarcIdentifierEvidence {
+  return qualifiedEvidence(
+    assessSpfIdentifier(
+      spf,
+      mode,
+      fromDomain,
+      authorBoundary,
+      authorBoundaryStatus,
+      boundaries,
+      boundaryStatuses,
+    ),
+    spf.provenance,
+    acknowledged,
+  );
+}
+
 function finalEvaluation(
   adkim: DmarcAlignmentMode,
   aspf: DmarcAlignmentMode,
   fromDomain: string,
   organizationalDomain: string | undefined,
   evidence: readonly DmarcIdentifierEvidence[],
+  evidenceAcknowledged: boolean,
 ): DmarcAlignmentEvaluation {
   const base = {
     adkim,
@@ -408,13 +546,30 @@ function finalEvaluation(
     fromDomain,
     ...(organizationalDomain === undefined ? {} : { organizationalDomain }),
   };
-  const aligned = evidence.find((item) => item.status === 'aligned');
+  const aligned = evidence.find(
+    (item) => item.status === 'aligned' && item.qualification === undefined,
+  );
   if (aligned !== undefined)
     return {
       ...base,
       reason: `DMARC passes. ${aligned.reason}`,
       result: 'pass',
     };
+
+  const qualifiedAligned = evidence.find((item) => item.status === 'aligned');
+  if (qualifiedAligned !== undefined) {
+    if (!evidenceAcknowledged)
+      return {
+        ...base,
+        reason: `DMARC is indeterminate until the prior evidence qualification is explicitly acknowledged. ${qualifiedAligned.reason} ${qualifiedAligned.qualification ?? ''}`,
+        result: 'indeterminate',
+      };
+    return {
+      ...base,
+      reason: `DMARC conditionally passes using explicitly acknowledged prior evidence. ${qualifiedAligned.reason} ${qualifiedAligned.qualification ?? ''}`,
+      result: 'pass',
+    };
+  }
 
   const permanentError = evidence.find((item) => item.status === 'permerror');
   if (permanentError !== undefined)
@@ -558,6 +713,48 @@ export function evaluateDmarcAlignment(input: DmarcAlignmentInput): DmarcAlignme
       ],
     );
 
+  if (
+    input.evidenceAcknowledged !== undefined &&
+    typeof input.evidenceAcknowledged !== 'boolean'
+  )
+    return permanentInputError(
+      adkim,
+      aspf,
+      'The prior-evidence acknowledgement must be a boolean.',
+      fromDomain.normalised,
+      organizationalDomain,
+    );
+  const evidenceAcknowledged = input.evidenceAcknowledged === true;
+  const rawDkimEvidence: unknown = input.dkimEvidence;
+  if (rawDkimEvidence !== undefined && !Array.isArray(rawDkimEvidence))
+    return permanentInputError(
+      adkim,
+      aspf,
+      'DKIM prior evidence must be supplied as a bounded list.',
+      fromDomain.normalised,
+      organizationalDomain,
+    );
+  const dkimEvidence: readonly DmarcDkimAuthentication[] =
+    rawDkimEvidence === undefined
+      ? input.dkimDomains.map((domain) => ({ domain }))
+      : (rawDkimEvidence as readonly DmarcDkimAuthentication[]);
+  if (
+    dkimEvidence.length !== input.dkimDomains.length ||
+    dkimEvidence.some(
+      (entry, index) =>
+        entry === null ||
+        typeof entry !== 'object' ||
+        entry.domain !== input.dkimDomains[index],
+    )
+  )
+    return permanentInputError(
+      adkim,
+      aspf,
+      'DKIM domains and their prior-evidence metadata are inconsistent.',
+      fromDomain.normalised,
+      organizationalDomain,
+    );
+
   const rawSpf: unknown = input.spf;
   if (typeof rawSpf !== 'object' || rawSpf === null)
     return permanentInputError(
@@ -569,16 +766,20 @@ export function evaluateDmarcAlignment(input: DmarcAlignmentInput): DmarcAlignme
     );
 
   const evidence = [
-    ...input.dkimDomains.map((domain) =>
-      assessAuthenticatedDomain(
-        'dkim',
-        domain,
-        adkim,
-        fromDomain.normalised,
-        organizationalDomain,
-        organizationalDomainStatus,
-        boundaries,
-        boundaryStatuses,
+    ...dkimEvidence.map((entry) =>
+      qualifiedEvidence(
+        assessAuthenticatedDomain(
+          'dkim',
+          entry.domain,
+          adkim,
+          fromDomain.normalised,
+          organizationalDomain,
+          organizationalDomainStatus,
+          boundaries,
+          boundaryStatuses,
+        ),
+        entry.provenance,
+        evidenceAcknowledged,
       ),
     ),
     assessSpf(
@@ -589,7 +790,15 @@ export function evaluateDmarcAlignment(input: DmarcAlignmentInput): DmarcAlignme
       organizationalDomainStatus,
       boundaries,
       boundaryStatuses,
+      evidenceAcknowledged,
     ),
   ];
-  return finalEvaluation(adkim, aspf, fromDomain.normalised, organizationalDomain, evidence);
+  return finalEvaluation(
+    adkim,
+    aspf,
+    fromDomain.normalised,
+    organizationalDomain,
+    evidence,
+    evidenceAcknowledged,
+  );
 }

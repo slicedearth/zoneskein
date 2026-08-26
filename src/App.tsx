@@ -1,9 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 
-import {
-  mergeMailAuthenticationEvidence,
-  type MailAuthenticationEvidence,
-} from './core/mail/evidence';
+import type { MailAuthenticationEvidence } from './core/mail/evidence';
 import type { ChangeWorkspace } from './core/project';
 import type { ChangeLabInput } from './routes/DiffPage';
 
@@ -231,7 +228,7 @@ export function App() {
   }
 
   function openDmarcWithEvidence(value: MailAuthenticationEvidence): void {
-    setMailAuthenticationEvidence((current) => mergeMailAuthenticationEvidence(current, value));
+    setMailAuthenticationEvidence(value);
     openRoute('dmarc/');
   }
 

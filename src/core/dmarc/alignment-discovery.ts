@@ -4,6 +4,7 @@ import {
   type DmarcAlignmentEvaluation,
   type DmarcAlignmentResult,
   type DmarcBoundaryStatus,
+  type DmarcDkimAuthentication,
   type DmarcSpfAuthentication,
 } from './alignment';
 import {
@@ -15,7 +16,9 @@ import {
 import type { DmarcPolicy } from './types';
 
 export interface DmarcAlignmentDiscoveryInput {
+  readonly dkimEvidence?: readonly DmarcDkimAuthentication[];
   readonly dkimDomains: readonly string[];
+  readonly evidenceAcknowledged?: boolean;
   readonly fromDomain: string;
   readonly spf: DmarcSpfAuthentication;
 }
@@ -101,7 +104,11 @@ export async function discoverAndEvaluateDmarcAlignment(
   const modes = dmarcAlignmentModes(policy);
   const preliminary = evaluateDmarcAlignment({
     ...modes,
+    ...(input.dkimEvidence === undefined ? {} : { dkimEvidence: input.dkimEvidence }),
     dkimDomains: input.dkimDomains,
+    ...(input.evidenceAcknowledged === undefined
+      ? {}
+      : { evidenceAcknowledged: input.evidenceAcknowledged }),
     fromDomain: input.fromDomain,
     organizationalDomain,
     organizationalDomainStatus: 'complete',
@@ -152,7 +159,11 @@ export async function discoverAndEvaluateDmarcAlignment(
           ...modes,
           authenticatedOrganizationalDomains: boundaries,
           authenticatedOrganizationalDomainStatuses: statuses,
+          ...(input.dkimEvidence === undefined ? {} : { dkimEvidence: input.dkimEvidence }),
           dkimDomains: input.dkimDomains,
+          ...(input.evidenceAcknowledged === undefined
+            ? {}
+            : { evidenceAcknowledged: input.evidenceAcknowledged }),
           fromDomain: input.fromDomain,
           organizationalDomain,
           organizationalDomainStatus: 'complete',

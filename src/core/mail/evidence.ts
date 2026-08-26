@@ -5,7 +5,7 @@ import type { ResolverId } from '../dns/types';
 import type { SpfSenderEvaluation } from '../spf/sender-evaluator';
 
 export const MAIL_AUTHENTICATION_EVIDENCE_SCHEMA =
-  'zoneskein-mail-authentication-transfer-v1' as const;
+  'zoneskein-mail-authentication-transfer-v2' as const;
 
 export const MAIL_AUTHENTICATION_EVIDENCE_LIMITS = Object.freeze({
   dkimDomains: 20,
@@ -35,7 +35,8 @@ export interface DkimAuthenticationEvidence {
 
 export interface SpfAuthenticationEvidence {
   readonly capturedAt: string;
-  readonly domain: string;
+  readonly domain?: string;
+  readonly identitySource?: 'helo' | 'mail-from';
   readonly resolverId: ResolverId;
   readonly result: DmarcSpfResult;
   readonly source: 'spf-sender';
@@ -165,31 +166,42 @@ export function parseMailAuthenticationEvidence(
 
   let spf: SpfAuthenticationEvidence | undefined;
   if (envelope['spf'] !== undefined) {
-    const entry = objectWithKeys(envelope['spf'], [
-      'capturedAt',
-      'domain',
-      'resolverId',
-      'result',
-      'source',
-    ]);
+    const entry = objectWithKeys(
+      envelope['spf'],
+      ['capturedAt', 'resolverId', 'result', 'source'],
+      ['domain', 'identitySource'],
+    );
     if (entry?.['source'] !== 'spf-sender')
       return failure('SPF evidence has an unexpected shape or source.');
     const capturedAt = isoTimestamp(entry['capturedAt']);
-    const domain = canonicalDomain(entry['domain']);
     const resolver = resolverId(entry['resolverId']);
     const result = entry['result'];
     if (
       capturedAt === null ||
-      domain === null ||
       resolver === null ||
       typeof result !== 'string' ||
       !SPF_RESULTS.has(result as DmarcSpfResult)
     )
       return failure('SPF evidence contains an invalid field.');
+    const pass = result === 'pass';
+    const domain = pass ? canonicalDomain(entry['domain']) : null;
+    const identitySource = entry['identitySource'];
+    const parsedIdentitySource =
+      identitySource === 'helo' || identitySource === 'mail-from' ? identitySource : null;
+    if (
+      (pass && (domain === null || parsedIdentitySource === null)) ||
+      (!pass && (entry['domain'] !== undefined || identitySource !== undefined))
+    )
+      return failure(
+        pass
+          ? 'Passing SPF evidence needs its authenticated domain and identity source.'
+          : 'Non-pass SPF evidence must omit unauthenticated domain fields.',
+      );
     latestCapture = Math.max(latestCapture, Date.parse(capturedAt));
     spf = {
       capturedAt,
-      domain,
+      ...(domain === null ? {} : { domain }),
+      ...(parsedIdentitySource === null ? {} : { identitySource: parsedIdentitySource }),
       resolverId: resolver,
       result: result as DmarcSpfResult,
       source: 'spf-sender',
@@ -355,34 +367,18 @@ export function evidenceFromDkim(
 }
 
 export function evidenceFromSpf(
-  evaluation: Pick<SpfSenderEvaluation, 'capturedAt' | 'domain' | 'result'>,
+  evaluation: Pick<SpfSenderEvaluation, 'capturedAt' | 'domain' | 'identitySource' | 'result'>,
   resolver: ResolverId,
 ): MailAuthenticationEvidence | null {
   const capturedAt = isoTimestamp(evaluation.capturedAt);
-  const domain = canonicalDomain(evaluation.domain);
-  if (capturedAt === null || domain === null || !SPF_RESULTS.has(evaluation.result))
-    return null;
+  if (capturedAt === null || !SPF_RESULTS.has(evaluation.result)) return null;
+  const domain = evaluation.result === 'pass' ? canonicalDomain(evaluation.domain) : null;
+  if (evaluation.result === 'pass' && domain === null) return null;
   return freezeEvidence(capturedAt, [], {
     capturedAt,
-    domain,
+    ...(domain === null ? {} : { domain, identitySource: evaluation.identitySource }),
     resolverId: resolver,
     result: evaluation.result,
     source: 'spf-sender',
   });
-}
-
-export function mergeMailAuthenticationEvidence(
-  current: MailAuthenticationEvidence | null,
-  incoming: MailAuthenticationEvidence,
-): MailAuthenticationEvidence {
-  if (current === null) return incoming;
-  const dkim = incoming.dkim.length > 0 ? incoming.dkim : current.dkim;
-  const spf = incoming.spf ?? current.spf;
-  const latest = Math.max(
-    Date.parse(current.createdAt),
-    Date.parse(incoming.createdAt),
-    ...dkim.map((entry) => Date.parse(entry.capturedAt)),
-    ...(spf === undefined ? [] : [Date.parse(spf.capturedAt)]),
-  );
-  return freezeEvidence(new Date(latest).toISOString(), dkim, spf);
 }

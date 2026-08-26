@@ -89,6 +89,7 @@ export interface SpfSenderEvaluation {
   readonly domain: string;
   readonly explanation?: string;
   readonly identity: string;
+  readonly identitySource: 'helo' | 'mail-from';
   readonly ip: string;
   readonly match?: SpfSenderMechanismMatch;
   readonly reason: string;
@@ -102,6 +103,7 @@ interface NormalisedContext {
   readonly heloDomain: string;
   readonly ip: IpAddress;
   readonly ipText: string;
+  readonly identitySource: 'helo' | 'mail-from';
   readonly localPart: string;
   readonly originDomain: string;
   readonly receiver: string;
@@ -236,6 +238,7 @@ function earlyEvaluation(
     dnsTerms: 0,
     domain,
     identity: `${localPart}@${domain}`,
+    identitySource: context.mailFromDomain === '' ? 'helo' : 'mail-from',
     ip: context.ip,
     reason,
     responseBytes: 0,
@@ -296,6 +299,7 @@ function normaliseContext(context: SpfSenderContext): NormalisedContext | SpfSen
   const ipText = ip.toString();
   return {
     heloDomain: heloDomain ?? context.heloDomain.trim(),
+    identitySource: context.mailFromDomain === '' ? 'helo' : 'mail-from',
     ip,
     ipText,
     localPart,
@@ -1383,6 +1387,7 @@ function finalEvaluation(
     domain: state.context.originDomain,
     ...(explanation === undefined ? {} : { explanation }),
     identity: state.context.sender,
+    identitySource: state.context.identitySource,
     ip: state.context.ipText,
     ...(evaluation.match === undefined ? {} : { match: evaluation.match }),
     reason: evaluation.reason,

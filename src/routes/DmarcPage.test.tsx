@@ -7,6 +7,7 @@ import { DmarcPage } from './DmarcPage';
 import {
   decodeMailAuthenticationEvidence,
   encodeMailAuthenticationEvidence,
+  MAIL_AUTHENTICATION_EVIDENCE_SCHEMA,
 } from '../core/mail/evidence';
 
 vi.mock('../core/doh/rate-limit', () => ({
@@ -97,10 +98,11 @@ describe('DmarcPage', () => {
             source: 'dkim-message',
           },
         ],
-        evidenceSchema: 'zoneskein-mail-authentication-transfer-v1',
+        evidenceSchema: MAIL_AUTHENTICATION_EVIDENCE_SCHEMA,
         spf: {
           capturedAt: '2026-08-26T00:01:00.000Z',
           domain: 'bounce.example',
+          identitySource: 'mail-from',
           resolverId: 'cloudflare',
           result: 'pass',
           source: 'spf-sender',
@@ -239,6 +241,11 @@ describe('DmarcPage', () => {
     await user.type(
       screen.getByLabelText('Domain authenticated by SPF'),
       'bounce.unrelated.test',
+    );
+    await user.click(
+      screen.getByRole('checkbox', {
+        name: /confirm these prior SPF and DKIM results belong/iu,
+      }),
     );
     await user.click(screen.getByRole('button', { name: 'Check alignment' }));
 
@@ -440,23 +447,120 @@ describe('DmarcPage', () => {
       screen.getByLabelText('Domains from passing DKIM signatures'),
       'mail.evidence.test',
     );
-    expect(screen.getByText(/trusts the earlier results/iu)).toBeVisible();
+    expect(
+      screen.getByText(/does not verify the signatures again or rerun SPF/iu),
+    ).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Check alignment' }));
+    expect(await screen.findByRole('heading', { name: 'DMARC indeterminate' })).toBeVisible();
+    expect(screen.getByText(/relationship was not acknowledged/iu)).toBeVisible();
+
+    await user.click(
+      screen.getByRole('checkbox', {
+        name: /confirm these prior SPF and DKIM results belong/iu,
+      }),
+    );
+    expect(
+      screen.queryByRole('heading', { name: 'DMARC indeterminate' }),
+    ).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Check alignment' }));
     await screen.findByRole('heading', { name: 'DMARC pass' });
+    expect(screen.getByText(/any pass is conditional/iu)).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'Copy alignment evidence JSON' }));
 
     await waitFor(() => expect(writeText).toHaveBeenCalled());
     const evidence = String(writeText.mock.calls[0]?.[0]);
     expect(evidence.length).toBeLessThan(65_536);
-    expect(evidence).toContain('zoneskein-dmarc-alignment-v1');
+    expect(evidence).toContain('zoneskein-dmarc-alignment-v2');
     expect(evidence).toContain('mail.evidence.test');
     expect(evidence).not.toContain('postmaster');
     const parsedEvidence = JSON.parse(evidence) as {
       capturedAt?: string;
+      evidence?: readonly {
+        acknowledged?: boolean;
+        provenance?: { correlation?: string; source?: string };
+        qualification?: string;
+      }[];
+      evidenceAcknowledged?: boolean;
+      fromDomain?: string;
       resolver?: { id?: string };
     };
     expect(parsedEvidence.capturedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/iu);
+    expect(parsedEvidence.evidenceAcknowledged).toBe(true);
+    expect(parsedEvidence.fromDomain).toBe('mail.evidence.test');
+    expect(parsedEvidence.evidence?.[0]).toEqual(
+      expect.objectContaining({
+        acknowledged: true,
+        provenance: { correlation: 'unbound', source: 'manual' },
+        qualification: expect.stringMatching(/not cryptographically bound/iu),
+      }),
+    );
     expect(parsedEvidence.resolver?.id).toBe('google');
+  });
+
+  it.each([
+    ['Visible From address domain', 'text'],
+    ['Domains from passing DKIM signatures', 'text'],
+    ['Previous SPF result', 'select'],
+    ['Domain authenticated by SPF', 'text'],
+  ] as const)(
+    'invalidates a completed alignment result after %s changes',
+    async (label, control) => {
+      const user = userEvent.setup();
+      installDns({
+        '_dmarc.mail.stale-result.test': {
+          values: ['v=DMARC1; p=reject; adkim=s; aspf=s'],
+        },
+      });
+      render(<DmarcPage />);
+
+      await user.click(screen.getByRole('button', { name: 'Alignment check' }));
+      await user.type(
+        screen.getByLabelText('Visible From address domain'),
+        'mail.stale-result.test',
+      );
+      await user.type(
+        screen.getByLabelText('Domains from passing DKIM signatures'),
+        'mail.stale-result.test',
+      );
+      await user.click(
+        screen.getByRole('checkbox', {
+          name: /confirm these prior SPF and DKIM results belong/iu,
+        }),
+      );
+      await user.click(screen.getByRole('button', { name: 'Check alignment' }));
+      expect(await screen.findByRole('heading', { name: 'DMARC pass' })).toBeVisible();
+
+      const input = screen.getByLabelText(label);
+      if (control === 'select') await user.selectOptions(input, 'fail');
+      else await user.type(input, 'x');
+
+      expect(screen.queryByRole('heading', { name: 'DMARC pass' })).not.toBeInTheDocument();
+      expect(
+        screen.getByRole('checkbox', {
+          name: /confirm these prior SPF and DKIM results belong/iu,
+        }),
+      ).not.toBeChecked();
+    },
+  );
+
+  it('invalidates a completed policy report after its domain changes', async () => {
+    const user = userEvent.setup();
+    installDns({
+      '_dmarc.stale-policy.test': { values: ['v=DMARC1; p=reject'] },
+    });
+    render(<DmarcPage />);
+
+    await user.type(screen.getByLabelText('Domain'), 'stale-policy.test');
+    await user.click(screen.getByRole('button', { name: 'Inspect DMARC' }));
+    expect(await screen.findByRole('heading', { name: 'DMARC policy' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Copy DMARC evidence JSON' })).toBeVisible();
+
+    await user.type(screen.getByLabelText('Domain'), 'x');
+
+    expect(screen.queryByRole('heading', { name: 'DMARC policy' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Copy DMARC evidence JSON' }),
+    ).not.toBeInTheDocument();
   });
 
   it('distinguishes a declared policy from the t=y disposition in UI and evidence', async () => {

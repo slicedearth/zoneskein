@@ -7,7 +7,6 @@ import {
   evidenceFromDkim,
   evidenceFromSpf,
   MAIL_AUTHENTICATION_EVIDENCE_LIMITS,
-  mergeMailAuthenticationEvidence,
 } from './evidence';
 
 const CAPTURED = '2026-08-26T00:00:00.000Z';
@@ -64,18 +63,72 @@ describe('mail-authentication evidence transfer', () => {
     expect(decodeMailAuthenticationEvidence(encoded)).toEqual({ ok: true, value: evidence });
   });
 
-  it('merges independent SPF and DKIM runs while retaining only minimal domains', () => {
+  it('keeps independently captured SPF and DKIM runs as separate hand-offs', () => {
     const dkim = evidenceFromDkim([signature('signer.example')], CAPTURED, 'cloudflare', false);
     const spf = evidenceFromSpf(
-      { capturedAt: '2026-08-26T00:01:00.000Z', domain: 'bounce.example', result: 'pass' },
+      {
+        capturedAt: '2026-08-26T00:01:00.000Z',
+        domain: 'bounce.example',
+        identitySource: 'mail-from',
+        result: 'pass',
+      },
       'quad9-relay',
     );
     if (dkim === null || spf === null) throw new Error('Expected valid fixtures.');
 
-    expect(mergeMailAuthenticationEvidence(dkim, spf)).toMatchObject({
-      createdAt: '2026-08-26T00:01:00.000Z',
+    expect(dkim).toMatchObject({
+      createdAt: CAPTURED,
       dkim: [{ domain: 'signer.example' }],
+    });
+    expect(dkim.spf).toBeUndefined();
+    expect(spf).toMatchObject({
+      createdAt: '2026-08-26T00:01:00.000Z',
+      dkim: [],
       spf: { domain: 'bounce.example', result: 'pass' },
+    });
+  });
+
+  it.each(['none', 'neutral', 'fail', 'softfail', 'temperror', 'permerror'] as const)(
+    'omits the unauthenticated SPF domain for %s evidence',
+    (result) => {
+      const evidence = evidenceFromSpf(
+        {
+          capturedAt: CAPTURED,
+          domain: 'private-helo.example',
+          identitySource: 'helo',
+          result,
+        },
+        'google',
+      );
+
+      expect(evidence?.spf).toEqual({
+        capturedAt: CAPTURED,
+        resolverId: 'google',
+        result,
+        source: 'spf-sender',
+      });
+      if (evidence === null) throw new Error('Expected non-pass SPF evidence.');
+      expect(
+        decodeMailAuthenticationEvidence(encodeMailAuthenticationEvidence(evidence)),
+      ).toEqual({ ok: true, value: evidence });
+    },
+  );
+
+  it('retains the authenticated identity source for a null-path SPF pass', () => {
+    const evidence = evidenceFromSpf(
+      {
+        capturedAt: CAPTURED,
+        domain: 'helo.example',
+        identitySource: 'helo',
+        result: 'pass',
+      },
+      'google',
+    );
+
+    expect(evidence?.spf).toMatchObject({
+      domain: 'helo.example',
+      identitySource: 'helo',
+      result: 'pass',
     });
   });
 
@@ -128,5 +181,33 @@ describe('mail-authentication evidence transfer', () => {
     const empty = decodeMailAuthenticationEvidence(JSON.stringify({ ...parsed, dkim: [] }));
     expect(empty.ok).toBe(false);
     if (!empty.ok) expect(empty.error).toMatch(/at least one/iu);
+  });
+
+  it('rejects pass evidence without identity provenance and non-pass evidence with a domain', () => {
+    const passing = evidenceFromSpf(
+      {
+        capturedAt: CAPTURED,
+        domain: 'sender.example',
+        identitySource: 'mail-from',
+        result: 'pass',
+      },
+      'google',
+    );
+    if (passing?.spf === undefined) throw new Error('Expected passing SPF evidence.');
+    const missingSource = {
+      ...passing,
+      spf: { ...passing.spf, identitySource: undefined },
+    };
+    const nonPassWithDomain = {
+      ...passing,
+      spf: { ...passing.spf, result: 'fail' },
+    };
+
+    expect(decodeMailAuthenticationEvidence(JSON.stringify(missingSource))).toMatchObject({
+      ok: false,
+    });
+    expect(decodeMailAuthenticationEvidence(JSON.stringify(nonPassWithDomain))).toMatchObject({
+      ok: false,
+    });
   });
 });

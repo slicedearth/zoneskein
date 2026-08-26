@@ -73,11 +73,18 @@ describe('SpfPage', () => {
     const evidence = onUseForDmarc.mock.calls[0]?.[0];
     expect(evidence).toMatchObject({
       dkim: [],
-      spf: { domain: 'bounce.example', result: 'pass', source: 'spf-sender' },
+      spf: {
+        domain: 'bounce.example',
+        identitySource: 'mail-from',
+        result: 'pass',
+        source: 'spf-sender',
+      },
     });
     expect(JSON.stringify(evidence)).not.toContain('private-user');
     expect(JSON.stringify(evidence)).not.toContain('192.0.2.1');
-    expect(screen.getByText(/separate DMARC hand-off contains only/iu)).toBeVisible();
+    expect(
+      screen.getByText(/hand-off contains the SPF pass.*authenticated MAIL FROM domain/iu),
+    ).toBeVisible();
   });
 
   it('discloses the Netlify intermediary when the Quad9 relay is selected', () => {
