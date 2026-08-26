@@ -15,6 +15,7 @@ const MAX_BODY_CHUNKS = 256;
 const MAX_DNS_NAME_OPERATIONS = 32_768;
 const MAX_DNS_NAME_POINTERS = 128;
 const MAX_DNS_RECORDS = 512;
+const DNS_QUERY_PADDING_BLOCK_BYTES = 128;
 const DNS_MESSAGE_MEDIA_TYPE = 'application/dns-message';
 const SUPPORTED_QUERY_TYPES = new Set([
   1, // A
@@ -32,11 +33,13 @@ const SUPPORTED_QUERY_TYPES = new Set([
   48, // DNSKEY
   50, // NSEC3
   52, // TLSA
+  63, // ZONEMD
   64, // SVCB
   65, // HTTPS
   257, // CAA
 ]);
 const EXPECTED_EDNS_CLIENT_SUBNET = new Uint8Array([0, 8, 0, 4, 0, 1, 0, 0]);
+const EDNS_PADDING_OPTION_CODE = 12;
 
 export const config = {
   method: 'POST',
@@ -187,6 +190,8 @@ function parseQuestion(
 
 function validateRelayQuery(message: Uint8Array): QuestionBinding {
   if (message.length < 12) throw new Error('DNS query is shorter than its header.');
+  if (message.length % DNS_QUERY_PADDING_BLOCK_BYTES !== 0)
+    throw new Error('DNS query does not match the padded ZoneSkein profile.');
   const flags = readUint16(message, 2);
   if ((flags & 0x0100) === 0 || (flags & ~(0x0100 | 0x0010)) !== 0)
     throw new Error('DNS query flags are not permitted.');
@@ -220,12 +225,22 @@ function validateRelayQuery(message: Uint8Array): QuestionBinding {
     throw new Error('EDNS OPT parameters do not match the ZoneSkein query profile.');
   if (dataEnd !== message.length)
     throw new Error('DNS query contains trailing or truncated data.');
+  const paddingHeader = dataStart + EXPECTED_EDNS_CLIENT_SUBNET.length;
   if (
-    dataLength !== EXPECTED_EDNS_CLIENT_SUBNET.length ||
-    !equalBytes(message.slice(dataStart, dataEnd), EXPECTED_EDNS_CLIENT_SUBNET)
+    !equalBytes(message.slice(dataStart, paddingHeader), EXPECTED_EDNS_CLIENT_SUBNET) ||
+    paddingHeader + 4 > dataEnd ||
+    readUint16(message, paddingHeader) !== EDNS_PADDING_OPTION_CODE
   ) {
     throw new Error('EDNS options do not match the zero-prefix privacy profile.');
   }
+  const paddingLength = readUint16(message, paddingHeader + 2);
+  const paddingStart = paddingHeader + 4;
+  if (
+    paddingLength > DNS_QUERY_PADDING_BLOCK_BYTES - 1 ||
+    paddingStart + paddingLength !== dataEnd ||
+    !message.slice(paddingStart, dataEnd).every((byte) => byte === 0)
+  )
+    throw new Error('EDNS padding does not match the ZoneSkein query profile.');
   return question.binding;
 }
 

@@ -65,28 +65,21 @@ function dnsQuery({
   const questionTail = new Uint8Array(4);
   writeUint16(questionTail, 0, typeCode);
   writeUint16(questionTail, 2, classCode);
-  const opt = new Uint8Array([
-    0,
-    0,
-    41,
-    4,
-    208,
-    0,
-    0,
-    dnssecOk ? 128 : 0,
-    0,
-    0,
-    8,
-    0,
-    8,
-    0,
-    4,
-    0,
-    1,
-    0,
-    0,
-  ]);
-  return concatenate(header, dnsName(name), questionTail, opt);
+  const optHeader = new Uint8Array([0, 0, 41, 4, 208, 0, 0, dnssecOk ? 128 : 0, 0, 0, 0]);
+  const clientSubnet = new Uint8Array([0, 8, 0, 4, 0, 1, 0, 0]);
+  const withoutPadding = concatenate(
+    header,
+    dnsName(name),
+    questionTail,
+    optHeader,
+    clientSubnet,
+  );
+  const paddingLength = (128 - ((withoutPadding.length + 4) % 128)) % 128;
+  const padding = new Uint8Array(4 + paddingLength);
+  writeUint16(padding, 0, 12);
+  writeUint16(padding, 2, paddingLength);
+  writeUint16(optHeader, 9, clientSubnet.length + padding.length);
+  return concatenate(header, dnsName(name), questionTail, optHeader, clientSubnet, padding);
 }
 
 function questionEnd(query: Uint8Array): number {
@@ -247,8 +240,12 @@ describe('Quad9 compatibility relay', () => {
     const badLabel = baseline.slice();
     badLabel[13] = 0x20;
     const badEcs = baseline.slice();
-    badEcs[badEcs.length - 8] = 0;
-    badEcs[badEcs.length - 7] = 10;
+    const ecsStart = questionEnd(baseline) + 11;
+    badEcs[ecsStart] = 0;
+    badEcs[ecsStart + 1] = 10;
+    const badPadding = baseline.slice();
+    badPadding[badPadding.length - 1] = 1;
+    const unpadded = baseline.slice(0, baseline.length - 1);
     const noOpt = baseline.slice();
     writeUint16(noOpt, 10, 0);
     const cases = [
@@ -260,6 +257,8 @@ describe('Quad9 compatibility relay', () => {
       compressed,
       badLabel,
       badEcs,
+      badPadding,
+      unpadded,
       noOpt,
     ];
     const forward = vi.fn<Quad9Forwarder>(() => Promise.resolve(dnsResponse(baseline)));
@@ -270,7 +269,7 @@ describe('Quad9 compatibility relay', () => {
   });
 
   it('allows every ZoneSkein live QTYPE including root DNSKEY', async () => {
-    const supported = [1, 2, 5, 6, 12, 15, 16, 28, 33, 43, 46, 47, 48, 50, 52, 64, 65, 257];
+    const supported = [1, 2, 5, 6, 12, 15, 16, 28, 33, 43, 46, 47, 48, 50, 52, 63, 64, 65, 257];
     for (const typeCode of supported) {
       const query = dnsQuery({ name: typeCode === 48 ? '.' : 'example.com.', typeCode });
       const response = await createQuad9RelayHandler(() => Promise.resolve(dnsResponse(query)))(

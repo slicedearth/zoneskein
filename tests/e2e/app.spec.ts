@@ -1,4 +1,4 @@
-import { decode, encode } from '@dnsquery/dns-packet';
+import { decode, encode, type Answer } from '@dnsquery/dns-packet';
 import { expect, test, type Page, type Route } from '@playwright/test';
 
 async function allowCors(route: Route): Promise<boolean> {
@@ -27,6 +27,24 @@ async function mockDns(page: Page): Promise<void> {
         : Buffer.from(encoded.replaceAll('-', '+').replaceAll('_', '/'), 'base64'));
     if (bytes === null) throw new Error('Expected a DNS wire request.');
     const query = decode(new Uint8Array(bytes));
+    const opt = query.additionals?.find((answer) => answer.type === 'OPT') as
+      | (Answer & {
+          readonly options?: readonly {
+            readonly code?: number | string;
+            readonly data?: Uint8Array;
+            readonly type?: string;
+          }[];
+        })
+      | undefined;
+    const padding = opt?.options?.find(
+      (option) => option.code === 12 || option.type === 'PADDING',
+    );
+    if (
+      bytes.length % 128 !== 0 ||
+      !(padding?.data instanceof Uint8Array) ||
+      !padding.data.every((byte) => byte === 0)
+    )
+      throw new Error('Expected RFC 8467 all-zero query padding.');
     const question = query.questions?.[0];
     if (question === undefined) throw new Error('Expected one DNS question.');
     const answers =
@@ -144,7 +162,7 @@ test('zone linting runs entirely locally', async ({ page }) => {
   await page
     .getByLabel('Zone snippet')
     .fill('@ 300 IN CNAME target.example.net.\n@ 300 IN A 192.0.2.1');
-  await page.getByRole('button', { name: 'Lint snippet' }).click();
+  await page.getByRole('button', { name: 'Lint zone input' }).click();
 
   await expect(page.getByText(/Parsed 2 records and produced/)).toBeVisible();
   await expect(page.getByText('cname-conflict')).toBeVisible();

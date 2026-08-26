@@ -7,29 +7,33 @@ const resolvers = [
   ['Quad9', 'https://dns.quad9.net/dns-query', 'GET'],
 ] as const;
 
-const query = encode({
-  additionals: [
-    {
-      flags: DNSSEC_OK,
-      name: '.',
-      options: [
-        {
-          code: 'CLIENT_SUBNET',
-          family: 1,
-          ip: '0.0.0.0',
-          scopePrefixLength: 0,
-          sourcePrefixLength: 0,
-        },
-      ],
-      type: 'OPT',
-      udpPayloadSize: 1232,
-    } as unknown as Answer,
-  ],
-  flags: 0x0100,
-  id: 0,
-  questions: [{ class: 'IN', name: 'example.com.', type: 'A' }],
-  type: 'query',
-});
+const clientSubnet = {
+  code: 'CLIENT_SUBNET',
+  family: 1,
+  ip: '0.0.0.0',
+  scopePrefixLength: 0,
+  sourcePrefixLength: 0,
+};
+const encodeQuery = (options: readonly unknown[]) =>
+  encode({
+    additionals: [
+      {
+        flags: DNSSEC_OK,
+        name: '.',
+        options,
+        type: 'OPT',
+        udpPayloadSize: 1232,
+      } as unknown as Answer,
+    ],
+    flags: 0x0100,
+    id: 0,
+    questions: [{ class: 'IN', name: 'example.com.', type: 'A' }],
+    type: 'query',
+  });
+const unpaddedQuery = encodeQuery([clientSubnet]);
+const paddingLength = (128 - ((unpaddedQuery.length + 4) % 128)) % 128;
+const query = encodeQuery([clientSubnet, { code: 'PADDING', length: paddingLength }]);
+if (query.length % 128 !== 0) throw new Error('Live query does not match the padding profile.');
 const queryBody = new ArrayBuffer(query.byteLength);
 new Uint8Array(queryBody).set(query);
 

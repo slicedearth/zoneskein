@@ -25,6 +25,7 @@ import type {
 import { displayRecordType, wireRecordType } from './record-types';
 
 export const MAX_DNS_MESSAGE_BYTES = 65_535;
+export const DNS_QUERY_PADDING_BLOCK_BYTES = 128;
 const MAX_DNS_MESSAGE_NAME_OPERATIONS = MAX_DNS_MESSAGE_BYTES;
 const MAX_DNS_NAME_POINTERS = 128;
 const MAX_DNS_NAME_OPERATIONS = 256;
@@ -424,35 +425,40 @@ function negativeCacheTtl(
 
 export function encodeDnsQuery(question: DnsQuestion, options: DnsQueryOptions): Uint8Array {
   const flags = RECURSION_DESIRED | (options.checkingDisabled ? CHECKING_DISABLED : 0);
-  const additionals: Answer[] = [
-    {
-      class: 'IN',
-      name: '.',
-      type: 'OPT',
-      flags: options.dnssecOk ? DNSSEC_OK : 0,
-      options: [
-        {
-          code: 'CLIENT_SUBNET',
-          family: 1,
-          ip: '0.0.0.0',
-          scopePrefixLength: 0,
-          sourcePrefixLength: 0,
-        },
-      ],
-      udpPayloadSize: 1232,
-    } as unknown as Answer,
-  ];
-
-  const packet: Packet = {
-    additionals,
+  const clientSubnet = {
+    code: 'CLIENT_SUBNET',
+    family: 1,
+    ip: '0.0.0.0',
+    scopePrefixLength: 0,
+    sourcePrefixLength: 0,
+  };
+  const packet = (ednsOptions: readonly unknown[]): Packet => ({
+    additionals: [
+      {
+        class: 'IN',
+        name: '.',
+        type: 'OPT',
+        flags: options.dnssecOk ? DNSSEC_OK : 0,
+        options: ednsOptions,
+        udpPayloadSize: 1232,
+      } as unknown as Answer,
+    ],
     flags,
     id: 0,
     questions: [
       { class: 'IN', name: question.name.absolute, type: wireRecordType(question.type) },
     ],
     type: 'query',
-  };
-  return encode(packet);
+  });
+
+  const unpadded = encode(packet([clientSubnet]));
+  // RFC 8467 counts the mandatory four-octet option header in the padded message length.
+  const optionHeaderBytes = 4;
+  const paddingLength =
+    (DNS_QUERY_PADDING_BLOCK_BYTES -
+      ((unpadded.length + optionHeaderBytes) % DNS_QUERY_PADDING_BLOCK_BYTES)) %
+    DNS_QUERY_PADDING_BLOCK_BYTES;
+  return encode(packet([clientSubnet, { code: 'PADDING', length: paddingLength }]));
 }
 
 export function decodeDnsMessage(bytes: Uint8Array): DnsMessage {

@@ -2,7 +2,7 @@ import { DNSSEC_OK, decode, encode, type Packet } from '@dnsquery/dns-packet';
 import { describe, expect, it } from 'vitest';
 
 import { validateDnsName } from './names';
-import { decodeDnsMessage, encodeDnsQuery } from './wire';
+import { decodeDnsMessage, DNS_QUERY_PADDING_BLOCK_BYTES, encodeDnsQuery } from './wire';
 
 function name(value: string) {
   const result = validateDnsName(value);
@@ -19,6 +19,7 @@ interface DecodedOpt {
 
 interface DecodedOption {
   readonly code?: number | string;
+  readonly data?: Uint8Array;
   readonly family?: number;
   readonly ip?: string;
   readonly scopePrefixLength?: number;
@@ -43,6 +44,16 @@ function expectZeroPrefixEcs(opt: DecodedOpt): void {
   expect(clientSubnet?.sourcePrefixLength).toBe(0);
 }
 
+function expectQueryPadding(bytes: Uint8Array, opt: DecodedOpt): void {
+  const padding = opt.options?.filter(
+    (option) => option.code === 12 || option.type === 'PADDING',
+  );
+  expect(bytes.length % DNS_QUERY_PADDING_BLOCK_BYTES).toBe(0);
+  expect(padding).toHaveLength(1);
+  expect(padding?.[0]?.data).toBeInstanceOf(Uint8Array);
+  expect(padding?.[0]?.data?.every((byte) => byte === 0)).toBe(true);
+}
+
 describe('DNS wire messages', () => {
   it('encodes a zero-ID DNSSEC query without ANY', () => {
     const bytes = encodeDnsQuery(
@@ -57,6 +68,7 @@ describe('DNS wire messages', () => {
     const opt = queryOpt(bytes);
     expect((opt.flags ?? 0) & DNSSEC_OK).toBe(DNSSEC_OK);
     expectZeroPrefixEcs(opt);
+    expectQueryPadding(bytes, opt);
   });
 
   it('adds zero-prefix ECS without setting DO on an SPF-style query', () => {
@@ -68,6 +80,22 @@ describe('DNS wire messages', () => {
 
     expect((opt.flags ?? 0) & DNSSEC_OK).toBe(0);
     expectZeroPrefixEcs(opt);
+    expectQueryPadding(bytes, opt);
+  });
+
+  it('pads different valid query lengths to 128-octet blocks', () => {
+    const questions = [
+      { name: name('a.test'), type: 'A' as const },
+      {
+        name: name(`${'a'.repeat(63)}.${'b'.repeat(63)}.${'c'.repeat(63)}.example`),
+        type: 'TXT' as const,
+      },
+    ];
+
+    for (const question of questions) {
+      const bytes = encodeDnsQuery(question, { checkingDisabled: false, dnssecOk: false });
+      expectQueryPadding(bytes, queryOpt(bytes));
+    }
   });
 
   it('decodes flags, exact wire size, TXT chunks, and raw RDATA', () => {
