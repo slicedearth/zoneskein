@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto';
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
+import { lstat, open, readdir, realpath } from 'node:fs/promises';
 import { join, relative, resolve, sep } from 'node:path';
 import { gunzipSync, gzipSync } from 'node:zlib';
 
 export const SOURCE_ARCHIVE_NAME = 'zoneskein-corresponding-source.tar.gz';
 export const SOURCE_ARCHIVE_DIGEST_NAME = 'SOURCE_SHA256';
+export const SOURCE_FILE_LIST_NAME = 'SOURCE_FILES.json';
 export const SOURCE_MANIFEST_NAME = 'SOURCE_MANIFEST.sha256';
 
 const MAX_SOURCE_FILES = 768;
@@ -12,7 +14,7 @@ const MAX_SOURCE_FILE_OCTETS = 2 * 1024 * 1024;
 const MAX_SOURCE_TOTAL_OCTETS = 16 * 1024 * 1024;
 const TAR_BLOCK_OCTETS = 512;
 
-const SOURCE_DIRECTORIES = [
+export const SOURCE_REPOSITORY_DIRECTORIES = [
   '.github',
   'docs',
   'netlify',
@@ -22,7 +24,7 @@ const SOURCE_DIRECTORIES = [
   'tests',
 ] as const;
 
-const SOURCE_ROOT_FILES = [
+export const SOURCE_REPOSITORY_ROOT_FILES = [
   '.gitignore',
   '.npmrc',
   '.nvmrc',
@@ -39,6 +41,7 @@ const SOURCE_ROOT_FILES = [
   'TERMS.md',
   'THIRD_PARTY_NOTICES.md',
   'TRADEMARKS.md',
+  SOURCE_FILE_LIST_NAME,
   'eslint.config.js',
   'index.html',
   'netlify.toml',
@@ -53,6 +56,14 @@ const SOURCE_ROOT_FILES = [
 ] as const;
 
 const EMITTED_HELPER_SOURCE_PACKAGES = ['rolldown', 'vite'] as const;
+const FORBIDDEN_LOCAL_BUILD_INPUTS = [
+  '.env',
+  '.env.local',
+  '.env.production',
+  '.env.production.local',
+] as const;
+const PACKAGE_PATH_PATTERN =
+  /^node_modules\/(?:@[a-z0-9][a-z0-9._~-]*\/[a-z0-9][a-z0-9._~-]*|[a-z0-9][a-z0-9._~-]*)(?:\/node_modules\/(?:@[a-z0-9][a-z0-9._~-]*\/[a-z0-9][a-z0-9._~-]*|[a-z0-9][a-z0-9._~-]*))*$/u;
 
 export interface SourceArchiveEntry {
   readonly content: Uint8Array;
@@ -113,6 +124,131 @@ async function filesBelow(
   return found;
 }
 
+function containedPath(root: string, path: string, label: string): string {
+  const absolute = resolve(path);
+  const fromRoot = relative(root, absolute);
+  if (fromRoot === '' || fromRoot === '..' || fromRoot.startsWith(`..${sep}`)) {
+    fail(`${label} escapes the repository root.`);
+  }
+  return absolute;
+}
+
+async function assertRegularPath(root: string, path: string, label: string): Promise<void> {
+  const absolute = containedPath(root, path, label);
+  const fromRoot = relative(root, absolute);
+  let current = root;
+  for (const part of fromRoot.split(sep)) {
+    current = join(current, part);
+    const details = await lstat(current);
+    if (details.isSymbolicLink()) fail(`${label} contains a symbolic link.`);
+    if (current === absolute ? !details.isFile() : !details.isDirectory()) {
+      fail(`${label} is not a regular repository file.`);
+    }
+  }
+}
+
+async function readRegularFile(root: string, path: string, label: string): Promise<Buffer> {
+  const absolute = containedPath(root, path, label);
+  await assertRegularPath(root, absolute, label);
+  const handle = await open(absolute, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  try {
+    const details = await handle.stat();
+    if (!details.isFile()) fail(`${label} is not a regular file.`);
+    if (details.size > MAX_SOURCE_FILE_OCTETS)
+      fail(`${label} exceeds ${String(MAX_SOURCE_FILE_OCTETS)} octets.`);
+    const content = await handle.readFile();
+    if (content.byteLength !== details.size) fail(`${label} changed while it was read.`);
+    return content;
+  } finally {
+    await handle.close();
+  }
+}
+
+function parseSourceFileList(content: Uint8Array): readonly string[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(content)) as unknown;
+  } catch {
+    fail(`${SOURCE_FILE_LIST_NAME} is not valid UTF-8 JSON.`);
+  }
+  if (!Array.isArray(parsed))
+    fail(`${SOURCE_FILE_LIST_NAME} must be an array of source paths.`);
+  const paths = parsed.map((path: unknown) => {
+    if (typeof path !== 'string')
+      fail(`${SOURCE_FILE_LIST_NAME} must be an array of source paths.`);
+    return safePath(path);
+  });
+  if (
+    paths.length === 0 ||
+    paths.length > MAX_SOURCE_FILES ||
+    new Set(paths).size !== paths.length
+  ) {
+    fail(`${SOURCE_FILE_LIST_NAME} has an invalid path count.`);
+  }
+  const ordered = [...paths].sort(comparePaths);
+  if (ordered.some((path, index) => path !== paths[index])) {
+    fail(`${SOURCE_FILE_LIST_NAME} must be sorted.`);
+  }
+  const rootFiles = new Set(SOURCE_REPOSITORY_ROOT_FILES);
+  const directories = new Set(SOURCE_REPOSITORY_DIRECTORIES);
+  for (const path of paths) {
+    const slash = path.indexOf('/');
+    if (
+      slash < 0
+        ? !rootFiles.has(path as (typeof SOURCE_REPOSITORY_ROOT_FILES)[number])
+        : !directories.has(
+            path.slice(0, slash) as (typeof SOURCE_REPOSITORY_DIRECTORIES)[number],
+          )
+    ) {
+      fail(`${SOURCE_FILE_LIST_NAME} contains an unapproved path ${path}.`);
+    }
+  }
+  for (const required of SOURCE_REPOSITORY_ROOT_FILES) {
+    if (!paths.includes(required)) fail(`${SOURCE_FILE_LIST_NAME} is missing ${required}.`);
+  }
+  return paths;
+}
+
+async function declaredRepositoryPaths(root: string): Promise<readonly string[]> {
+  for (const input of FORBIDDEN_LOCAL_BUILD_INPUTS) {
+    try {
+      await lstat(join(root, input));
+      fail(`undeclared local build input ${input} is present.`);
+    } catch (cause) {
+      if (
+        typeof cause !== 'object' ||
+        cause === null ||
+        !('code' in cause) ||
+        cause.code !== 'ENOENT'
+      ) {
+        throw cause;
+      }
+    }
+  }
+  const fileList = await readRegularFile(
+    root,
+    join(root, SOURCE_FILE_LIST_NAME),
+    SOURCE_FILE_LIST_NAME,
+  );
+  const declared = parseSourceFileList(fileList);
+  const observed = (
+    await Promise.all(
+      SOURCE_REPOSITORY_DIRECTORIES.map((directory) => filesBelow(root, directory)),
+    )
+  )
+    .flat()
+    .map((path) => relative(root, path).split(sep).join('/'))
+    .sort(comparePaths);
+  const expected = declared.filter((path) => path.includes('/'));
+  if (
+    observed.length !== expected.length ||
+    observed.some((path, index) => path !== expected[index])
+  ) {
+    fail(`${SOURCE_FILE_LIST_NAME} does not exactly enumerate the source directories.`);
+  }
+  return declared;
+}
+
 function isObject(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -120,7 +256,11 @@ function isObject(value: unknown): value is Readonly<Record<string, unknown>> {
 async function productionPackagePaths(root: string): Promise<readonly string[]> {
   let lockfile: unknown;
   try {
-    lockfile = JSON.parse(await readFile(join(root, 'package-lock.json'), 'utf8')) as unknown;
+    lockfile = JSON.parse(
+      (
+        await readRegularFile(root, join(root, 'package-lock.json'), 'package-lock.json')
+      ).toString('utf8'),
+    ) as unknown;
   } catch {
     fail('package-lock.json is not valid JSON.');
   }
@@ -130,6 +270,8 @@ async function productionPackagePaths(root: string): Promise<readonly string[]> 
   const paths: string[] = [];
   for (const [path, metadata] of Object.entries(lockfile['packages'])) {
     if (!path.startsWith('node_modules/')) continue;
+    if (!PACKAGE_PATH_PATTERN.test(path))
+      fail(`package-lock entry ${path} has an unsafe path.`);
     if (!isObject(metadata)) fail(`package-lock entry ${path} is malformed.`);
     if (
       (metadata['dev'] !== undefined && typeof metadata['dev'] !== 'boolean') ||
@@ -138,6 +280,8 @@ async function productionPackagePaths(root: string): Promise<readonly string[]> 
       fail(`package-lock entry ${path} has invalid flags.`);
     }
     if (metadata['dev'] !== true && metadata['link'] !== true) paths.push(path);
+    if (paths.length > MAX_SOURCE_FILES)
+      fail('package-lock.json identifies too many production packages.');
   }
   if (paths.length === 0) fail('package-lock.json identifies no production packages.');
   return paths.sort(comparePaths);
@@ -146,11 +290,8 @@ async function productionPackagePaths(root: string): Promise<readonly string[]> 
 export async function collectCorrespondingSource(
   repositoryRoot: string,
 ): Promise<readonly SourceArchiveEntry[]> {
-  const root = resolve(repositoryRoot);
-  const repositoryPaths = [
-    ...SOURCE_ROOT_FILES.map((path) => join(root, path)),
-    ...(await Promise.all(SOURCE_DIRECTORIES.map((path) => filesBelow(root, path)))).flat(),
-  ];
+  const root = await realpath(resolve(repositoryRoot));
+  const repositoryPaths = (await declaredRepositoryPaths(root)).map((path) => join(root, path));
   const seen = new Set<string>();
   const entries: SourceArchiveEntry[] = [];
   let totalOctets = 0;
@@ -159,14 +300,12 @@ export async function collectCorrespondingSource(
     const name = safePath(archivePath);
     if (seen.has(name)) fail(`duplicate source path ${name}.`);
     seen.add(name);
-    const details = await stat(path);
-    if (!details.isFile()) fail(`source input ${name} is not a regular file.`);
-    if (details.size > MAX_SOURCE_FILE_OCTETS)
-      fail(`${name} exceeds ${String(MAX_SOURCE_FILE_OCTETS)} octets.`);
-    totalOctets += details.size;
+    const content = await readRegularFile(root, path, `source input ${name}`);
+    totalOctets += content.byteLength;
     if (totalOctets > MAX_SOURCE_TOTAL_OCTETS)
       fail(`source input exceeds ${String(MAX_SOURCE_TOTAL_OCTETS)} octets.`);
-    entries.push({ content: await readFile(path), path: name });
+    entries.push({ content, path: name });
+    if (entries.length >= MAX_SOURCE_FILES) fail('source input contains too many files.');
   }
 
   for (const path of repositoryPaths) await add(path, relative(root, path));

@@ -45,7 +45,9 @@ relay request shape. An end-to-end `/api/doh/quad9` check requires a Netlify
 local runtime or a deployed preview. Deterministic function tests exercise the
 request validation and HTTP/2 boundary without contacting Quad9.
 
-Version tags matching `v*` run the same checked build and produce three distinct
+Version tags matching the exact `v<package-version>` form run the same checked
+build only when the tag is annotated, resolves to the workflow revision, and
+that revision is already on `main`. The unprivileged build job produces three distinct
 deterministic archives. `zoneskein-static.tar.gz` contains the verified
 contents of `dist`, including the corresponding-source offer. It does not place
 the relay at a deployable Netlify Function path; the nested source offer still
@@ -62,11 +64,25 @@ complete deployment archive at 8 MiB. The independently checked, uncompressed
 well as the browser assets and public documents.
 
 The workflow also produces a bounded CycloneDX software bill of materials and a
-SHA-256 checksum file covering all three archives and the SBOM. GitHub records
-separate provenance attestations for the archives and SBOM attestations for the deployment artefacts, then retains the
-files for 90 days. The exact archive commands do not use repository globs, so
-tests, local files, and unrelated source cannot enter the deployment archive.
-This workflow does not deploy the site or create a GitHub release.
+SHA-256 checksum file covering all three archives and the SBOM. The build job
+has read-only repository access and transfers an exact, short-lived artefact to
+a separate attestation job. Only that second job receives identity-token and
+attestation permissions; it does not check out or execute repository code, and
+it independently checks the transferred file set and checksums before recording
+provenance and SBOM attestations. The final files are retained for 90 days. The
+exact deployment-archive commands do not use repository globs, so tests, local
+files, and unrelated source cannot enter that archive. This workflow does not
+deploy the site or create a release entry.
+
+Before enabling tagged builds, repository administrators must configure both
+of these remote controls, which cannot be enforced by committed workflow code:
+
+1. protect `v*` tags with a ruleset that restricts creation, update, and deletion to authorised release maintainers;
+2. protect the `release-attestation` environment with required reviewers who are independent of the tag pusher, prevent administrators from bypassing the rule, and restrict deployment branches and tags to the protected release-tag pattern.
+
+Do not treat an attestation as authorised release approval if either remote
+control is absent. Create the annotated version tag only after the version
+commit has landed on `main`.
 
 ## Deploy from a repository
 
@@ -88,11 +104,16 @@ The Netlify `_headers` file sets:
 - a Content Security Policy allowing self-hosted assets, including the same-origin relay, and only the three direct DNS-over-HTTPS origins;
 - `frame-ancestors 'none'` and `X-Frame-Options: DENY`;
 - `Referrer-Policy: no-referrer`;
+- a two-year `Strict-Transport-Security` policy covering the deployment hostname and its subdomains;
 - `X-Content-Type-Options: nosniff`;
 - restrictive Permissions Policy;
 - same-origin opener and resource policies.
 
 Verify deployed headers with the browser network inspector or an HTTP header client. Do not assume a successful build proves that the hosting platform applied headers.
+Only host subdomains that are ready for HTTPS beneath the production hostname;
+the committed HSTS `includeSubDomains` policy causes supporting browsers to
+require HTTPS for them after the first secure visit. The project does not claim
+preload registration.
 
 ## Custom domains
 
@@ -116,7 +137,10 @@ HTTP/2. It does not accept a target or query string and does not use or forward
 cookies, credentials, or an application environment override. Requests are capped at 4,096 octets and
 responses at 65,535 octets; method, media type, DNS header, single-question
 shape, class, supported type, work, declared response length, streamed response
-length, question binding, and timeout limits fail closed. It returns
+length, and question binding limits fail closed. One seven-second lifecycle
+deadline covers both inbound body consumption and the upstream exchange. The
+HTTP/2 client disables server push, rejects reserved push streams, and applies
+explicit session-memory, concurrency, and header bounds. It returns
 `Cache-Control: no-store` and does not cache responses on the relay or write
 question bodies to application logs. The normal bounded browser memory cache
 still applies after response validation.

@@ -88,7 +88,9 @@ describe('wire DoH resolver', () => {
     if (typeof target !== 'string') throw new Error('Expected a string resolver URL.');
     expect(target).toMatch(/^https:\/\/dns\.google\/dns-query\?dns=/u);
     expect(target).not.toContain('example.com');
-    expect(init).toEqual(expect.objectContaining({ credentials: 'omit', method: 'GET' }));
+    expect(init).toEqual(
+      expect.objectContaining({ credentials: 'omit', method: 'GET', redirect: 'error' }),
+    );
   });
 
   it('uses a same-origin POST for the explicit Quad9 compatibility relay', async () => {
@@ -128,6 +130,7 @@ describe('wire DoH resolver', () => {
         },
         method: 'POST',
         mode: 'cors',
+        redirect: 'error',
         referrerPolicy: 'no-referrer',
       }),
     );
@@ -281,6 +284,32 @@ describe('wire DoH resolver', () => {
       message: { responseCode: 'NOERROR' },
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('cancels a rejected response body before releasing the request boundary', async () => {
+    let releaseCancellation: (() => void) | undefined;
+    const cancel = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseCancellation = resolve;
+        }),
+    );
+    const body = new ReadableStream<Uint8Array>({ cancel });
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response(body, { status: 503 }));
+    const resolver = new WireDnsResolver(resolverById('google'), testDependencies(fetchMock));
+    let settled = false;
+    const pending = resolver
+      .query(question(), { checkingDisabled: false, dnssecOk: false })
+      .finally(() => {
+        settled = true;
+      });
+
+    await vi.waitFor(() => expect(cancel).toHaveBeenCalledOnce());
+    expect(settled).toBe(false);
+    releaseCancellation?.();
+    await expect(pending).rejects.toMatchObject({ code: 'http-error' });
   });
 
   it('sanitises cached transport failures and recovers after the bounded backoff', async () => {

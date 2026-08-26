@@ -6,6 +6,7 @@ import {
   MAX_RELAY_QUERY_BYTES,
   MAX_RELAY_RESPONSE_BYTES,
   QUAD9_DOH_URL,
+  QUAD9_HTTP2_RESOURCE_LIMITS,
   QUAD9_RELAY_TIMEOUT_MS,
   config,
   createQuad9RelayHandler,
@@ -160,9 +161,29 @@ function relayRequest(
   });
 }
 
+function streamedRelayRequest(body: ReadableStream<Uint8Array>): Request {
+  return new Request('https://zoneskein.test/api/doh/quad9', {
+    body,
+    duplex: 'half',
+    headers: { 'Content-Type': MEDIA_TYPE },
+    method: 'POST',
+  } as RequestInit & { duplex: 'half' });
+}
+
 describe('Quad9 compatibility relay', () => {
   it('exports one fixed, rate-limited POST route', () => {
     expect(QUAD9_DOH_URL.href).toBe('https://dns.quad9.net/dns-query');
+    expect(QUAD9_HTTP2_RESOURCE_LIMITS).toEqual({
+      maxHeaderListPairs: 32,
+      maxReservedRemoteStreams: 0,
+      maxSessionMemory: 2,
+      settings: {
+        enablePush: false,
+        maxConcurrentStreams: 1,
+        maxHeaderListSize: 8_192,
+      },
+      strictFieldWhitespaceValidation: true,
+    });
     expect(config).toEqual({
       method: 'POST',
       path: '/api/doh/quad9',
@@ -329,6 +350,49 @@ describe('Quad9 compatibility relay', () => {
       await vi.advanceTimersByTimeAsync(QUAD9_RELAY_TIMEOUT_MS);
       const timedOut = await pending;
       expect(timedOut.status).toBe(504);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('applies the lifecycle deadline while the inbound body is stalled', async () => {
+    vi.useFakeTimers();
+    try {
+      const cancel = vi.fn();
+      const body = new ReadableStream<Uint8Array>({ cancel });
+      const forward = vi.fn<Quad9Forwarder>();
+      const pending = createQuad9RelayHandler(forward)(streamedRelayRequest(body));
+
+      await vi.advanceTimersByTimeAsync(QUAD9_RELAY_TIMEOUT_MS);
+      const response = await pending;
+      expect(response.status).toBe(408);
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(forward).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not restart the lifecycle deadline after a slow bounded body', async () => {
+    vi.useFakeTimers();
+    try {
+      let bodyController: ReadableStreamDefaultController<Uint8Array> | undefined;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          bodyController = controller;
+        },
+      });
+      const forward = vi.fn<Quad9Forwarder>(() => new Promise(() => undefined));
+      const pending = createQuad9RelayHandler(forward)(streamedRelayRequest(body));
+
+      await vi.advanceTimersByTimeAsync(QUAD9_RELAY_TIMEOUT_MS - 1_000);
+      bodyController?.enqueue(dnsQuery());
+      bodyController?.close();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(forward).toHaveBeenCalledOnce();
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect((await pending).status).toBe(504);
     } finally {
       vi.useRealTimers();
     }

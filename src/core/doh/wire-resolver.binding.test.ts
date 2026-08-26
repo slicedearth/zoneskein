@@ -168,11 +168,17 @@ describe('wire DoH response binding', () => {
   });
 
   it('rejects an oversized declared body before reading it', async () => {
-    const response = wireResponse(packet());
-    response.headers.set('Content-Length', '65536');
+    const cancel = vi.fn();
+    const response = new Response(new ReadableStream<Uint8Array>({ cancel }), {
+      headers: {
+        'Content-Length': '65536',
+        'Content-Type': 'application/dns-message',
+      },
+    });
     const read = vi.spyOn(response, 'arrayBuffer');
 
     await expectInvalidResponse(response);
+    expect(cancel).toHaveBeenCalledOnce();
     expect(read).not.toHaveBeenCalled();
   });
 

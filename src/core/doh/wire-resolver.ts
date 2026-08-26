@@ -68,13 +68,60 @@ function asArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return buffer;
 }
 
-async function boundedDnsBody(response: Response): Promise<Uint8Array> {
+async function settleCancellation(
+  cancel: () => Promise<void>,
+  signal: AbortSignal,
+): Promise<void> {
+  let cancellation: Promise<undefined>;
+  try {
+    cancellation = cancel().then(
+      () => undefined,
+      () => undefined,
+    );
+  } catch {
+    return;
+  }
+  if (signal.aborted) return;
+  let stopWaiting: (() => void) | undefined;
+  const aborted = new Promise<void>((resolve) => {
+    const abort = () => resolve();
+    stopWaiting = abort;
+    signal.addEventListener('abort', abort, { once: true });
+  });
+  try {
+    await Promise.race([cancellation, aborted]);
+  } finally {
+    if (stopWaiting !== undefined) signal.removeEventListener('abort', stopWaiting);
+  }
+}
+
+async function rejectResponse(
+  response: Response,
+  signal: AbortSignal,
+  error: DnsQueryError,
+): Promise<never> {
+  if (response.body !== null) {
+    await settleCancellation(
+      () =>
+        response.body?.cancel('DNS response was rejected before consumption.') ??
+        Promise.resolve(),
+      signal,
+    );
+  }
+  throw error;
+}
+
+async function boundedDnsBody(response: Response, signal: AbortSignal): Promise<Uint8Array> {
   const contentLength = response.headers.get('Content-Length');
   if (contentLength !== null) {
     if (!/^\d+$/u.test(contentLength) || Number(contentLength) > MAX_DNS_MESSAGE_BYTES) {
-      throw new DnsQueryError(
-        'invalid-response',
-        `The resolver response exceeds ${String(MAX_DNS_MESSAGE_BYTES)} DNS message octets.`,
+      return rejectResponse(
+        response,
+        signal,
+        new DnsQueryError(
+          'invalid-response',
+          `The resolver response exceeds ${String(MAX_DNS_MESSAGE_BYTES)} DNS message octets.`,
+        ),
       );
     }
   }
@@ -92,11 +139,10 @@ async function boundedDnsBody(response: Response): Promise<Uint8Array> {
       const { value } = next;
       length += value.byteLength;
       if (length > MAX_DNS_MESSAGE_BYTES) {
-        try {
-          await reader.cancel('DNS response exceeds the message-size bound.');
-        } catch {
-          // The size rejection remains authoritative if stream cancellation also fails.
-        }
+        await settleCancellation(
+          () => reader.cancel('DNS response exceeds the message-size bound.'),
+          signal,
+        );
         throw new DnsQueryError(
           'invalid-response',
           `The resolver response exceeds ${String(MAX_DNS_MESSAGE_BYTES)} DNS message octets.`,
@@ -222,6 +268,7 @@ export class WireDnsResolver implements DnsResolver {
             },
         method: this.definition.httpMethod,
         mode: 'cors',
+        redirect: 'error',
         referrerPolicy: 'no-referrer',
         signal: composed.controller.signal,
       });
@@ -229,27 +276,39 @@ export class WireDnsResolver implements DnsResolver {
       if (response.status === 429) {
         const retryAfter = retryAfterMilliseconds(response);
         this.#limiter.imposeCooldown(this.definition.id, retryAfter);
-        throw new DnsQueryError(
-          'rate-limited',
-          'The resolver rate-limited this browser.',
-          retryAfter,
+        return await rejectResponse(
+          response,
+          composed.controller.signal,
+          new DnsQueryError(
+            'rate-limited',
+            'The resolver rate-limited this browser.',
+            retryAfter,
+          ),
         );
       }
       if (!response.ok) {
-        throw new DnsQueryError(
-          'http-error',
-          `The resolver returned HTTP ${String(response.status)}.`,
+        return await rejectResponse(
+          response,
+          composed.controller.signal,
+          new DnsQueryError(
+            'http-error',
+            `The resolver returned HTTP ${String(response.status)}.`,
+          ),
         );
       }
       const contentType = response.headers.get('Content-Type')?.split(';')[0]?.trim();
       if (contentType !== 'application/dns-message') {
-        throw new DnsQueryError(
-          'invalid-response',
-          'The resolver returned an unexpected media type.',
+        return await rejectResponse(
+          response,
+          composed.controller.signal,
+          new DnsQueryError(
+            'invalid-response',
+            'The resolver returned an unexpected media type.',
+          ),
         );
       }
 
-      const raw = await boundedDnsBody(response);
+      const raw = await boundedDnsBody(response, composed.controller.signal);
       let message;
       try {
         message = decodeDnsMessage(raw);

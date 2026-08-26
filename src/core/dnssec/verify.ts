@@ -1,7 +1,7 @@
 import { toType } from '@dnsquery/dns-packet/types.js';
 
 import type { DnsRecord } from '../dns/types';
-import { canVerifyRrsigAlgorithm } from './algorithm-policy';
+import { canVerifyRrsigAlgorithm, DNSSEC_RSA_MINIMUM_MODULUS_BITS } from './algorithm-policy';
 import { parseDnskey, parseRrsig } from './records';
 import type { DnskeyInfo, RrsigInfo, SignatureVerification } from './types';
 import { boundCanonicalRdata } from './wire-evidence';
@@ -366,8 +366,7 @@ async function importVerificationKey(key: DnskeyInfo): Promise<CryptoKey | null>
     const parts = rsaParts(key.key);
     if (parts === null) return null;
     const modulusBits = bitLength(parts.modulus);
-    if (modulusBits > 4096 || (key.algorithm === 10 ? modulusBits < 1024 : modulusBits < 512))
-      return null;
+    if (modulusBits < DNSSEC_RSA_MINIMUM_MODULUS_BITS || modulusBits > 4096) return null;
     const hash = key.algorithm === 8 ? 'SHA-256' : key.algorithm === 10 ? 'SHA-512' : 'SHA-1';
     return crypto.subtle.importKey(
       'jwk',

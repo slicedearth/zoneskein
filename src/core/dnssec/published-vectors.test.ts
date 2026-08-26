@@ -190,25 +190,33 @@ function rrsigRecord(vector: PublishedSignatureVector): DnsRecord {
 }
 
 describe('published and independently generated DNSSEC vectors', () => {
-  it.each(PUBLISHED_SIGNATURE_VECTORS)('verifies $label', async (vector) => {
-    const dnskey = dnskeyRecord(vector);
-    const rrsig = rrsigRecord(vector);
-    const parsedSignature = parseRrsig(rrsig, 0x10);
-    if (parsedSignature === null) throw new Error('The published RRSIG fixture did not parse.');
+  it.each(PUBLISHED_SIGNATURE_VECTORS)(
+    'processes $label under the current key policy',
+    async (vector) => {
+      const dnskey = dnskeyRecord(vector);
+      const rrsig = rrsigRecord(vector);
+      const parsedSignature = parseRrsig(rrsig, 0x10);
+      if (parsedSignature === null)
+        throw new Error('The published RRSIG fixture did not parse.');
 
-    expect(dnskeyKeyTag(dnskey.rawRdata)).toBe(vector.keyTag);
-    expect(parsedSignature.timeState).toBe('current');
-    expect(hex(dnskeyRrsetSignedData([dnskey, rrsig], parsedSignature))).toBe(
-      vector.expectedSignedData,
-    );
-    await expect(verifyDnskeyRrset([dnskey, rrsig], 0x10)).resolves.toEqual([
-      expect.objectContaining({
-        algorithm: vector.algorithm,
-        keyTag: vector.keyTag,
-        status: 'verified',
-      }),
-    ]);
-  });
+      expect(dnskeyKeyTag(dnskey.rawRdata)).toBe(vector.keyTag);
+      expect(parsedSignature.timeState).toBe('current');
+      expect(hex(dnskeyRrsetSignedData([dnskey, rrsig], parsedSignature))).toBe(
+        vector.expectedSignedData,
+      );
+      const expectedStatus =
+        vector.algorithm === 5 || vector.algorithm === 7 || vector.algorithm === 8
+          ? 'invalid'
+          : 'verified';
+      await expect(verifyDnskeyRrset([dnskey, rrsig], 0x10)).resolves.toEqual([
+        expect.objectContaining({
+          algorithm: vector.algorithm,
+          keyTag: vector.keyTag,
+          status: expectedStatus,
+        }),
+      ]);
+    },
+  );
 
   it('matches the RFC 4034 and RFC 4509 SHA-1 and SHA-256 DS examples', async () => {
     const publicKey = base64(`

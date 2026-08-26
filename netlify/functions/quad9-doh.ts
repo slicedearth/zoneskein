@@ -10,6 +10,17 @@ export const QUAD9_DOH_URL = new URL('https://dns.quad9.net/dns-query');
 export const MAX_RELAY_QUERY_BYTES = 4_096;
 export const MAX_RELAY_RESPONSE_BYTES = 65_535;
 export const QUAD9_RELAY_TIMEOUT_MS = 7_000;
+export const QUAD9_HTTP2_RESOURCE_LIMITS = {
+  maxHeaderListPairs: 32,
+  maxReservedRemoteStreams: 0,
+  maxSessionMemory: 2,
+  settings: {
+    enablePush: false,
+    maxConcurrentStreams: 1,
+    maxHeaderListSize: 8_192,
+  },
+  strictFieldWhitespaceValidation: true,
+} as const;
 
 const MAX_BODY_CHUNKS = 256;
 const MAX_DNS_NAME_OPERATIONS = 32_768;
@@ -68,6 +79,27 @@ interface QuestionBinding {
 }
 
 export type Quad9Forwarder = (query: Uint8Array, signal: AbortSignal) => Promise<Uint8Array>;
+type RelayPhase = 'request-body' | 'upstream';
+
+async function forwardWithinDeadline(
+  forward: Quad9Forwarder,
+  query: Uint8Array,
+  signal: AbortSignal,
+): Promise<Uint8Array> {
+  if (signal.aborted) throw new DOMException('The Quad9 request was aborted.', 'AbortError');
+  let abort: (() => void) | undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    abort = () => {
+      reject(new DOMException('The Quad9 request was aborted.', 'AbortError'));
+    };
+    signal.addEventListener('abort', abort, { once: true });
+  });
+  try {
+    return await Promise.race([forward(query, signal), aborted]);
+  } finally {
+    if (abort !== undefined) signal.removeEventListener('abort', abort);
+  }
+}
 
 class RelayRequestError extends Error {
   readonly status: number;
@@ -301,37 +333,66 @@ function mediaType(value: string | null): string | null {
   return value?.split(';', 1)[0]?.trim().toLowerCase() ?? null;
 }
 
-async function boundedRequestBody(request: Request): Promise<Uint8Array> {
-  const declaredLength = request.headers.get('Content-Length');
-  let expectedLength: number | null = null;
-  if (declaredLength !== null) {
-    if (!/^\d+$/u.test(declaredLength))
-      throw new RelayRequestError(400, 'The request Content-Length is invalid.');
-    expectedLength = Number(declaredLength);
-    if (expectedLength > MAX_RELAY_QUERY_BYTES)
-      throw new RelayRequestError(413, 'The DNS query exceeds the relay size limit.');
-  }
+async function boundedRequestBody(request: Request, signal: AbortSignal): Promise<Uint8Array> {
   const reader = request.body?.getReader();
   if (reader === undefined) throw new RelayRequestError(400, 'A DNS wire query is required.');
+  let rejectAborted: ((error: DOMException) => void) | undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    rejectAborted = reject;
+  });
+  const abort = (): void => {
+    void reader
+      .cancel('DNS relay request ended before its body completed.')
+      .catch(() => undefined);
+    rejectAborted?.(new DOMException('The DNS relay request was aborted.', 'AbortError'));
+  };
+  signal.addEventListener('abort', abort, { once: true });
+  if (signal.aborted) abort();
+  const declaredLength = request.headers.get('Content-Length');
+  let expectedLength: number | null = null;
   const chunks: Uint8Array[] = [];
   let chunkCount = 0;
   let total = 0;
   try {
-    for (let next = await reader.read(); !next.done; next = await reader.read()) {
+    if (declaredLength !== null) {
+      if (!/^\d+$/u.test(declaredLength))
+        throw new RelayRequestError(400, 'The request Content-Length is invalid.');
+      expectedLength = Number(declaredLength);
+      if (expectedLength > MAX_RELAY_QUERY_BYTES) {
+        await Promise.race([
+          reader
+            .cancel('DNS relay request exceeded its declared bound.')
+            .catch(() => undefined),
+          aborted,
+        ]);
+        throw new RelayRequestError(413, 'The DNS query exceeds the relay size limit.');
+      }
+    }
+    for (
+      let next = await Promise.race([reader.read(), aborted]);
+      !next.done;
+      next = await Promise.race([reader.read(), aborted])
+    ) {
       chunkCount += 1;
       total += next.value.byteLength;
       if (chunkCount > MAX_BODY_CHUNKS || total > MAX_RELAY_QUERY_BYTES) {
-        try {
-          await reader.cancel('DNS relay request exceeded its bounds.');
-        } catch {
-          // The original bound remains authoritative if cancellation also fails.
-        }
+        await Promise.race([
+          reader.cancel('DNS relay request exceeded its bounds.').catch(() => undefined),
+          aborted,
+        ]);
         throw new RelayRequestError(413, 'The DNS query exceeds the relay size limit.');
       }
       chunks.push(next.value);
     }
+    if (signal.aborted)
+      throw new DOMException('The DNS relay request was aborted.', 'AbortError');
   } finally {
-    reader.releaseLock();
+    signal.removeEventListener('abort', abort);
+    try {
+      reader.releaseLock();
+    } catch {
+      // Cancellation already owns any read that is still settling.
+    }
   }
   if (total === 0) throw new RelayRequestError(400, 'A DNS wire query is required.');
   if (expectedLength !== null && expectedLength !== total)
@@ -363,6 +424,7 @@ export function forwardQuad9OverHttp2(
     const chunks: Uint8Array[] = [];
     const session: ClientHttp2Session = connect(QUAD9_DOH_URL.origin, {
       ALPNProtocols: ['h2'],
+      ...QUAD9_HTTP2_RESOURCE_LIMITS,
       rejectUnauthorized: true,
       servername: QUAD9_DOH_URL.hostname,
     });
@@ -390,6 +452,9 @@ export function forwardQuad9OverHttp2(
 
     session.once('error', (error: Error) => {
       finish(error);
+    });
+    session.on('stream', (pushedStream: ClientHttp2Stream) => {
+      pushedStream.close(constants.NGHTTP2_CANCEL);
     });
     session.once('connect', () => {
       if (session.alpnProtocol !== 'h2') {
@@ -480,31 +545,25 @@ export function createQuad9RelayHandler(forward: Quad9Forwarder = forwardQuad9Ov
     if (mediaType(request.headers.get('Content-Type')) !== DNS_MESSAGE_MEDIA_TYPE)
       return errorResponse(415, 'Content-Type must be application/dns-message.');
 
-    let query: Uint8Array;
-    let question: QuestionBinding;
-    try {
-      query = await boundedRequestBody(request);
-      question = validateRelayQuery(query);
-    } catch (error) {
-      if (error instanceof RelayRequestError) return errorResponse(error.status, error.message);
-      return errorResponse(
-        400,
-        error instanceof Error ? error.message : 'The DNS query is invalid.',
-      );
-    }
-
     const controller = new AbortController();
-    const timeoutState = { expired: false };
+    const lifecycle: { phase: RelayPhase; timeoutPhase: RelayPhase | null } = {
+      phase: 'request-body',
+      timeoutPhase: null,
+    };
     const timeout = setTimeout(() => {
-      timeoutState.expired = true;
+      lifecycle.timeoutPhase = lifecycle.phase;
       controller.abort();
     }, QUAD9_RELAY_TIMEOUT_MS);
     const abort = (): void => {
       controller.abort();
     };
     request.signal.addEventListener('abort', abort, { once: true });
+    if (request.signal.aborted) abort();
     try {
-      const upstreamResponse = await forward(query, controller.signal);
+      const query = await boundedRequestBody(request, controller.signal);
+      const question = validateRelayQuery(query);
+      lifecycle.phase = 'upstream';
+      const upstreamResponse = await forwardWithinDeadline(forward, query, controller.signal);
       if (upstreamResponse.byteLength > MAX_RELAY_RESPONSE_BYTES)
         throw new Error('Quad9 response exceeds the DNS message limit.');
       validateRelayResponse(upstreamResponse, question);
@@ -517,9 +576,19 @@ export function createQuad9RelayHandler(forward: Quad9Forwarder = forwardQuad9Ov
         },
         status: 200,
       });
-    } catch {
-      return timeoutState.expired
-        ? errorResponse(504, 'The fixed Quad9 upstream timed out.')
+    } catch (error) {
+      if (lifecycle.timeoutPhase === 'request-body')
+        return errorResponse(408, 'The DNS relay request body timed out.');
+      if (lifecycle.timeoutPhase === 'upstream')
+        return errorResponse(504, 'The fixed Quad9 upstream timed out.');
+      if (error instanceof RelayRequestError) return errorResponse(error.status, error.message);
+      if (controller.signal.aborted)
+        return errorResponse(408, 'The DNS relay request ended before completion.');
+      return lifecycle.phase === 'request-body'
+        ? errorResponse(
+            400,
+            error instanceof Error ? error.message : 'The DNS query is invalid.',
+          )
         : errorResponse(502, 'The fixed Quad9 upstream did not return a valid DNS response.');
     } finally {
       clearTimeout(timeout);

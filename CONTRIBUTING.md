@@ -15,7 +15,7 @@ contributor licence agreement.
 - Do not add authentication, analytics, advertising, telemetry, arbitrary fetch targets, bulk discovery, subdomain generation, or a general-purpose proxy.
 - Use explicit result states and conservative conclusions. Incomplete evidence must remain partial, unknown, unsupported, or failed.
 - Prefer mature dependencies with permissive licences. Document every added production dependency and its transitive runtime dependencies in `THIRD_PARTY_NOTICES.md`.
-- Keep the deployed corresponding-source archive complete. New production, build, configuration, asset, or function paths must remain inside the checked source-archive allowlist.
+- Keep the deployed corresponding-source archive complete. Add every new production, build, configuration, asset, test, workflow, or function file to the sorted `SOURCE_FILES.json` inventory; undeclared entries inside its checked source directories fail the build.
 - Never depend on live public DNS in deterministic tests.
 
 ## Development

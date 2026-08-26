@@ -6,6 +6,11 @@ const ACCEPTABLE_DS_TRUST_PATH_ALGORITHMS = new Set([8, 10, 13, 14, 15, 16]);
 
 const VALIDATABLE_DS_DIGEST_TYPES = new Set([1, 2, 4]);
 
+// A shorter RSA modulus is rejected before Web Crypto sees the key. The floor
+// retains interoperability with deployed legacy DNSSEC while excluding the
+// 512-bit example keys retained only as canonicalisation fixtures.
+export const DNSSEC_RSA_MINIMUM_MODULUS_BITS = 1024;
+
 export function canVerifyRrsigAlgorithm(algorithm: number): boolean {
   return VERIFIABLE_RRSIG_ALGORITHMS.has(algorithm);
 }

@@ -186,6 +186,11 @@ const [html, headers, redirects, resolverSource, netlifyConfig, relaySource] =
 
 if (!redirects.split(/\r?\n/u).includes('/*  /index.html  200'))
   fail('SPA fallback redirect is missing.');
+if (
+  !/^\s*Strict-Transport-Security:\s*max-age=63072000; includeSubDomains\s*$/mu.test(headers)
+) {
+  fail('the two-year HSTS policy is missing or has changed.');
+}
 for (const [path, contentType] of [
   ['/LICENSE', 'text/plain; charset=UTF-8'],
   ['/*.md', 'text/markdown; charset=UTF-8'],
@@ -230,8 +235,14 @@ requireSourcePattern(
 requireSourcePattern(
   relaySource,
   /QUAD9_RELAY_TIMEOUT_MS\s*=\s*7_000\b/u,
-  'seven-second upstream timeout',
+  'seven-second lifecycle timeout',
 );
+requireSourcePattern(
+  relaySource,
+  /maxReservedRemoteStreams:\s*0\b/u,
+  'disabled HTTP/2 push reservation',
+);
+requireSourcePattern(relaySource, /enablePush:\s*false\b/u, 'disabled HTTP/2 server push');
 requireSourcePattern(
   relaySource,
   /requestUrl\.search\s*!==\s*['"]['"]/u,

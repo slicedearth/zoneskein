@@ -1,11 +1,18 @@
+import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { gunzipSync, gzipSync } from 'node:zlib';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  collectCorrespondingSource,
   createCorrespondingSourceArchive,
+  SOURCE_FILE_LIST_NAME,
   parseCorrespondingSourceArchive,
   SOURCE_MANIFEST_NAME,
+  SOURCE_REPOSITORY_DIRECTORIES,
+  SOURCE_REPOSITORY_ROOT_FILES,
   sourceArchiveDigest,
 } from '../../scripts/source-archive.ts';
 
@@ -13,6 +20,47 @@ const entries = [
   { content: new TextEncoder().encode('console.log("bounded");\n'), path: 'src/main.ts' },
   { content: new TextEncoder().encode('{"name":"zoneskein"}\n'), path: 'package.json' },
 ] as const;
+
+const temporaryRoots: string[] = [];
+
+async function sourceFixture(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), 'zoneskein-source-'));
+  temporaryRoots.push(root);
+  await Promise.all(
+    SOURCE_REPOSITORY_DIRECTORIES.map((directory) =>
+      mkdir(join(root, directory), { recursive: true }),
+    ),
+  );
+  await Promise.all(
+    SOURCE_REPOSITORY_ROOT_FILES.map((fileName) => writeFile(join(root, fileName), '')),
+  );
+  await writeFile(
+    join(root, 'package-lock.json'),
+    `${JSON.stringify({ packages: { '': {}, 'node_modules/runtime': {} } })}\n`,
+  );
+  const declared = [...SOURCE_REPOSITORY_ROOT_FILES].sort();
+  await writeFile(join(root, SOURCE_FILE_LIST_NAME), `${JSON.stringify(declared, null, 2)}\n`);
+  await Promise.all(
+    ['runtime', 'rolldown', 'vite'].map(async (packageName) => {
+      const packageRoot = join(root, 'node_modules', packageName);
+      await mkdir(packageRoot, { recursive: true });
+      await writeFile(
+        join(packageRoot, 'package.json'),
+        `${JSON.stringify({ name: packageName, version: '1.0.0' })}\n`,
+      );
+    }),
+  );
+  return root;
+}
+
+async function declareSourceFile(root: string, path: string): Promise<void> {
+  const declared = [...SOURCE_REPOSITORY_ROOT_FILES, path].sort();
+  await writeFile(join(root, SOURCE_FILE_LIST_NAME), `${JSON.stringify(declared, null, 2)}\n`);
+}
+
+afterEach(async () => {
+  await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { recursive: true })));
+});
 
 describe('corresponding-source archive', () => {
   it('creates a deterministic, manifest-bound tar.gz archive', () => {
@@ -58,5 +106,57 @@ describe('corresponding-source archive', () => {
     expect(() => parseCorrespondingSourceArchive(gzipSync(paddingTar))).toThrow(
       /malformed padding/iu,
     );
+  });
+
+  it('collects only the exact declared repository and package source files', async () => {
+    const root = await sourceFixture();
+    const collected = await collectCorrespondingSource(root);
+
+    expect(collected.map((entry) => entry.path)).toContain(SOURCE_FILE_LIST_NAME);
+    expect(collected.map((entry) => entry.path)).toContain('vendor/npm/runtime/package.json');
+
+    await writeFile(join(root, 'src', 'undeclared.ts'), 'export {};\n');
+    await expect(collectCorrespondingSource(root)).rejects.toThrow(
+      /does not exactly enumerate the source directories/iu,
+    );
+
+    await rm(join(root, 'src', 'undeclared.ts'));
+    await writeFile(join(root, '.env.production'), 'VITE_UNDECLARED=value\n');
+    await expect(collectCorrespondingSource(root)).rejects.toThrow(
+      /undeclared local build input/iu,
+    );
+  });
+
+  it('rejects symbolic links in repository and package inputs', async () => {
+    const repositoryRoot = await sourceFixture();
+    await declareSourceFile(repositoryRoot, 'src/linked.ts');
+    await symlink(join(repositoryRoot, 'LICENSE'), join(repositoryRoot, 'src', 'linked.ts'));
+    await expect(collectCorrespondingSource(repositoryRoot)).rejects.toThrow(
+      /not a regular file|symbolic link/iu,
+    );
+
+    const packageRoot = await sourceFixture();
+    await rm(join(packageRoot, 'node_modules', 'runtime'), { recursive: true });
+    await symlink(
+      join(packageRoot, 'node_modules', 'vite'),
+      join(packageRoot, 'node_modules', 'runtime'),
+    );
+    await expect(collectCorrespondingSource(packageRoot)).rejects.toThrow(/symbolic link/iu);
+  });
+
+  it('rejects package-lock paths that can leave an installed package root', async () => {
+    const root = await sourceFixture();
+    await writeFile(
+      join(root, 'package-lock.json'),
+      `${JSON.stringify({
+        packages: {
+          '': {},
+          'node_modules/runtime': {},
+          'node_modules/runtime/../../outside': {},
+        },
+      })}\n`,
+    );
+
+    await expect(collectCorrespondingSource(root)).rejects.toThrow(/unsafe path/iu);
   });
 });

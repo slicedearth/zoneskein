@@ -5,10 +5,7 @@ on:
     tags:
       - 'v*'
 
-permissions:
-  contents: read
-  id-token: write
-  attestations: write
+permissions: {}
 
 concurrency:
   group: release-${{ github.ref }}
@@ -16,12 +13,26 @@ concurrency:
 
 jobs:
   build:
+    permissions:
+      contents: read
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
+      - name: Verify the release tag and revision
+        env:
+          RELEASE_REVISION: ${{ github.sha }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          PACKAGE_VERSION="$(node -p "JSON.parse(require('node:fs').readFileSync('package.json', 'utf8')).version")"
+          test "$RELEASE_TAG" = "v$PACKAGE_VERSION"
+          test "$(git cat-file -t "refs/tags/$RELEASE_TAG")" = "tag"
+          test "$(git rev-list -n 1 "refs/tags/$RELEASE_TAG")" = "$RELEASE_REVISION"
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          git merge-base --is-ancestor "$RELEASE_REVISION" refs/remotes/origin/main
       - uses: actions/setup-node@e51e5fe84fc33b4c73ebe40526b2694712b5b858 # post-v7.0.0 security fix
         with:
           cache: npm
@@ -55,37 +66,74 @@ jobs:
           test "$(wc -c < "$SOURCE_ARCHIVE_FILE")" -le 4194304
           test "$(wc -c < "$SBOM_FILE")" -le 4194304
           jq -e '.bomFormat == "CycloneDX" and (.components | type == "array")' "$SBOM_FILE" >/dev/null
-      - name: Attest static-client provenance
-        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        with:
-          subject-path: zoneskein-static.tar.gz
-      - name: Attest complete Netlify provenance
-        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        with:
-          subject-path: zoneskein-netlify-deployment.tar.gz
-      - name: Attest corresponding-source provenance
-        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        with:
-          subject-path: zoneskein-corresponding-source.tar.gz
-      - name: Attest static-client SBOM
-        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        with:
-          sbom-path: zoneskein.cdx.json
-          subject-path: zoneskein-static.tar.gz
-      - name: Attest complete Netlify SBOM
-        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-        with:
-          sbom-path: zoneskein.cdx.json
-          subject-path: zoneskein-netlify-deployment.tar.gz
-      - name: Upload release files
+      - name: Transfer unprivileged release files
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
+          compression-level: 0
           if-no-files-found: error
-          name: zoneskein-release-${{ github.run_id }}
+          name: zoneskein-release-input-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             zoneskein-static.tar.gz
             zoneskein-netlify-deployment.tar.gz
             zoneskein-corresponding-source.tar.gz
             zoneskein.cdx.json
             SHA256SUMS
+          retention-days: 1
+
+  attest:
+    environment: release-attestation
+    needs: build
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Download unprivileged release files
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: zoneskein-release-input-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release
+      - name: Verify the transferred file set and checksums
+        working-directory: release
+        run: |
+          test "$(find . -mindepth 1 -maxdepth 1 -type f | wc -l)" -eq 5
+          test "$(find . -mindepth 1 -maxdepth 1 ! -type f | wc -l)" -eq 0
+          awk 'BEGIN { expected[1]="zoneskein-static.tar.gz"; expected[2]="zoneskein-netlify-deployment.tar.gz"; expected[3]="zoneskein-corresponding-source.tar.gz"; expected[4]="zoneskein.cdx.json" } NF != 2 || $1 !~ /^[0-9a-f]{64}$/ || $2 != expected[NR] { exit 1 } END { if (NR != 4) exit 1 }' SHA256SUMS
+          sha256sum --check SHA256SUMS
+      - name: Attest static-client provenance
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          subject-path: release/zoneskein-static.tar.gz
+      - name: Attest complete deployment provenance
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          subject-path: release/zoneskein-netlify-deployment.tar.gz
+      - name: Attest corresponding-source provenance
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          subject-path: release/zoneskein-corresponding-source.tar.gz
+      - name: Attest static-client SBOM
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          sbom-path: release/zoneskein.cdx.json
+          subject-path: release/zoneskein-static.tar.gz
+      - name: Attest complete deployment SBOM
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          sbom-path: release/zoneskein.cdx.json
+          subject-path: release/zoneskein-netlify-deployment.tar.gz
+      - name: Upload attested release files
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          compression-level: 0
+          if-no-files-found: error
+          name: zoneskein-release-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            release/zoneskein-static.tar.gz
+            release/zoneskein-netlify-deployment.tar.gz
+            release/zoneskein-corresponding-source.tar.gz
+            release/zoneskein.cdx.json
+            release/SHA256SUMS
           retention-days: 90

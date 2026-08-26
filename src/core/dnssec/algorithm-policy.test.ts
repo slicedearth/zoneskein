@@ -4,11 +4,16 @@ import {
   canEstablishDsTrustPath,
   canValidateDsDigestType,
   canVerifyRrsigAlgorithm,
+  DNSSEC_RSA_MINIMUM_MODULUS_BITS,
   isDeprecatedDsDigestForAuthoring,
   isDeprecatedSha1DnssecAlgorithm,
 } from './algorithm-policy';
 
 describe('DNSSEC algorithm policy', () => {
+  it('applies the interoperable 1,024-bit minimum to every RSA validation algorithm', () => {
+    expect(DNSSEC_RSA_MINIMUM_MODULUS_BITS).toBe(1024);
+  });
+
   it.each([5, 7])(
     'retains legacy algorithm %s for RRSIG verification but rejects it as a DS trust path',
     (algorithm) => {
