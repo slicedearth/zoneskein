@@ -447,20 +447,27 @@ export function ChangeWorkspacePage({
         automatically.
       </ToolIntro>
 
-      <article className="method-note">
-        <h2>Integrity, authenticity, and privacy</h2>
+      <article className="method-note workspace-boundary-note">
+        <h2>Local, unencrypted, and not authenticated</h2>
         <p>
-          Each export has a canonical SHA-256 digest. A mismatch shows that the content no
-          longer matches the included digest. A match shows internal consistency only: anyone
-          modifying the file can recompute the digest, so it provides no authenticity,
-          authorisation, or tamper resistance. Import validation checks structure and internal
-          consistency; it does not reproduce or endorse stored analysis. Treat imported analysis
-          as supplied historical data until you run local reanalysis. Imported resolver
-          endpoints are displayed only as inert provenance text and are never contacted by this
-          page. The exported JSON is not encrypted. Use workspace content only when you are
-          authorised to process and disclose it. File contents and edits remain in this tab's
-          memory until you export them or leave the page.
+          Workspace content stays in this tab unless you export it. The exported JSON is not
+          encrypted, and its SHA-256 digest checks consistency rather than authorship or
+          authorisation. Unprovided input stays explicitly unknown.
         </p>
+        <details>
+          <summary>Read the integrity and import boundaries</summary>
+          <p>
+            A digest mismatch shows that the content no longer matches the included digest. A
+            match shows internal consistency only: anyone modifying the file can recompute the
+            digest, so it provides no authenticity, authorisation, or tamper resistance. Import
+            validation checks structure and internal consistency; it does not reproduce or
+            endorse stored analysis. Treat imported analysis as supplied historical data until
+            you run local reanalysis. Imported resolver endpoints are displayed only as inert
+            provenance text and are never contacted by this page. Use workspace content only
+            when you are authorised to process and disclose it. File contents and edits remain
+            in this tab's memory until you export them or leave the page.
+          </p>
+        </details>
       </article>
 
       {integrityWarning === '' ? null : (

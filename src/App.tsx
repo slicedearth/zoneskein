@@ -29,6 +29,16 @@ const DnssecPage = lazy(() =>
 const LookupPage = lazy(() =>
   import('./routes/LookupPage').then((module) => ({ default: module.LookupPage })),
 );
+const PublicDocumentPage = lazy(() =>
+  import('./routes/PublicDocumentPage').then((module) => ({
+    default: module.PublicDocumentPage,
+  })),
+);
+const SourceChecksumPage = lazy(() =>
+  import('./routes/PublicDocumentPage').then((module) => ({
+    default: module.SourceChecksumPage,
+  })),
+);
 const RecordStudioPage = lazy(() =>
   import('./routes/RecordStudioPage').then((module) => ({ default: module.RecordStudioPage })),
 );
@@ -79,9 +89,17 @@ const routeTitles: Readonly<Record<string, string>> = {
   dmarc: 'DMARC analysis — ZoneSkein',
   dnssec: 'DNSSEC inspection — ZoneSkein',
   lookup: 'DNS record lookup — ZoneSkein',
+  licence: 'Software licence — ZoneSkein',
+  privacy: 'Privacy — ZoneSkein',
+  security: 'Security — ZoneSkein',
+  source: 'Corresponding source — ZoneSkein',
+  'source-checksum': 'Source archive checksum — ZoneSkein',
   snapshots: 'Local snapshots — ZoneSkein',
   spf: 'SPF analysis — ZoneSkein',
   studio: 'Record Studio — ZoneSkein',
+  terms: 'Hosted service terms — ZoneSkein',
+  'third-party-notices': 'Third-party notices — ZoneSkein',
+  trademarks: 'Trademarks — ZoneSkein',
   workspace: 'Change Workspace — ZoneSkein',
   'zone-lint': 'Zone lint — ZoneSkein',
 };
@@ -133,6 +151,7 @@ export function App() {
   const [workspace, setWorkspace] = useState<ChangeWorkspace | null>(null);
   const [changeLabInput, setChangeLabInput] = useState<ChangeLabInput | undefined>();
   const workspaceRef = useRef<ChangeWorkspace | null>(null);
+  const navigationRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     document.documentElement.dataset['theme'] = theme;
@@ -151,6 +170,19 @@ export function App() {
     };
     window.addEventListener('popstate', updateRoute);
     return () => window.removeEventListener('popstate', updateRoute);
+  }, []);
+
+  useEffect(() => {
+    const closeOutside = (event: PointerEvent) => {
+      if (
+        navigationRef.current !== null &&
+        event.target instanceof Node &&
+        !navigationRef.current.contains(event.target)
+      )
+        setOpenNavGroups({ inspect: false, prepare: false });
+    };
+    document.addEventListener('pointerdown', closeOutside);
+    return () => document.removeEventListener('pointerdown', closeOutside);
   }, []);
 
   function openRoute(path: string): void {
@@ -204,7 +236,21 @@ export function App() {
           <img src={href('logo.svg')} alt="" width="42" height="42" />
           <span>ZoneSkein</span>
         </a>
-        <nav className="primary-nav" aria-label="Primary navigation">
+        <nav
+          className="primary-nav"
+          aria-label="Primary navigation"
+          ref={navigationRef}
+          onKeyDown={(event) => {
+            if (event.key !== 'Escape') return;
+            const summary = event.currentTarget.querySelector<HTMLElement>(
+              '.nav-group[open] > summary',
+            );
+            if (summary === null) return;
+            event.preventDefault();
+            setOpenNavGroups({ inspect: false, prepare: false });
+            queueMicrotask(() => summary.focus());
+          }}
+        >
           <details
             className="nav-group"
             onToggle={(event) => {
@@ -286,6 +332,22 @@ export function App() {
         >
           {route === 'snapshots' ? (
             <SnapshotsPage />
+          ) : route === 'licence' ? (
+            <PublicDocumentPage documentId="licence" />
+          ) : route === 'privacy' ? (
+            <PublicDocumentPage documentId="privacy" />
+          ) : route === 'security' ? (
+            <PublicDocumentPage documentId="security" />
+          ) : route === 'source' ? (
+            <PublicDocumentPage documentId="source" />
+          ) : route === 'source-checksum' ? (
+            <SourceChecksumPage />
+          ) : route === 'terms' ? (
+            <PublicDocumentPage documentId="terms" />
+          ) : route === 'third-party-notices' ? (
+            <PublicDocumentPage documentId="third-party-notices" />
+          ) : route === 'trademarks' ? (
+            <PublicDocumentPage documentId="trademarks" />
           ) : route === 'about' ? (
             <AboutPage />
           ) : route === 'caa' ? (
@@ -362,10 +424,10 @@ export function App() {
           explicit. No warranty.
         </p>
         <div>
-          <a href={href('about/#privacy')}>Privacy</a>
-          <a href={href('SOURCE.md')}>Source</a>
-          <a href={href('TERMS.md')}>Terms</a>
-          <a href={href('about/#legal')}>Legal</a>
+          <a href={href('privacy/')}>Privacy</a>
+          <a href={href('source/')}>Source</a>
+          <a href={href('terms/')}>Terms</a>
+          <a href={href('licence/')}>Legal</a>
           <span>© 2026 slicedearth</span>
         </div>
       </footer>

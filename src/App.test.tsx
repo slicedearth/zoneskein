@@ -17,8 +17,8 @@ describe('application shell', () => {
       'href',
       '/dnssec/',
     );
-    expect(screen.getByRole('link', { name: 'Source' })).toHaveAttribute('href', '/SOURCE.md');
-    expect(screen.getByRole('link', { name: 'Terms' })).toHaveAttribute('href', '/TERMS.md');
+    expect(screen.getByRole('link', { name: 'Source' })).toHaveAttribute('href', '/source/');
+    expect(screen.getByRole('link', { name: 'Terms' })).toHaveAttribute('href', '/terms/');
   });
 
   it('offers a keyboard-operable theme control', async () => {
@@ -57,6 +57,15 @@ describe('application shell', () => {
       'href',
       '/snapshots/',
     );
+
+    await user.keyboard('{Escape}');
+    expect(inspectSummary.closest('details')).not.toHaveAttribute('open');
+    expect(inspectSummary).toHaveFocus();
+
+    await user.click(inspectSummary);
+    expect(inspectSummary.closest('details')).toHaveAttribute('open');
+    await user.click(screen.getByRole('button', { name: /Use (?:light|dark) theme/u }));
+    expect(inspectSummary.closest('details')).not.toHaveAttribute('open');
 
     await user.click(prepareSummary);
     expect(prepareSummary.closest('details')).toHaveAttribute('open');
@@ -98,6 +107,18 @@ describe('application shell', () => {
     });
 
     await waitFor(() => expect(document.title).toBe('Page not found — ZoneSkein'));
+  });
+
+  it('renders public notices as semantic application routes', async () => {
+    window.history.replaceState(null, '', '/privacy/');
+    render(<App />);
+
+    expect(await screen.findByRole('heading', { level: 1, name: 'Privacy' })).toBeVisible();
+    expect(screen.getByRole('link', { name: 'Download raw PRIVACY.md' })).toHaveAttribute(
+      'href',
+      '/PRIVACY.md',
+    );
+    await waitFor(() => expect(document.title).toBe('Privacy — ZoneSkein'));
   });
 
   it('follows browser history and focuses the new main view', async () => {

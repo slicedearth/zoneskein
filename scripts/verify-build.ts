@@ -186,6 +186,21 @@ const [html, headers, redirects, resolverSource, netlifyConfig, relaySource] =
 
 if (!redirects.split(/\r?\n/u).includes('/*  /index.html  200'))
   fail('SPA fallback redirect is missing.');
+for (const [path, contentType] of [
+  ['/LICENSE', 'text/plain; charset=UTF-8'],
+  ['/*.md', 'text/markdown; charset=UTF-8'],
+  ['/SOURCE_SHA256', 'text/plain; charset=UTF-8'],
+] as const) {
+  const escapedPath = path.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  const escapedContentType = contentType.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  if (
+    !new RegExp(
+      `(?:^|\\n)${escapedPath}\\n\\s+Content-Type: ${escapedContentType}(?:\\n|$)`,
+      'u',
+    ).test(headers)
+  )
+    fail(`${path} is missing its explicit UTF-8 content type.`);
+}
 if (/\[edge_functions\]|edge_functions\s*=/iu.test(netlifyConfig))
   fail('Netlify configuration declares an Edge Function.');
 if (/\[functions(?:\.|\])|functions\s*=/iu.test(netlifyConfig))

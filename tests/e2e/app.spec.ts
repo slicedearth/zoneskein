@@ -59,27 +59,38 @@ async function mockDns(page: Page): Promise<void> {
   });
 }
 
-test('all static routes load directly and the shell remains usable', async ({ page }) => {
-  const routes = [
-    '/',
-    '/lookup/',
-    '/dnssec/',
-    '/spf/',
-    '/zone-lint/',
-    '/studio/',
-    '/diff/',
-    '/workspace/',
-    '/dmarc/',
-    '/dkim/',
-    '/caa/',
-    '/snapshots/',
-    '/about/',
-  ];
-  for (const path of routes) {
+const STATIC_ROUTES = [
+  '/',
+  '/lookup/',
+  '/dnssec/',
+  '/spf/',
+  '/zone-lint/',
+  '/studio/',
+  '/diff/',
+  '/workspace/',
+  '/dmarc/',
+  '/dkim/',
+  '/caa/',
+  '/snapshots/',
+  '/about/',
+  '/licence/',
+  '/privacy/',
+  '/security/',
+  '/source/',
+  '/source-checksum/',
+  '/terms/',
+  '/third-party-notices/',
+  '/trademarks/',
+] as const;
+
+for (const path of STATIC_ROUTES) {
+  test(`${path} loads directly`, async ({ page }) => {
     await page.goto(path);
     await expect(page.locator('main h1')).toBeVisible();
-  }
+  });
+}
 
+test('the shell remains keyboard usable', async ({ page }) => {
   await page.goto('/');
   const theme = page.getByRole('button', { name: /Use (?:light|dark) theme/u });
   const initialName = await theme.getAttribute('aria-label');

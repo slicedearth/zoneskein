@@ -16,9 +16,17 @@ const STATIC_ROUTES = [
   '/caa/',
   '/snapshots/',
   '/about/',
+  '/licence/',
+  '/privacy/',
+  '/security/',
+  '/source/',
+  '/source-checksum/',
+  '/terms/',
+  '/third-party-notices/',
+  '/trademarks/',
 ] as const;
 
-const REFLOW_WIDTHS = [320, 375, 768, 821, 1024, 1280] as const;
+const REFLOW_WIDTHS = [305, 320, 375, 768, 821, 1024, 1280] as const;
 
 async function allowCors(route: Route): Promise<boolean> {
   if (route.request().method() !== 'OPTIONS') return false;
@@ -177,6 +185,56 @@ test('a populated lookup remains accessible and bounded across target widths', a
   }
 });
 
+test('maximum-length local content remains bounded on narrow screens', async ({ page }) => {
+  for (const width of [320, 390]) {
+    await page.setViewportSize({ height: 900, width });
+    await page.goto('/workspace/');
+    await page.getByLabel('Workspace title').fill('W'.repeat(120));
+    await page.getByRole('button', { name: 'Apply edits' }).click();
+    await expect(page.getByRole('heading', { name: 'W'.repeat(120) })).toBeVisible();
+
+    const dimensions = await page.evaluate(() => ({
+      clientWidth: document.documentElement.clientWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+    }));
+    expect(
+      dimensions.scrollWidth,
+      `maximum workspace content overflowed at ${String(width)} CSS pixels`,
+    ).toBeLessThanOrEqual(dimensions.clientWidth + 1);
+  }
+});
+
+test('WCAG text spacing does not create horizontal document scrolling', async ({ page }) => {
+  await page.setViewportSize({ height: 900, width: 320 });
+  await page.goto('/lookup/');
+  const appliedSpacing = await page.evaluate(() => {
+    for (const element of document.querySelectorAll<HTMLElement>('*')) {
+      element.style.setProperty('line-height', '1.5', 'important');
+      element.style.setProperty('letter-spacing', '0.12em', 'important');
+      element.style.setProperty('word-spacing', '0.16em', 'important');
+      if (element.tagName === 'P')
+        element.style.setProperty('margin-bottom', '2em', 'important');
+    }
+    const body = getComputedStyle(document.body);
+    return {
+      letterSpacing: body.letterSpacing,
+      lineHeight: body.lineHeight,
+      wordSpacing: body.wordSpacing,
+    };
+  });
+  expect(appliedSpacing).toEqual({
+    letterSpacing: '1.92px',
+    lineHeight: '24px',
+    wordSpacing: '2.56px',
+  });
+
+  const dimensions = await page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+  }));
+  expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth + 1);
+});
+
 test('the keyboard skip link moves focus to the main content', async ({ page }) => {
   await page.goto('/');
   await page.keyboard.press('Tab');
@@ -188,18 +246,26 @@ test('the keyboard skip link moves focus to the main content', async ({ page }) 
   await expect(page.locator('#main-content')).toBeFocused();
 });
 
-test('forced colours preserve visible controls and focus', async ({ page }) => {
-  await page.emulateMedia({ forcedColors: 'active', reducedMotion: 'reduce' });
-  await page.goto('/lookup/');
+for (const theme of ['light', 'dark'] as const) {
+  test(`forced colours preserve visible controls and focus in ${theme} mode`, async ({
+    page,
+  }) => {
+    await page.emulateMedia({ forcedColors: 'active', reducedMotion: 'reduce' });
+    await page.goto('/lookup/');
+    const themeControl = page.getByRole('button', { name: /Use (?:light|dark) theme/u });
+    if ((await themeControl.getAttribute('aria-label')) === `Use ${theme} theme`) {
+      await themeControl.click();
+    }
 
-  const input = page.getByLabel('DNS name');
-  await input.focus();
-  await expect(input).toBeFocused();
-  await expect(input).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Inspect records' })).toBeVisible();
+    const input = page.getByLabel('DNS name');
+    await input.focus();
+    await expect(input).toBeFocused();
+    await expect(input).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Inspect records' })).toBeVisible();
 
-  const results = await new AxeBuilder({ page })
-    .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
-    .analyze();
-  expect(results.violations, summariseViolations(results.violations)).toEqual([]);
-});
+    const results = await new AxeBuilder({ page })
+      .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
+      .analyze();
+    expect(results.violations, summariseViolations(results.violations)).toEqual([]);
+  });
+}

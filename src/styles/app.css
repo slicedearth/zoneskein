@@ -45,14 +45,12 @@
 }
 
 html {
-  min-width: 320px;
   background: var(--bg);
   scroll-behavior: smooth;
 }
 
 body {
   margin: 0;
-  min-width: 320px;
   min-height: 100vh;
   background:
     radial-gradient(
@@ -68,6 +66,8 @@ button,
 input,
 textarea,
 select {
+  min-width: 0;
+  max-width: 100%;
   font: inherit;
 }
 
@@ -289,7 +289,17 @@ select:disabled {
 }
 
 main {
+  min-width: 0;
   padding: clamp(3rem, 6vw, 6rem) 0;
+}
+
+main :is(h1, h2, h3, h4, p, li, dd, dt, code, strong, span) {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+main :is(pre, .table-scroll) {
+  max-width: 100%;
 }
 
 .hero,
@@ -322,7 +332,19 @@ h1 {
 
 .tool-page {
   display: grid;
+  min-width: 0;
   gap: clamp(2rem, 4vw, 3.5rem);
+}
+
+.tool-page > *,
+.results > *,
+.result-panel > *,
+.snapshot-panel > *,
+.section-heading > *,
+.result-heading > *,
+.conclusion-panel > *,
+.diagnostic-list li > * {
+  min-width: 0;
 }
 
 .tool-intro {
@@ -417,6 +439,10 @@ footer div {
 }
 
 footer a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding-inline: 0.25rem;
   color: var(--muted);
 }
 
@@ -441,6 +467,9 @@ footer a:hover {
 }
 
 .secondary-tools a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
   color: var(--muted);
   font-size: 0.82rem;
   font-weight: 680;
@@ -603,6 +632,8 @@ footer a:hover {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
+  min-width: 0;
+  flex-wrap: wrap;
   gap: 1rem;
 }
 
@@ -733,7 +764,9 @@ footer a:hover {
   font-size: 0.73rem;
   font-weight: 800;
   gap: 0.35rem;
-  white-space: nowrap;
+  max-width: 100%;
+  text-align: center;
+  white-space: normal;
 }
 
 .status-pass {
@@ -1133,6 +1166,21 @@ summary {
   line-height: 1.65;
 }
 
+.workspace-boundary-note {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.workspace-boundary-note details {
+  min-width: 0;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line);
+}
+
+.workspace-boundary-note details p {
+  padding-top: 0.75rem;
+}
+
 .mode-switch {
   display: inline-flex;
   width: fit-content;
@@ -1207,6 +1255,10 @@ summary {
   border-bottom: 1px solid var(--line);
   line-height: 1.5;
   gap: 0.75rem;
+}
+
+.diagnostic-list li > span:last-child {
+  flex: 1;
 }
 
 .diagnostic-list li:last-child {
@@ -1712,6 +1764,120 @@ summary {
   gap: 1.2rem;
 }
 
+.public-document {
+  display: grid;
+  width: min(100%, 1000px);
+  min-width: 0;
+  gap: clamp(1.5rem, 4vw, 2.5rem);
+}
+
+.public-document-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  min-width: 0;
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.public-document-header > * {
+  min-width: 0;
+}
+
+.public-document-header h1,
+.public-document-markdown > h1 {
+  max-width: 900px;
+  margin: 0;
+  font-size: clamp(2.5rem, 7vw, 5rem);
+  letter-spacing: -0.055em;
+  line-height: 0.95;
+}
+
+.quiet-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0.52rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 0.45rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.quiet-link:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.public-document-markdown {
+  display: grid;
+  min-width: 0;
+  color: var(--muted);
+  line-height: 1.7;
+  gap: 0.9rem;
+}
+
+.public-document-markdown :is(h1, h2, h3, p, ul, ol, blockquote, pre, table) {
+  margin-block: 0;
+}
+
+.public-document-markdown h2 {
+  margin-top: 1.6rem;
+  padding-top: 1.2rem;
+  border-top: 1px solid var(--line);
+  color: var(--text);
+  font-size: clamp(1.55rem, 4vw, 2.4rem);
+  letter-spacing: -0.035em;
+}
+
+.public-document-markdown h3 {
+  margin-top: 1rem;
+  color: var(--text);
+  font-size: 1.15rem;
+}
+
+.public-document-markdown a {
+  color: var(--accent-strong);
+  text-decoration-thickness: 0.1em;
+  text-underline-offset: 0.16em;
+}
+
+.public-document-markdown pre,
+.public-document-code,
+.public-document-plain {
+  max-width: 100%;
+  margin: 0;
+  padding: 1rem;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 0.45rem;
+  background: var(--surface);
+  color: var(--text);
+  font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.public-document-markdown blockquote {
+  padding-left: 1rem;
+  border-left: 3px solid var(--warm);
+}
+
+.public-document-markdown .table-scroll {
+  margin-block: 0.5rem;
+  background: var(--surface);
+}
+
+.public-document-markdown .table-scroll table {
+  min-width: 48rem;
+}
+
 @media (max-width: 820px) {
   .site-header {
     grid-template-columns: 1fr auto;
@@ -1719,7 +1885,7 @@ summary {
 
   .primary-nav {
     width: 100%;
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
     justify-content: flex-start;
     padding: 0.35rem 0;
     grid-column: 1 / -1;
@@ -1864,6 +2030,12 @@ summary {
 
   .lookup-result .result-heading {
     align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .result-heading {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .lookup-result .record-table {
@@ -1942,6 +2114,11 @@ summary {
     flex-direction: column;
   }
 
+  .public-document-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
   .about-boundaries,
   .capability-list {
     grid-template-columns: 1fr;
@@ -1963,5 +2140,50 @@ summary {
   *::after {
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+@media (forced-colors: active) {
+  :root,
+  :root[data-theme='light'] {
+    --bg: Canvas;
+    --surface: Canvas;
+    --surface-raised: Canvas;
+    --text: CanvasText;
+    --muted: CanvasText;
+    --line: CanvasText;
+    --accent: LinkText;
+    --accent-contrast: Canvas;
+    --accent-strong: LinkText;
+    --warm: CanvasText;
+    --focus: Highlight;
+    --shadow: none;
+  }
+
+  body {
+    background: Canvas;
+  }
+
+  .primary-button {
+    border-color: ButtonText;
+    background: ButtonFace;
+    color: ButtonText;
+  }
+
+  .status-badge,
+  .status-pass,
+  .status-information,
+  .status-warning,
+  .status-error,
+  .status-unknown,
+  .danger-button,
+  .form-error {
+    color: CanvasText;
+  }
+
+  .primary-nav a[aria-current='page'],
+  .mode-switch button[aria-pressed='true'] {
+    background: Highlight;
+    color: HighlightText;
   }
 }

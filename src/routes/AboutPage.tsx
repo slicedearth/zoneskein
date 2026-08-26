@@ -219,12 +219,14 @@ export function AboutPage() {
               corresponding source for this deployed build
             </a>{' '}
             is offered at no charge, with verification and unpacking directions in{' '}
-            <a href="/SOURCE.md">SOURCE.md</a>. There is no warranty, subject to rights that
-            applicable law does not permit to be excluded. The complete, controlling terms are
-            in the deployed <a href="/LICENSE">LICENSE</a> file; hosted use is described in{' '}
-            <a href="/TERMS.md">TERMS.md</a>; third-party packages retain the licences listed in{' '}
-            <a href="/THIRD_PARTY_NOTICES.md">THIRD_PARTY_NOTICES.md</a>; and the project’s
-            branding position is in <a href="/TRADEMARKS.md">TRADEMARKS.md</a>.
+            <a href="/source/">the corresponding-source guide</a>. There is no warranty, subject
+            to rights that applicable law does not permit to be excluded. The complete,
+            controlling terms are on the <a href="/licence/">software licence page</a>; hosted
+            use is described in <a href="/terms/">the service terms</a>; third-party packages
+            retain the licences listed in{' '}
+            <a href="/third-party-notices/">the dependency notices</a>; and the project’s
+            branding position is in <a href="/trademarks/">the trade-mark notice</a>. Each page
+            also offers its controlling raw file as a download.
           </p>
         </div>
       </section>

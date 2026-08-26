@@ -7,7 +7,7 @@ export const SOURCE_ARCHIVE_NAME = 'zoneskein-corresponding-source.tar.gz';
 export const SOURCE_ARCHIVE_DIGEST_NAME = 'SOURCE_SHA256';
 export const SOURCE_MANIFEST_NAME = 'SOURCE_MANIFEST.sha256';
 
-const MAX_SOURCE_FILES = 512;
+const MAX_SOURCE_FILES = 640;
 const MAX_SOURCE_FILE_OCTETS = 2 * 1024 * 1024;
 const MAX_SOURCE_TOTAL_OCTETS = 16 * 1024 * 1024;
 const TAR_BLOCK_OCTETS = 512;

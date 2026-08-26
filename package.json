@@ -31,6 +31,7 @@
     "cidr-tools": "12.1.3",
     "idb": "8.0.3",
     "ipaddr.js": "2.5.0",
+    "marked-react": "4.0.0",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
