@@ -90,6 +90,27 @@ describe('SPF parser', () => {
     );
   });
 
+  it.each([
+    'v=spf1\u00a0ip4:192.0.2.0/24 -all',
+    'v=spf1\tip4:192.0.2.0/24 -all',
+    'v=spf1\nip4:192.0.2.0/24 -all',
+  ])('rejects non-printable or non-ASCII term separators', (record) => {
+    const policy = parseSpfRecord(record, 'example.com');
+    expect(policy.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'invalid-character', severity: 'error' }),
+      ]),
+    );
+  });
+
+  it.each(['127.1', '0x7f000001', '010.0.0.1'])(
+    'rejects ambiguous IPv4 mechanism input %s',
+    (address) => {
+      const policy = parseSpfRecord(`v=spf1 ip4:${address} -all`, 'example.com');
+      expect(policy.diagnostics.map((item) => item.code)).toContain('invalid-network');
+    },
+  );
+
   it('preserves unknown modifiers but keeps unknown mechanisms erroneous', () => {
     const policy = parseSpfRecord(
       'v=spf1 vendor=value option=%{d} future:thing -all',

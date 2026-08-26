@@ -1,5 +1,4 @@
-import ipaddr from 'ipaddr.js';
-
+import { processStrictIpAddress, type ProcessedIpAddress } from '../dns/ip';
 import { validateDnsName } from '../dns/names';
 import { DnsQueryError } from '../dns/types';
 import { parseSpfRecord } from './parser';
@@ -29,7 +28,7 @@ const MAX_MACRO_OUTPUT_OCTETS = 4096;
 const MAX_EXPLANATION_CHARACTERS = 512;
 const textEncoder = new TextEncoder();
 
-type IpAddress = ReturnType<typeof ipaddr.process>;
+type IpAddress = ProcessedIpAddress;
 type FaultResult = 'permerror' | 'temperror';
 
 export type SpfSenderResult =
@@ -211,11 +210,7 @@ function normaliseDomain(value: string, requireMultipleLabels: boolean): string 
 }
 
 function normaliseIp(value: string): IpAddress | null {
-  try {
-    return ipaddr.process(value);
-  } catch {
-    return null;
-  }
+  return processStrictIpAddress(value);
 }
 
 function capturedAt(timestamp: Date): string | undefined {
@@ -609,7 +604,6 @@ function parseNetworkMechanism(name: 'ip4' | 'ip6', tail: string): ParsedMechani
   if (prefix === null) return null;
   const parsed = normaliseIp(network);
   if (parsed?.kind() !== (name === 'ip4' ? 'ipv4' : 'ipv6')) return null;
-  if (name === 'ip4' && !isStrictIpv4(network)) return null;
   return {
     ...(name === 'ip4' ? { ipv4Prefix: prefix } : { ipv6Prefix: prefix }),
     name,
@@ -884,18 +878,9 @@ async function expandDomainSpec(
   return normalised;
 }
 
-function isStrictIpv4(value: string): boolean {
-  const parts = value.split('.');
-  return (
-    parts.length === 4 &&
-    parts.every((part) => /^(?:0|[1-9][0-9]{0,2})$/u.test(part) && Number(part) <= 255)
-  );
-}
-
 function parsedAddress(value: string, expectedKind: 'ipv4' | 'ipv6'): IpAddress | null {
   const parsed = normaliseIp(value);
   if (parsed?.kind() !== expectedKind) return null;
-  if (expectedKind === 'ipv4' && !isStrictIpv4(value)) return null;
   return parsed;
 }
 

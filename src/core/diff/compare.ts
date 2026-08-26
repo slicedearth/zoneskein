@@ -1,6 +1,5 @@
-import ipaddr from 'ipaddr.js';
-
-import { ZONE_ANALYSIS_LIMITS } from '../zone/parser';
+import { normaliseStrictIpAddress } from '../dns/ip';
+import { parseTtl, ZONE_ANALYSIS_LIMITS } from '../zone/parser';
 import type { ZoneDocument, ZoneRecord } from '../zone/types';
 import type { DiffReport, DnsChange } from './types';
 
@@ -26,11 +25,12 @@ function absoluteTarget(value: string, origin: string | undefined): string {
 }
 
 function normalizedAddress(value: string): string {
-  try {
-    return ipaddr.parse(value).toNormalizedString();
-  } catch {
-    return value.toLowerCase();
-  }
+  return normaliseStrictIpAddress(value) ?? value.toLowerCase();
+}
+
+function semanticTtl(value: string): string {
+  const seconds = parseTtl(value);
+  return seconds === null ? value.toLowerCase() : String(seconds);
 }
 
 function semanticRdata(record: ZoneRecord, origin: string | undefined): string {
@@ -61,7 +61,8 @@ function semanticRdata(record: ZoneRecord, origin: string | undefined): string {
     return [
       absoluteTarget(rawValues[0] ?? '', origin),
       absoluteTarget(rawValues[1] ?? '', origin),
-      ...values.slice(2).map((value) => String(Number(value))),
+      String(Number(values[2] ?? 0)),
+      ...values.slice(3).map(semanticTtl),
     ].join(' ');
   }
   if (record.type === 'CAA') {

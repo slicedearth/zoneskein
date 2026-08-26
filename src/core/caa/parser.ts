@@ -27,6 +27,19 @@ export interface CaaProperty {
   readonly record: CaaInput;
 }
 
+export interface CaaParentWalk {
+  readonly firstOmitted?: string;
+  readonly names: readonly string[];
+  readonly truncated: boolean;
+}
+
+export interface AuthoredCaaRecord {
+  readonly diagnostics: readonly CaaDiagnostic[];
+  readonly input: CaaInput;
+  readonly record: string;
+  readonly valid: boolean;
+}
+
 function isIssuerDomain(value: string): boolean {
   if (value.length > 253 || value.endsWith('.')) return false;
   const labels = value.split('.');
@@ -190,14 +203,22 @@ export function parseCaaPolicy(records: readonly CaaInput[]): CaaPolicy {
   return { diagnostics, properties, records };
 }
 
-export function caaParentNames(domain: string, maximumDepth = 20): readonly string[] {
+export function caaParentWalk(domain: string, maximumDepth = 80): CaaParentWalk {
   const labels = domain.toLowerCase().replace(/\.$/u, '').split('.').filter(Boolean);
-  return Array.from({ length: Math.min(labels.length, maximumDepth) }, (_, index) =>
-    labels.slice(index).join('.'),
-  );
+  const depth = Math.max(0, Math.min(labels.length, Math.floor(maximumDepth)));
+  const names = Array.from({ length: depth }, (_, index) => labels.slice(index).join('.'));
+  return {
+    ...(labels.length > depth ? { firstOmitted: labels.slice(depth).join('.') } : {}),
+    names,
+    truncated: labels.length > depth,
+  };
 }
 
-export function buildCaaRecord(
+export function caaParentNames(domain: string, maximumDepth = 80): readonly string[] {
+  return caaParentWalk(domain, maximumDepth).names;
+}
+
+export function authorCaaRecord(
   owner: string,
   issuer: string,
   options: {
@@ -206,7 +227,7 @@ export function buildCaaRecord(
     readonly tag: 'issue' | 'issuewild' | 'issuemail';
     readonly validationMethods?: readonly string[];
   },
-): string {
+): AuthoredCaaRecord {
   const flags = options.critical ? 128 : 0;
   const parameters = [
     ...(options.accountUri?.trim() ? [`accounturi=${options.accountUri.trim()}`] : []),
@@ -219,5 +240,25 @@ export function buildCaaRecord(
       ? ';'
       : [issuer.trim(), ...parameters].join('; ');
   const escaped = value.replaceAll('\\', '\\\\').replaceAll('"', '\\"');
-  return `${owner} IN CAA ${String(flags)} ${options.tag} "${escaped}"`;
+  const input = { flags, tag: options.tag, value };
+  const diagnostics = parseCaaPolicy([input]).diagnostics;
+  return {
+    diagnostics,
+    input,
+    record: `${owner} IN CAA ${String(flags)} ${options.tag} "${escaped}"`,
+    valid: !diagnostics.some((diagnostic) => diagnostic.severity === 'error'),
+  };
+}
+
+export function buildCaaRecord(
+  owner: string,
+  issuer: string,
+  options: {
+    readonly accountUri?: string;
+    readonly critical: boolean;
+    readonly tag: 'issue' | 'issuewild' | 'issuemail';
+    readonly validationMethods?: readonly string[];
+  },
+): string {
+  return authorCaaRecord(owner, issuer, options).record;
 }

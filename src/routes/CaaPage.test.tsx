@@ -45,6 +45,62 @@ function deferredReport() {
 afterEach(() => discoverCaaPolicyMock.mockReset());
 
 describe('CaaPage', () => {
+  it('blocks copying malformed local CAA drafts and associates field errors', async () => {
+    const user = userEvent.setup();
+    render(<CaaPage />);
+
+    const issuer = screen.getByLabelText('Issuer-domain-name');
+    await user.clear(issuer);
+    await user.type(issuer, 'not a domain');
+
+    expect(issuer).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByText(/valid issuer-domain-name/iu)).toHaveAttribute(
+      'id',
+      'caa-issuer-error',
+    );
+    expect(screen.getByRole('button', { name: 'Copy CAA record' })).toBeDisabled();
+
+    await user.clear(issuer);
+    await user.type(issuer, 'ca.example');
+    expect(screen.getByRole('button', { name: 'Copy CAA record' })).toBeEnabled();
+
+    const accountUri = screen.getByLabelText('CA account URI (optional)');
+    await user.type(accountUri, 'not a uri');
+    expect(accountUri).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByRole('button', { name: 'Copy CAA record' })).toBeDisabled();
+
+    await user.clear(accountUri);
+    const validationMethods = screen.getByLabelText('Validation methods (optional)');
+    await user.type(validationMethods, 'dns 01');
+    expect(validationMethods).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByRole('button', { name: 'Copy CAA record' })).toBeDisabled();
+  });
+
+  it('reports an exhausted parent-walk budget as partial evidence', async () => {
+    const domain = [...Array.from({ length: 80 }, () => 'a'), 'b', 'c', 'test'].join('.');
+    discoverCaaPolicyMock.mockImplementation((names) =>
+      Promise.resolve(
+        report({
+          queried: names,
+          requested: domain,
+        }),
+      ),
+    );
+    const user = userEvent.setup();
+    render(<CaaPage />);
+
+    await user.type(screen.getByLabelText('DNS name'), domain);
+    await user.click(screen.getByRole('button', { name: 'Inspect CAA' }));
+
+    await waitFor(() =>
+      expect(screen.getByRole('status', { name: 'CAA run status' })).toHaveTextContent(
+        'CAA inspection complete with partial DNS evidence.',
+      ),
+    );
+    expect(discoverCaaPolicyMock.mock.calls[0]?.[0]).toHaveLength(80);
+    expect(screen.getByText(/safety budget was exhausted before b\.c\.test/iu)).toBeVisible();
+  });
+
   it('discloses the Netlify intermediary when the Quad9 relay is selected', async () => {
     const user = userEvent.setup();
     render(<CaaPage />);

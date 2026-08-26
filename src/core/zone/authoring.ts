@@ -1,5 +1,4 @@
-import ipaddr from 'ipaddr.js';
-
+import { parseStrictIpAddress } from '../dns/ip';
 import { validateDnsName } from '../dns/names';
 import {
   isDeprecatedDsDigestForAuthoring,
@@ -97,11 +96,8 @@ function address(
   field: string,
   diagnostics: RecordAuthoringDiagnostic[],
 ): string | null {
-  try {
-    const parsed = ipaddr.parse(value.trim());
-    if (parsed.kind() !== family) throw new Error('family');
-    return parsed.toNormalizedString();
-  } catch {
+  const parsed = parseStrictIpAddress(value);
+  if (parsed?.kind() !== family) {
     diagnostics.push(
       diagnostic(
         'address-invalid',
@@ -111,6 +107,7 @@ function address(
     );
     return null;
   }
+  return parsed.toNormalizedString();
 }
 
 function quote(value: string): string {
@@ -282,15 +279,7 @@ function svcbParameters(
     }
     if ((key === 'ipv4hint' || key === 'ipv6hint') && value !== undefined) {
       const family = key === 'ipv4hint' ? 'ipv4' : 'ipv6';
-      if (
-        value.split(',').some((item) => {
-          try {
-            return ipaddr.parse(item).kind() !== family;
-          } catch {
-            return true;
-          }
-        })
-      )
+      if (value.split(',').some((item) => parseStrictIpAddress(item)?.kind() !== family))
         diagnostics.push(
           diagnostic(
             'svcb-hint-invalid',

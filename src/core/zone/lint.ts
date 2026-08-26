@@ -1,5 +1,4 @@
-import ipaddr from 'ipaddr.js';
-
+import { parseStrictIpAddress } from '../dns/ip';
 import { validateDnsName } from '../dns/names';
 import {
   isDeprecatedDsDigestForAuthoring,
@@ -62,12 +61,7 @@ function absoluteUri(value: string): boolean {
 }
 
 function looksLikeIp(value: string): boolean {
-  try {
-    ipaddr.parse(value.replace(/\.$/u, ''));
-    return true;
-  } catch {
-    return false;
-  }
+  return parseStrictIpAddress(value.replace(/\.$/u, '')) !== null;
 }
 
 function validateOwner(record: ZoneRecord): readonly ZoneDiagnostic[] {
@@ -248,13 +242,9 @@ function lintSvcb(record: ZoneRecord): readonly ZoneDiagnostic[] {
       const family = parameter.key === 'ipv4hint' ? 'ipv4' : 'ipv6';
       if (
         parameter.value === undefined ||
-        parameter.value.split(',').some((address) => {
-          try {
-            return ipaddr.parse(address).kind() !== family;
-          } catch {
-            return true;
-          }
-        })
+        parameter.value
+          .split(',')
+          .some((address) => parseStrictIpAddress(address)?.kind() !== family)
       )
         diagnostics.push(
           item(
@@ -373,13 +363,10 @@ function lintRecord(record: ZoneRecord, options: ZoneParseOptions): readonly Zon
 
   if (record.type === 'A' || record.type === 'AAAA') {
     const address = record.rdata[0];
-    try {
-      if (
-        address === undefined ||
-        ipaddr.parse(address.value).kind() !== (record.type === 'A' ? 'ipv4' : 'ipv6')
-      )
-        throw new Error('family');
-    } catch {
+    if (
+      address === undefined ||
+      parseStrictIpAddress(address.value)?.kind() !== (record.type === 'A' ? 'ipv4' : 'ipv6')
+    ) {
       diagnostics.push(
         item(
           record,
@@ -767,10 +754,36 @@ function lintRecord(record: ZoneRecord, options: ZoneParseOptions): readonly Zon
 
 function normalizedRdata(record: ZoneRecord): string | null {
   if (record.rdata.length > MAX_RDATA_FIELDS_PER_RECORD) return null;
-  return record.rdata
-    .map((token) => token.value)
-    .join(' ')
-    .toLowerCase();
+  const values = record.rdata.map((token) => token.value);
+  if (record.type === 'A' || record.type === 'AAAA')
+    return (
+      parseStrictIpAddress(values[0] ?? '')?.toNormalizedString() ?? JSON.stringify(values)
+    );
+  if (['CNAME', 'DNAME', 'NS', 'PTR'].includes(record.type))
+    return JSON.stringify(values.map((value) => value.toLowerCase()));
+  if (record.type === 'MX')
+    return JSON.stringify([String(Number(values[0] ?? 0)), (values[1] ?? '').toLowerCase()]);
+  if (record.type === 'SRV')
+    return JSON.stringify([
+      String(Number(values[0] ?? 0)),
+      String(Number(values[1] ?? 0)),
+      String(Number(values[2] ?? 0)),
+      (values[3] ?? '').toLowerCase(),
+    ]);
+  if (record.type === 'SOA')
+    return JSON.stringify([
+      (values[0] ?? '').toLowerCase(),
+      (values[1] ?? '').toLowerCase(),
+      String(Number(values[2] ?? 0)),
+      ...values.slice(3).map((value) => String(parseTtl(value) ?? value)),
+    ]);
+  if (record.type === 'CAA')
+    return JSON.stringify([
+      String(Number(values[0] ?? 0)),
+      (values[1] ?? '').toLowerCase(),
+      ...values.slice(2),
+    ]);
+  return JSON.stringify(values);
 }
 
 export function lintZoneSnippet(source: string, options: ZoneParseOptions = {}): ZoneDocument {

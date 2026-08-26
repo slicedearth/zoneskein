@@ -1,5 +1,4 @@
-import ipaddr from 'ipaddr.js';
-
+import { parseStrictIpAddress } from '../dns/ip';
 import { lexSpf, type SpfToken } from './lexer';
 import type {
   SpfCidr,
@@ -196,11 +195,9 @@ function mechanism(token: SpfToken, diagnostics: SpfDiagnostic[]): SpfMechanism 
     );
   }
   if ((name === 'ip4' || name === 'ip6') && argument !== undefined) {
-    try {
-      const parsed = ipaddr.parse(argument);
-      const expected = name === 'ip4' ? 'ipv4' : 'ipv6';
-      if (parsed.kind() !== expected) throw new Error('Address family does not match.');
-    } catch {
+    const parsed = parseStrictIpAddress(argument);
+    const expected = name === 'ip4' ? 'ipv4' : 'ipv6';
+    if (parsed?.kind() !== expected) {
       diagnostics.push(
         diagnostic(
           'invalid-network',
@@ -232,6 +229,19 @@ export function parseSpfRecord(record: string, sourceDomain: string): SpfPolicy 
         'The SPF policy exceeds the 4096-character analysis limit.',
       ),
     );
+  }
+  for (let index = 0; index < Math.min(record.length, 4096); index += 1) {
+    const codeUnit = record.charCodeAt(index);
+    if (codeUnit < 0x20 || codeUnit > 0x7e) {
+      diagnostics.push(
+        diagnostic(
+          'invalid-character',
+          'SPF policies may contain printable ASCII characters separated only by ordinary spaces.',
+          { location: { end: index + 1, start: index }, text: record[index] ?? '' },
+        ),
+      );
+      break;
+    }
   }
   const tokens = lexSpf(record.slice(0, 4096));
   const version = tokens[0];

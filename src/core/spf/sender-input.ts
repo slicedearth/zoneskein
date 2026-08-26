@@ -1,7 +1,5 @@
-import ipaddr from 'ipaddr.js';
-
+import { parseStrictIpAddress } from '../dns/ip';
 import { validateDnsName } from '../dns/names';
-import { reverseNameFromAddress } from '../dns/reverse';
 import { failure, success, type Result } from '../result';
 
 export interface MailFromIdentity {
@@ -48,8 +46,10 @@ export function validateMailFromLocalPart(localPart: string): string | null {
 }
 
 export function parseSenderClientIp(input: string): Result<string, string> {
-  const parsed = reverseNameFromAddress(input);
-  return parsed.ok ? success(ipaddr.parse(input.trim()).toString()) : failure(parsed.error);
+  const parsed = parseStrictIpAddress(input);
+  return parsed === null
+    ? failure('Enter a valid IPv4 or IPv6 address.')
+    : success(parsed.toString());
 }
 
 export function parseSenderDomain(

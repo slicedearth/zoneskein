@@ -22,4 +22,11 @@ describe('reverse DNS names', () => {
       ok: false,
     });
   });
+
+  it.each(['127.1', '010.0.0.1', '0x7f000001', 'fe80::1%eth0'])(
+    'rejects ambiguous or scoped address input %s',
+    (address) => {
+      expect(reverseNameFromAddress(address)).toMatchObject({ ok: false });
+    },
+  );
 });

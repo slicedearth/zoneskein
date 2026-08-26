@@ -1,6 +1,6 @@
 import { containsCidr, mergeCidr, normalizeCidr, parseCidr } from 'cidr-tools';
-import ipaddr from 'ipaddr.js';
 
+import { parseStrictIpAddress } from '../dns/ip';
 import { analyseSpf } from './evaluator';
 import type {
   SpfAnalysis,
@@ -17,14 +17,24 @@ interface FlattenResult {
   readonly terminal: string | null;
 }
 
+type DependencyTtl = number | null | undefined;
+
+function includeTtl(current: DependencyTtl, next: number | undefined): number | null {
+  if (current === null || next === undefined) return null;
+  return current === undefined ? next : Math.min(current, next);
+}
+
 function prefixFor(mechanism: SpfMechanism, address: string): number {
-  const family = ipaddr.parse(address.split('/')[0] ?? address).kind();
+  const family = parseStrictIpAddress(address.split('/')[0] ?? address)?.kind();
+  if (family === undefined) throw new Error('Address is not a strict IP literal.');
   return family === 'ipv4' ? (mechanism.cidr?.ipv4 ?? 32) : (mechanism.cidr?.ipv6 ?? 128);
 }
 
 function normalizedNetwork(address: string, mechanism: SpfMechanism): string {
   const bare = address.split('/')[0] ?? address;
-  return normalizeCidr(`${bare}/${String(prefixFor(mechanism, bare))}`);
+  const parsed = parseStrictIpAddress(bare);
+  if (parsed === null) throw new Error('Address is not a strict IP literal.');
+  return normalizeCidr(`${parsed.toNormalizedString()}/${String(prefixFor(mechanism, bare))}`);
 }
 
 function chunkSpf(value: string): readonly string[] {
@@ -103,6 +113,7 @@ export async function flattenSpf(
     domain: string,
     path: readonly string[],
     visiting: ReadonlySet<string>,
+    inheritedTtl: DependencyTtl,
   ): FlattenResult => {
     if (visiting.has(domain)) {
       blockers.add(
@@ -115,6 +126,7 @@ export async function flattenSpf(
       blockers.add(`${domain}: a single complete SPF policy is required.`);
       return { networks: [], provenance: [], terminal: null };
     }
+    const policyTtl = includeTtl(inheritedTtl, node.ttl);
     const nextVisiting = new Set(visiting).add(domain);
     const networks: string[] = [];
     const provenance: SpfProvenance[] = [];
@@ -165,7 +177,7 @@ export async function flattenSpf(
             network,
             path,
             sourceRecord: node.policy.record,
-            ...(node.ttl === undefined ? {} : { sourceTtl: node.ttl }),
+            ...(policyTtl === null ? {} : { sourceTtl: policyTtl }),
           });
         } catch {
           blockers.add(`${domain}: ${term.original} is not a valid network.`);
@@ -180,6 +192,7 @@ export async function flattenSpf(
           );
           continue;
         }
+        const resolutionTtl = includeTtl(policyTtl, resolution.ttl);
         for (const address of resolution.networks) {
           const network = normalizedNetwork(address, term);
           networks.push(network);
@@ -188,11 +201,7 @@ export async function flattenSpf(
             network,
             path,
             sourceRecord: node.policy.record,
-            ...(resolution.ttl === undefined
-              ? node.ttl === undefined
-                ? {}
-                : { sourceTtl: node.ttl }
-              : { sourceTtl: resolution.ttl }),
+            ...(resolutionTtl === null ? {} : { sourceTtl: resolutionTtl }),
           });
         }
         continue;
@@ -202,6 +211,7 @@ export async function flattenSpf(
           term.argument.toLowerCase().replace(/\.$/u, ''),
           [...path, term.argument],
           nextVisiting,
+          policyTtl,
         );
         if (nested.terminal === '+all') {
           blockers.add(`${domain}: ${term.original} authorises an unbounded pass set.`);
@@ -216,6 +226,7 @@ export async function flattenSpf(
         redirect.toLowerCase().replace(/\.$/u, ''),
         [...path, redirect],
         nextVisiting,
+        policyTtl,
       );
       networks.push(...nested.networks);
       provenance.push(...nested.provenance);
@@ -226,7 +237,12 @@ export async function flattenSpf(
     return { networks, provenance, terminal };
   };
 
-  const flattened = flattenDomain(analysis.rootDomain, [analysis.rootDomain], new Set());
+  const flattened = flattenDomain(
+    analysis.rootDomain,
+    [analysis.rootDomain],
+    new Set(),
+    undefined,
+  );
   const merged = coalesce(flattened.networks, flattened.provenance);
   const generatedAt = now.toISOString();
   if (blockers.size > 0 || flattened.terminal === null) {
@@ -258,10 +274,12 @@ export async function flattenSpf(
     warnings.add(
       'The estimated DNS response exceeds 512 bytes and may depend on EDNS or TCP fallback.',
     );
-  const ttls = merged.provenance.flatMap((item) =>
+  const knownTtls = merged.provenance.flatMap((item) =>
     item.sourceTtl === undefined ? [] : [item.sourceTtl],
   );
-  const minimumTtl = ttls.length === 0 ? null : Math.min(...ttls);
+  const ttlsKnown =
+    merged.provenance.length > 0 && knownTtls.length === merged.provenance.length;
+  const minimumTtl = ttlsKnown ? Math.min(...knownTtls) : null;
   const earliestSourceExpiry =
     minimumTtl === null ? undefined : new Date(now.getTime() + minimumTtl * 1000).toISOString();
   const recommendedRecheck =

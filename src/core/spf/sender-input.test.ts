@@ -58,6 +58,9 @@ describe('MAIL FROM sender input', () => {
       value: '2001:db8::1',
     });
     expect(parseSenderClientIp('not-an-address')).toMatchObject({ ok: false });
+    expect(parseSenderClientIp('127.1')).toMatchObject({ ok: false });
+    expect(parseSenderClientIp('010.0.0.1')).toMatchObject({ ok: false });
+    expect(parseSenderClientIp('fe80::1%eth0')).toMatchObject({ ok: false });
     expect(parseSenderDomain('Mail.Example.COM', 'HELO/EHLO')).toEqual({
       ok: true,
       value: 'mail.example.com',

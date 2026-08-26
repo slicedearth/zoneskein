@@ -10,7 +10,7 @@ export function lexSpf(record: string): readonly SpfToken[] {
   let start = -1;
   for (let index = 0; index <= record.length; index += 1) {
     const character = record[index];
-    const separator = character === undefined || /\s/u.test(character);
+    const separator = character === undefined || character === ' ';
     if (!separator && start < 0) start = index;
     if (separator && start >= 0) {
       tokens.push({

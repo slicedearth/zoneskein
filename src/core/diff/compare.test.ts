@@ -51,6 +51,36 @@ describe('semantic DNS change comparison', () => {
     ]);
   });
 
+  it('compares SOA unit timers as seconds without collapsing changes to NaN', () => {
+    const changed = compare(
+      '@ 300 IN SOA ns1.example. hostmaster.example. 20 1h 10m 1d 5m',
+      '@ 300 IN SOA ns1.example. hostmaster.example. 20 2h 10m 1d 5m',
+    );
+    expect(changed.changes).toEqual([
+      expect.objectContaining({ category: 'value-changed', type: 'SOA' }),
+    ]);
+
+    const equivalent = compare(
+      '@ 300 IN SOA ns1.example. hostmaster.example. 20 1h 10m 1d 5m',
+      '@ 300 IN SOA ns1.example. hostmaster.example. 20 3600 600 86400 300',
+    );
+    expect(equivalent.changes).toEqual([
+      expect.objectContaining({ category: 'formatting-only', type: 'SOA' }),
+    ]);
+  });
+
+  it('does not collapse ambiguous IPv4 text into a different canonical address', () => {
+    const shorthand = compare('@ 300 IN A 127.1', '@ 300 IN A 127.0.0.1');
+    const leadingZero = compare('@ 300 IN A 010.0.0.1', '@ 300 IN A 10.0.0.1');
+
+    expect(shorthand.changes).toEqual([
+      expect.objectContaining({ category: 'value-changed', type: 'A' }),
+    ]);
+    expect(leadingZero.changes).toEqual([
+      expect.objectContaining({ category: 'value-changed', type: 'A' }),
+    ]);
+  });
+
   it('omits changes whose current record type could not be observed', () => {
     const report = compare(
       '@ 300 IN A 192.0.2.1\n@ 300 IN MX 10 old.example.',

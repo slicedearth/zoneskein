@@ -67,6 +67,53 @@ function negativeResponse(soaTtl: number, minimum: number): DnsResponse {
   };
 }
 
+function unrelatedAnswerResponse(answerTtl: number, negativeTtl: number): DnsResponse {
+  const parsed = validateDnsName('example.com');
+  if (!parsed.ok) throw new Error(parsed.error.message);
+  const message = decodeDnsMessage(
+    encode({
+      answers: [
+        {
+          class: 'IN',
+          data: '192.0.2.1',
+          name: 'unrelated.example.',
+          ttl: answerTtl,
+          type: 'A',
+        },
+      ],
+      authorities: [
+        {
+          class: 'IN',
+          data: {
+            expire: 604800,
+            minimum: negativeTtl,
+            mname: 'ns1.example.',
+            refresh: 3600,
+            retry: 600,
+            rname: 'hostmaster.example.',
+            serial: 1,
+          },
+          name: 'example.',
+          ttl: negativeTtl,
+          type: 'SOA',
+        },
+      ],
+      flags: 0x8180,
+      id: 0,
+      questions: [{ class: 'IN', name: 'example.com.', type: 'A' }],
+      type: 'response',
+    }),
+  );
+  return {
+    cache: 'miss',
+    message,
+    queryTimeMs: 1,
+    question: { name: parsed.value, type: 'A' },
+    receivedAt: '2026-08-13T00:00:00.000Z',
+    resolver: resolverById('google'),
+  };
+}
+
 function cachedResponse(cache: DnsMemoryCache, key: string): DnsResponse | null {
   const hit = cache.get(key);
   return hit !== null && 'response' in hit ? hit.response : null;
@@ -98,6 +145,17 @@ describe('DNS memory cache', () => {
     expect(cachedResponse(cache, 'negative')).toBe(value);
     now = 12_000;
     expect(cachedResponse(cache, 'negative')).toBeNull();
+  });
+
+  it('does not classify unrelated answer data as a positive cache entry', () => {
+    let now = 10_000;
+    const cache = new DnsMemoryCache(() => now);
+    const value = unrelatedAnswerResponse(86_400, 1);
+    cache.set('unrelated', value);
+
+    expect(cache.get('unrelated')).toMatchObject({ classification: 'ordinary-negative' });
+    now = 11_000;
+    expect(cache.get('unrelated')).toBeNull();
   });
 
   it('does not cache responses without a cacheable TTL', () => {

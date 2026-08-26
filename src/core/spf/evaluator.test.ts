@@ -274,6 +274,39 @@ describe('conservative SPF snapshots', () => {
     );
   });
 
+  it('expires included networks at the earliest policy TTL on their dependency path', async () => {
+    const now = new Date('2026-08-13T00:00:00.000Z');
+    const { snapshot } = await flattenSpf(
+      'root.test',
+      new FixtureDns({
+        'provider.test|TXT': answer(['v=spf1 ip4:192.0.2.0/24 -all'], 600),
+        'root.test|TXT': answer(['v=spf1 include:provider.test -all'], 30),
+      }),
+      now,
+    );
+
+    expect(snapshot.safe).toBe(true);
+    expect(snapshot.provenance[0]?.sourceTtl).toBe(30);
+    expect(snapshot.earliestSourceExpiry).toBe('2026-08-13T00:00:30.000Z');
+  });
+
+  it('keeps expiry unknown when any required dependency TTL is unavailable', async () => {
+    const dns = new FixtureDns({
+      'provider.test|TXT': answer(['v=spf1 ip4:192.0.2.0/24 -all'], 600),
+      'root.test|TXT': {
+        messageBytes: 100,
+        status: 'answer',
+        values: ['v=spf1 include:provider.test -all'],
+      },
+    });
+    const { snapshot } = await flattenSpf('root.test', dns);
+
+    expect(snapshot.safe).toBe(true);
+    expect(snapshot.provenance[0]?.sourceTtl).toBeUndefined();
+    expect(snapshot.earliestSourceExpiry).toBeUndefined();
+    expect(snapshot.recommendedRecheck).toBeUndefined();
+  });
+
   it('ignores an unknown modifier without blocking a finite snapshot', async () => {
     const { analysis, snapshot } = await flattenSpf(
       'root.test',

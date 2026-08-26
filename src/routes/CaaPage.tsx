@@ -4,7 +4,7 @@ import { CopyButton } from '../components/CopyButton';
 import { StatusBadge } from '../components/StatusBadge';
 import { ToolIntro } from '../components/ToolIntro';
 import { discoverCaaPolicy, type CaaDiscoveryReport } from '../core/caa/discovery';
-import { buildCaaRecord, caaParentNames, parseCaaPolicy } from '../core/caa/parser';
+import { authorCaaRecord, caaParentWalk, parseCaaPolicy } from '../core/caa/parser';
 import { validateDnsName } from '../core/dns/names';
 import { queryPolicyRecords } from '../core/dns/policy-query';
 import type { ResolverId } from '../core/dns/types';
@@ -45,9 +45,9 @@ export function CaaPage() {
   const [critical, setCritical] = useState(false);
   const activeRun = useRef<DnsQueryRun | null>(null);
 
-  const builtRecord = useMemo(
+  const authoredRecord = useMemo(
     () =>
-      buildCaaRecord('@', issuer, {
+      authorCaaRecord('@', issuer, {
         ...(tag === 'issuemail' || accountUri.trim() === '' ? {} : { accountUri }),
         critical,
         tag,
@@ -79,11 +79,24 @@ export function CaaPage() {
     const resolver = new WireDnsResolver(RESOLVERS[resolverId]);
     let discovered: CaaDiscoveryReport;
     try {
+      const parentWalk = caaParentWalk(parsed.value.ascii);
       discovered = await discoverCaaPolicy(
-        caaParentNames(parsed.value.ascii),
+        parentWalk.names,
         (name) => queryPolicyRecords(resolver, run, name, 'CAA'),
         () => run.cancelled,
       );
+      if (
+        parentWalk.truncated &&
+        discovered.records.length === 0 &&
+        discovered.errors.length === 0
+      ) {
+        discovered = {
+          ...discovered,
+          errors: [
+            `The 80-question safety budget was exhausted before ${parentWalk.firstOmitted ?? 'the next parent name'} could be checked. No complete CAA absence conclusion can be reached.`,
+          ],
+        };
+      }
     } catch {
       if (activeRun.current !== run) return;
       if (run.cancelled) {
@@ -110,6 +123,18 @@ export function CaaPage() {
   }
 
   const policy = report === null ? null : parseCaaPolicy(report.records);
+  const authoringErrors = authoredRecord.diagnostics.filter(
+    (diagnostic) => diagnostic.severity === 'error',
+  );
+  const issuerError = authoringErrors.find(
+    (diagnostic) => diagnostic.code === 'issuer-invalid',
+  );
+  const accountUriError = authoringErrors.find(
+    (diagnostic) => diagnostic.code === 'accounturi-invalid',
+  );
+  const validationMethodsError = authoringErrors.find(
+    (diagnostic) => diagnostic.code === 'validationmethods-invalid',
+  );
   function invalidateInspection() {
     activeRun.current?.cancel();
     activeRun.current = null;
@@ -368,9 +393,16 @@ export function CaaPage() {
             <label htmlFor="caa-issuer">Issuer-domain-name</label>
             <input
               id="caa-issuer"
+              aria-describedby={issuerError === undefined ? undefined : 'caa-issuer-error'}
+              aria-invalid={issuerError === undefined ? undefined : true}
               value={issuer}
               onChange={(event) => setIssuer(event.currentTarget.value)}
             />
+            {issuerError === undefined ? null : (
+              <small className="form-error" id="caa-issuer-error">
+                {issuerError.message}
+              </small>
+            )}
           </div>
           <div className="field-group">
             <label htmlFor="caa-tag">Property</label>
@@ -392,21 +424,41 @@ export function CaaPage() {
                 <label htmlFor="caa-account-uri">CA account URI (optional)</label>
                 <input
                   id="caa-account-uri"
+                  aria-describedby={
+                    accountUriError === undefined ? undefined : 'caa-account-uri-error'
+                  }
+                  aria-invalid={accountUriError === undefined ? undefined : true}
                   value={accountUri}
                   onChange={(event) => setAccountUri(event.currentTarget.value)}
                   placeholder="https://ca.example/account/123"
                   spellCheck={false}
                 />
+                {accountUriError === undefined ? null : (
+                  <small className="form-error" id="caa-account-uri-error">
+                    {accountUriError.message}
+                  </small>
+                )}
               </div>
               <div className="field-group">
                 <label htmlFor="caa-validation-methods">Validation methods (optional)</label>
                 <input
                   id="caa-validation-methods"
+                  aria-describedby={
+                    validationMethodsError === undefined
+                      ? undefined
+                      : 'caa-validation-methods-error'
+                  }
+                  aria-invalid={validationMethodsError === undefined ? undefined : true}
                   value={validationMethods}
                   onChange={(event) => setValidationMethods(event.currentTarget.value)}
                   placeholder="dns-01,http-01"
                   spellCheck={false}
                 />
+                {validationMethodsError === undefined ? null : (
+                  <small className="form-error" id="caa-validation-methods-error">
+                    {validationMethodsError.message}
+                  </small>
+                )}
               </div>
             </>
           )}
@@ -419,8 +471,12 @@ export function CaaPage() {
             Critical flag
           </label>
         </div>
-        <pre className="spf-output">{builtRecord}</pre>
-        <CopyButton label="Copy CAA record" text={builtRecord} />
+        <pre className="spf-output">{authoredRecord.record}</pre>
+        <CopyButton
+          disabled={!authoredRecord.valid}
+          label="Copy CAA record"
+          text={authoredRecord.record}
+        />
         <p className="detail-note">
           Confirm the exact issuer identifier in your certificate authority’s documentation
           before publishing.

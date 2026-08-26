@@ -155,6 +155,19 @@ www 300 IN A 192.0.2.10 ; deployed address
 });
 
 describe('zone-snippet lint rules', () => {
+  it('preserves case-sensitive TXT octets while canonicalising DNS-name fields', () => {
+    const document = lintZoneSnippet(
+      '@ 300 IN TXT "Foo"\n@ 300 IN TXT "foo"\nwww 300 IN CNAME Target.Example.\nwww 300 IN CNAME target.example.',
+      { origin: 'example.com' },
+    );
+    const duplicates = document.diagnostics.filter(
+      (diagnostic) => diagnostic.rule === 'record-duplicate',
+    );
+
+    expect(duplicates).toHaveLength(1);
+    expect(duplicates[0]?.line).toBe(4);
+  });
+
   it('finds CNAME conflicts, invalid addresses, and malformed structured records', () => {
     const document = lintZoneSnippet(
       `
@@ -176,6 +189,20 @@ _service._tcp IN SRV 1 2 nope target
         'srv-malformed',
         'caa-malformed',
       ]),
+    );
+  });
+
+  it('rejects ambiguous address syntax in records and SVCB hints', () => {
+    const document = lintZoneSnippet(
+      '@ IN A 010.0.0.1\n@ IN AAAA fe80::1%eth0\nsvc IN HTTPS 1 . ipv4hint=127.1',
+      { origin: 'example.com' },
+    );
+
+    expect(document.diagnostics.filter((item) => item.rule === 'address-invalid')).toHaveLength(
+      2,
+    );
+    expect(document.diagnostics).toContainEqual(
+      expect.objectContaining({ rule: 'svcb-hint-invalid', severity: 'error' }),
     );
   });
 

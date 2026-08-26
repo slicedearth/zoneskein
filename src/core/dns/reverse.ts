@@ -1,6 +1,5 @@
-import ipaddr from 'ipaddr.js';
-
 import { failure, success, type Result } from '../result';
+import { parseStrictIpAddress } from './ip';
 
 export interface ReverseName {
   readonly address: string;
@@ -10,8 +9,8 @@ export interface ReverseName {
 
 export function reverseNameFromAddress(input: string): Result<ReverseName, string> {
   const value = input.trim();
-  if (!ipaddr.isValid(value)) return failure('Enter a valid IPv4 or IPv6 address.');
-  const parsed = ipaddr.parse(value);
+  const parsed = parseStrictIpAddress(value);
+  if (parsed === null) return failure('Enter a valid IPv4 or IPv6 address.');
 
   if (parsed.kind() === 'ipv4') {
     const bytes = parsed.toByteArray();

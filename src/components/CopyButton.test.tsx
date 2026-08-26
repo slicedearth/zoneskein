@@ -18,4 +18,19 @@ describe('CopyButton', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Copy report succeeded.');
     expect(screen.getByRole('button', { name: 'Copied' })).toBeInTheDocument();
   });
+
+  it('does not expose a disabled draft to the clipboard', () => {
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    render(<CopyButton disabled label="Copy record" text="invalid draft" />);
+
+    const button = screen.getByRole('button', { name: 'Copy record' });
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+
+    expect(writeText).not.toHaveBeenCalled();
+  });
 });

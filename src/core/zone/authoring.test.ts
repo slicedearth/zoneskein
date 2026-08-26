@@ -171,6 +171,28 @@ describe('DNS record authoring', () => {
     expect(result.diagnostics.map((item) => item.code)).toContain('svcb-alias-root-target');
   });
 
+  it('rejects ambiguous IPv4 and scoped IPv6 forms in authored records and hints', () => {
+    for (const address of ['127.1', '010.0.0.1', '0x7f000001', '192.168.001.1']) {
+      const result = authorRecord(draft('A', { address }));
+      expect(result).toMatchObject({ valid: false });
+      expect(result.diagnostics).toContainEqual(
+        expect.objectContaining({ code: 'address-invalid', field: 'address' }),
+      );
+    }
+    expect(authorRecord(draft('AAAA', { address: 'fe80::1%eth0' }))).toMatchObject({
+      valid: false,
+    });
+    expect(
+      authorRecord(
+        draft('HTTPS', {
+          parameters: 'ipv4hint=010.0.0.1',
+          priority: '1',
+          target: 'edge.example.',
+        }),
+      ).diagnostics,
+    ).toContainEqual(expect.objectContaining({ code: 'svcb-hint-invalid' }));
+  });
+
   it('rejects malformed security-sensitive record fields', () => {
     expect(
       authorRecord(

@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildCaaRecord, caaParentNames, parseCaaPolicy } from './parser';
+import {
+  authorCaaRecord,
+  buildCaaRecord,
+  caaParentNames,
+  caaParentWalk,
+  parseCaaPolicy,
+} from './parser';
 
 describe('CAA policy analysis', () => {
   it('walks from a host towards its parent names', () => {
@@ -10,6 +16,17 @@ describe('CAA policy analysis', () => {
       'example.com',
       'com',
     ]);
+  });
+
+  it('reports a bounded parent walk instead of turning omitted evidence into absence', () => {
+    const domain = [...Array.from({ length: 80 }, () => 'a'), 'b', 'c', 'test'].join('.');
+    const walk = caaParentWalk(domain);
+
+    expect(walk.names).toHaveLength(80);
+    expect(walk).toMatchObject({
+      firstOmitted: 'b.c.test',
+      truncated: true,
+    });
   });
 
   it('flags reserved bits and critical unknown properties', () => {
@@ -58,6 +75,24 @@ describe('CAA policy analysis', () => {
     );
     expect(buildCaaRecord('@', '', { critical: false, tag: 'issuemail' })).toBe(
       '@ IN CAA 0 issuemail ";"',
+    );
+  });
+
+  it.each([
+    ['not a domain', '', [], 'issuer-invalid'],
+    ['ca.example', 'not a uri', [], 'accounturi-invalid'],
+    ['ca.example', '', ['dns 01'], 'validationmethods-invalid'],
+  ])('blocks malformed authored records (%s)', (issuer, accountUri, methods, code) => {
+    const result = authorCaaRecord('@', issuer, {
+      ...(accountUri === '' ? {} : { accountUri }),
+      critical: false,
+      tag: 'issue',
+      validationMethods: methods,
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({ code, severity: 'error' }),
     );
   });
 });

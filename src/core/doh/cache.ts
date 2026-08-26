@@ -4,6 +4,7 @@ import {
   type DnsRecord,
   type DnsResponse,
 } from '../dns/types';
+import { reachableAnswerRecords } from '../dns/answer-chain';
 
 export type DnsCacheClassification =
   'positive' | 'resolver-ad-negative' | 'ordinary-negative' | 'resolution-failure';
@@ -126,24 +127,43 @@ function negativeClassification(response: DnsResponse): DnsCacheClassification {
     : 'ordinary-negative';
 }
 
+function reachablePositiveRecords(response: DnsResponse): readonly DnsRecord[] {
+  const reachable = reachableAnswerRecords(
+    response.question.name.ascii,
+    response.message.answers,
+    response.question.type,
+  );
+  if (reachable.error !== undefined || reachable.records.length === 0) return [];
+  const owners = new Set(
+    [...reachable.aliases, ...reachable.records].map((record) =>
+      record.owner.toLowerCase().replace(/\.$/u, ''),
+    ),
+  );
+  const signatures = response.message.answers.filter(
+    (record) =>
+      record.type === 'RRSIG' && owners.has(record.owner.toLowerCase().replace(/\.$/u, '')),
+  );
+  return [...reachable.aliases, ...reachable.records, ...signatures];
+}
+
 function responseClassification(response: DnsResponse): DnsCacheClassification {
   if (
     response.message.responseCode !== 'NOERROR' &&
     response.message.responseCode !== 'NXDOMAIN'
   )
     return 'resolution-failure';
-  if (response.message.responseCode === 'NXDOMAIN' || response.message.answers.length === 0)
+  if (
+    response.message.responseCode === 'NXDOMAIN' ||
+    reachablePositiveRecords(response).length === 0
+  )
     return negativeClassification(response);
   return 'positive';
 }
 
 function positiveResponseTtl(response: DnsResponse, now: number): number {
-  const ttl = minimum(recordTtlCandidates(response.message.answers), MAX_CACHE_TTL_SECONDS);
-  return remainingTtl(
-    capBySignatureExpiration(ttl, response.message.answers, response),
-    response,
-    now,
-  );
+  const records = reachablePositiveRecords(response);
+  const ttl = minimum(recordTtlCandidates(records), MAX_CACHE_TTL_SECONDS);
+  return remainingTtl(capBySignatureExpiration(ttl, records, response), response, now);
 }
 
 function negativeResponseTtl(
@@ -151,7 +171,19 @@ function negativeResponseTtl(
   now: number,
   authenticated: boolean,
 ): number {
-  const negativeTtl = response.message.negativeCacheTtl;
+  const soa = response.message.authorities.find((record) => record.type === 'SOA');
+  const soaMinimum =
+    soa?.data !== null && typeof soa?.data === 'object'
+      ? (soa.data as Record<string, unknown>)['minimum']
+      : undefined;
+  const derivedNegativeTtl =
+    soa !== undefined &&
+    typeof soaMinimum === 'number' &&
+    Number.isInteger(soaMinimum) &&
+    soaMinimum >= 0
+      ? Math.min(soa.ttl, soaMinimum)
+      : undefined;
+  const negativeTtl = response.message.negativeCacheTtl ?? derivedNegativeTtl;
   if (negativeTtl === undefined) return 0;
   let ttl = Math.min(negativeTtl, MAX_NEGATIVE_CACHE_TTL_SECONDS);
   if (authenticated) {
