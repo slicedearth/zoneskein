@@ -24,6 +24,15 @@ describe('application shell', () => {
     render(<App />);
 
     expect(screen.getByRole('heading', { level: 1, name: 'Untangle DNS.' })).toBeVisible();
+    expect(screen.getByRole('link', { name: 'Start with a lookup' })).toHaveAttribute(
+      'href',
+      '/lookup/',
+    );
+    expect(screen.getByRole('link', { name: 'See how it works' })).toHaveAttribute(
+      'href',
+      '/about/',
+    );
+    expect(document.querySelector('.brand img')).toHaveAttribute('src', '/logo.svg');
     expect(screen.getByRole('link', { name: /Inspect DNSSEC/ })).toHaveAttribute(
       'href',
       '/dnssec/',
@@ -34,6 +43,10 @@ describe('application shell', () => {
 
   it('offers a keyboard-operable theme control', async () => {
     const user = userEvent.setup();
+    const themeColour = document.createElement('meta');
+    themeColour.name = 'theme-color';
+    themeColour.content = '#17102f';
+    document.head.append(themeColour);
     render(<App />);
 
     const control = screen.getByRole('button', { name: 'Use light theme' });
@@ -41,6 +54,8 @@ describe('application shell', () => {
 
     expect(screen.getByRole('button', { name: 'Use dark theme' })).toBeVisible();
     expect(document.documentElement).toHaveAttribute('data-theme', 'light');
+    expect(themeColour).toHaveAttribute('content', '#fff3dc');
+    themeColour.remove();
   });
 
   it('groups tools into native, keyboard-operable navigation disclosures', async () => {

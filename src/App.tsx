@@ -158,6 +158,9 @@ export function App() {
 
   useEffect(() => {
     document.documentElement.dataset['theme'] = theme;
+    document
+      .querySelector<HTMLMetaElement>('meta[name="theme-color"]')
+      ?.setAttribute('content', theme === 'dark' ? '#17102f' : '#fff3dc');
   }, [theme]);
 
   useEffect(() => {
@@ -255,8 +258,11 @@ export function App() {
           aria-current={route === '' ? 'page' : undefined}
           aria-label="ZoneSkein home"
         >
-          <img src={href('logo.svg')} alt="" width="42" height="42" />
-          <span>ZoneSkein</span>
+          <img src={href('logo.svg')} alt="" width="54" height="44" />
+          <span className="brand-wordmark">
+            <span>Zone</span>
+            <span>Skein</span>
+          </span>
         </a>
         <nav
           className="primary-nav"
@@ -406,23 +412,61 @@ export function App() {
             <LookupPage />
           ) : route === '' ? (
             <section className="hero" aria-labelledby="home-title">
-              <p className="eyebrow">Browser-based DNS workbench</p>
-              <h1 id="home-title">Untangle DNS.</h1>
-              <p className="lede">
-                Inspect evidence, understand policy dependencies, and review records before you
-                publish, with local-first authoring and analysis.
-              </p>
+              <div className="hero-copy">
+                <p className="eyebrow">A browser-based DNS workbench</p>
+                <h1 id="home-title">Untangle DNS.</h1>
+                <p className="lede">
+                  Follow every strand from question to evidence. Inspect live answers,
+                  understand policy dependencies, and rehearse changes before anything gets
+                  published.
+                </p>
+                <div className="hero-actions" aria-label="Get started">
+                  <a className="primary-button" href={href('lookup/')}>
+                    Start with a lookup
+                  </a>
+                  <a className="quiet-link" href={href('about/')}>
+                    See how it works
+                  </a>
+                </div>
+              </div>
+              <div className="skein-board" aria-hidden="true">
+                <span className="board-label">Messy in.</span>
+                <div className="strand-field">
+                  <span className="strand strand-coral" />
+                  <span className="strand strand-mango" />
+                  <span className="strand strand-mint" />
+                  <span className="strand strand-sky" />
+                </div>
+                <div className="record-stack">
+                  <span>
+                    <b>A</b>
+                    <code>192.0.2.42</code>
+                  </span>
+                  <span>
+                    <b>MX</b>
+                    <code>mail.example</code>
+                  </span>
+                  <span>
+                    <b>TXT</b>
+                    <code>v=spf1…</code>
+                  </span>
+                </div>
+                <span className="board-label board-label-end">Evidence out.</span>
+              </div>
               <div className="tool-links" aria-label="Primary tools">
                 {tools.map((tool, index) => (
                   <a href={href(tool.path)} key={tool.path}>
-                    <span className="tool-number">0{index + 1}</span>
+                    <span className="tool-number">Strand 0{index + 1}</span>
                     <strong>{tool.label}</strong>
-                    <span>{tool.description}</span>
+                    <span className="tool-description">{tool.description}</span>
+                    <span className="tool-arrow" aria-hidden="true">
+                      ↗
+                    </span>
                   </a>
                 ))}
               </div>
               <div className="secondary-tools" aria-label="Additional tools">
-                <span>Also included</span>
+                <span>Follow another thread</span>
                 <a href={href('lookup/')}>Record explorer</a>
                 <a href={href('studio/')}>Record Studio</a>
                 <a href={href('workspace/')}>Change Workspace</a>

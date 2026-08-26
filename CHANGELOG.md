@@ -4,6 +4,7 @@ All notable changes to ZoneSkein are documented here.
 
 ## Unreleased
 
+- Recast the interface around an expressive skein identity, with a custom knot-to-record SVG mark, a vibrant high-contrast colour system, self-hosted open-licensed display and reading fonts, playful responsive geometry, and a clearer home-page path into the workbench while retaining compact technical evidence.
 - Added RFC 8467 all-zero EDNS query padding to 128-octet blocks on every direct and relayed DNS-over-HTTPS request, with exact-length tests and strict compatibility-relay rejection of missing, malformed, excessive, or non-zero padding. Also aligned the relay allowlist with live ZONEMD inspection.
 - Added a bounded privacy-minimised SPF and DKIM evidence hand-off into DMARC alignment, with in-memory route transfer, strict versioned JSON import and export, inert resolver provenance, reconstruction caveats, exact schema validation, and automatic provenance detachment after edits.
 - Added bounded in-house complete-zone integrity verification and publication-record generation with SHA-384 and SHA-512, canonical DNS wire ordering, generic numeric RDATA, standard vectors, explicit completeness consent, checksum-only caveats, and live DNSSEC support for published ZONEMD RRsets.
