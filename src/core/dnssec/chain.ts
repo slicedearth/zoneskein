@@ -25,8 +25,10 @@ import { compareDsToDnskeys } from './digest';
 import { validateDsDenial, type DsDenialResult } from './denial';
 import { parseDnskey, parseDs, parseRrsig, signatureTimeState } from './records';
 import {
+  assessRootTrustAnchorMaintenance,
   matchRootTrustAnchors,
   ROOT_TRUST_ANCHOR_SOURCE,
+  type RootTrustAnchorMaintenance,
   type RootTrustAnchorMatch,
 } from './trust-anchors';
 import type { DnskeyInfo, DsInfo, DsMatch, SignatureVerification } from './types';
@@ -76,14 +78,16 @@ export interface DnssecChainStep {
 
 export interface DnssecChainReport {
   readonly application?: DnssecApplicationResult;
+  readonly evidenceValidUntil?: string;
   readonly evidence: readonly DnssecChainEvidence[];
   readonly explanation: string;
   readonly state: DnssecChainState;
   readonly steps: readonly DnssecChainStep[];
   readonly target: string;
+  readonly trustAnchorMaintenance: RootTrustAnchorMaintenance;
   readonly trustAnchorSource: typeof ROOT_TRUST_ANCHOR_SOURCE;
   readonly validatedAt: string;
-  readonly validatorVersion: 3;
+  readonly validatorVersion: 4;
 }
 
 export type DnssecChainQuery = (
@@ -173,6 +177,12 @@ function verificationIsCurrent(verification: SignatureVerification, now: number)
   );
 }
 
+function serialExpirationMilliseconds(expiration: number, validationTime: number): number {
+  const validationSeconds = Math.floor(validationTime / 1000);
+  const distance = (expiration - (validationSeconds >>> 0)) >>> 0;
+  return (validationSeconds + distance) * 1000;
+}
+
 function failureExplanation(type: 'DS' | 'DNSKEY', state: DnssecChainState): string {
   if (state === 'incomplete')
     return `The ${type} RRset exceeds the local cryptographic work bound.`;
@@ -234,6 +244,7 @@ export async function validateDnssecChain(
   let rootAnchorMatches: readonly RootTrustAnchorMatch[] = [];
   let application: DnssecApplicationResult | undefined;
   let questionsUsed = 0;
+  let evidenceValidUntil: string | undefined;
 
   const ask = async (name: string, type: DnsRecordType): Promise<DnsResponse | undefined> => {
     if (questionsUsed >= MAX_CHAIN_QUESTIONS) {
@@ -292,14 +303,16 @@ export async function validateDnssecChain(
     validationTime: number,
   ): DnssecChainReport => ({
     ...(application === undefined ? {} : { application }),
+    ...(evidenceValidUntil === undefined ? {} : { evidenceValidUntil }),
     evidence,
     explanation,
     state,
     steps,
     target,
+    trustAnchorMaintenance: assessRootTrustAnchorMaintenance(validationTime),
     trustAnchorSource: ROOT_TRUST_ANCHOR_SOURCE,
     validatedAt: new Date(validationTime).toISOString(),
-    validatorVersion: 3,
+    validatorVersion: 4,
   });
   const finish = (state: DnssecChainState, explanation: string): DnssecChainReport =>
     finishAt(state, explanation, currentTime());
@@ -333,6 +346,27 @@ export async function validateDnssecChain(
         validationTime,
       );
     }
+    const groupExpirations = authenticatedGroups.map((group) =>
+      Math.max(
+        ...group
+          .filter((verification) => verificationIsCurrent(verification, serialTime))
+          .map((verification) =>
+            serialExpirationMilliseconds(verification.expiration ?? 0, validationTime),
+          ),
+      ),
+    );
+    const rootAnchorExpiration = Math.max(
+      ...rootAnchorMatches
+        .filter((match) => anchorIsCurrent(match, validationTime))
+        .map((match) =>
+          match.anchor.validUntil === undefined
+            ? Number.POSITIVE_INFINITY
+            : Date.parse(match.anchor.validUntil),
+        ),
+    );
+    const commonExpiry = Math.min(rootAnchorExpiration, ...groupExpirations);
+    if (Number.isFinite(commonExpiry))
+      evidenceValidUntil = new Date(commonExpiry).toISOString();
     return finishAt(state, explanation, validationTime);
   };
   const validateApplicationResponse = async (

@@ -22,4 +22,12 @@ describe('aggregate DNSSEC work budget', () => {
     expect(budget.cancelled).toBe(true);
     expect(budget.explanation).toMatch(/cancelled/iu);
   });
+
+  it('applies a separate bound to higher-cost Ed448 operations', () => {
+    const budget = new DnssecWorkBudget({ limits: { ed448Verifications: 1 } });
+
+    expect(budget.consume('ed448Verifications')).toBe(true);
+    expect(budget.consume('ed448Verifications')).toBe(false);
+    expect(budget.explanation).toMatch(/Ed448-verification/iu);
+  });
 });

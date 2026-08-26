@@ -15,10 +15,10 @@ const root = resolve(import.meta.dirname, '..');
 const output = join(root, 'dist');
 const functionsDirectory = join(root, 'netlify', 'functions');
 const MAX_FILES = 160;
-const MAX_TOTAL_OCTETS = 4 * 1024 * 1024;
+const MAX_TOTAL_OCTETS = 5 * 1024 * 1024;
 const MAX_SINGLE_ASSET_OCTETS = 512 * 1024;
 const MAX_FUNCTION_SOURCE_OCTETS = 64 * 1024;
-const MAX_SOURCE_ARCHIVE_OCTETS = 3 * 1024 * 1024;
+const MAX_SOURCE_ARCHIVE_OCTETS = 4 * 1024 * 1024;
 const HASHED_ASSET_NAME = /^assets\/[A-Za-z0-9_-]+-[A-Za-z0-9_-]{8}\.(?:css|js)$/u;
 const REQUIRED_ROOT_FILES = new Set([
   'LICENSE',

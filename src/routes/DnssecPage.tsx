@@ -21,6 +21,7 @@ import {
 } from '../core/dnssec/chain';
 import { hex } from '../core/dnssec/digest';
 import { digestTypeName, dnssecAlgorithmName } from '../core/dnssec/records';
+import type { RootTrustAnchorMaintenanceState } from '../core/dnssec/trust-anchors';
 import type { SignatureVerification } from '../core/dnssec/types';
 import { DnsQueryRun } from '../core/doh/query-run';
 import { RESOLVERS } from '../core/doh/resolvers';
@@ -62,6 +63,22 @@ function stateLabel(state: DnssecChainState): string {
   return labels[state];
 }
 
+function maintenanceTone(state: RootTrustAnchorMaintenanceState): 'pass' | 'warning' | 'error' {
+  if (state === 'current') return 'pass';
+  if (state === 'overdue' || state === 'certificate-review-due') return 'error';
+  return 'warning';
+}
+
+function maintenanceLabel(state: RootTrustAnchorMaintenanceState): string {
+  const labels: Readonly<Record<RootTrustAnchorMaintenanceState, string>> = {
+    'certificate-review-due': 'Certificate review due',
+    current: 'Current',
+    overdue: 'Anchor review overdue',
+    'review-due': 'Anchor review due',
+  };
+  return labels[state];
+}
+
 function reportJson(report: DnssecChainReport): string {
   return JSON.stringify(
     {
@@ -86,6 +103,7 @@ function reportJson(report: DnssecChainReport): string {
               wildcardExpanded: report.application.wildcardExpanded,
             },
       evidence: report.evidence,
+      evidenceValidUntil: report.evidenceValidUntil,
       explanation: report.explanation,
       state: report.state,
       steps: report.steps.map((step) => ({
@@ -134,6 +152,7 @@ function reportJson(report: DnssecChainReport): string {
         zone: step.zone,
       })),
       target: report.target,
+      trustAnchorMaintenance: report.trustAnchorMaintenance,
       trustAnchorSource: report.trustAnchorSource,
       validatedAt: report.validatedAt,
       validatorVersion: report.validatorVersion,
@@ -514,9 +533,10 @@ export function DnssecPage() {
         title="Build trust from the root to an RRset locally."
       >
         Validate each DS and DNSKEY RRset from bundled IANA root trust anchors using DNS wire
-        evidence and browser cryptography, then optionally authenticate a selected positive,
+        evidence and local cryptography, then optionally authenticate a selected positive,
         negative, wildcard, or bounded alias-continuation result with the relevant zone keys.
-        Resolver flags remain visible evidence, but they do not decide the local result.
+        RSA, ECDSA, and Ed25519 use browser cryptography; Ed448 uses a reviewed, bounded local
+        primitive. Resolver flags remain visible evidence, but they do not decide the result.
       </ToolIntro>
       <form className="workbench-form" onSubmit={(event) => void submit(event)}>
         <div className="field-group field-wide">
@@ -650,6 +670,30 @@ export function DnssecPage() {
             <StatusBadge tone={stateTone(report.state)}>{stateLabel(report.state)}</StatusBadge>
             <p>{report.explanation}</p>
           </article>
+          <dl className="metadata-grid">
+            <div>
+              <dt>Captured packets</dt>
+              <dd>
+                {report.evidence.filter((item) => item.rawDnsBase64 !== undefined).length}
+              </dd>
+            </div>
+            <div>
+              <dt>Failed questions</dt>
+              <dd>{report.evidence.filter((item) => item.error !== undefined).length}</dd>
+            </div>
+            <div>
+              <dt>Chain steps</dt>
+              <dd>{report.steps.length}</dd>
+            </div>
+            <div>
+              <dt>Earliest signature expiry</dt>
+              <dd>
+                {report.evidenceValidUntil === undefined
+                  ? 'Not established'
+                  : new Date(report.evidenceValidUntil).toLocaleString()}
+              </dd>
+            </div>
+          </dl>
           <ChainPath steps={report.steps} />
           {report.application === undefined ? null : (
             <ApplicationDetails value={report.application} />
@@ -664,6 +708,28 @@ export function DnssecPage() {
               <div>
                 <dt>Last checked</dt>
                 <dd>{report.trustAnchorSource.retrievedAt}</dd>
+              </div>
+              <div>
+                <dt>Maintenance state</dt>
+                <dd>
+                  <StatusBadge tone={maintenanceTone(report.trustAnchorMaintenance.state)}>
+                    {maintenanceLabel(report.trustAnchorMaintenance.state)}
+                  </StatusBadge>
+                </dd>
+              </div>
+              <div>
+                <dt>Next anchor review</dt>
+                <dd>
+                  {new Date(report.trustAnchorMaintenance.nextReviewAt).toLocaleDateString()}
+                </dd>
+              </div>
+              <div>
+                <dt>Pinned certificate expiry</dt>
+                <dd>
+                  {new Date(
+                    report.trustAnchorMaintenance.pinnedCertificateExpiresAt,
+                  ).toLocaleDateString()}
+                </dd>
               </div>
               <div>
                 <dt>Maintenance check</dt>
@@ -752,7 +818,11 @@ export function DnssecPage() {
               containing-zone keys. Authenticated NSEC or NSEC3 proof sets can establish
               application NODATA, NXDOMAIN, wildcard synthesis, or wildcard NODATA. For other
               requested types, signed CNAME, DNAME, and SVCB or HTTPS AliasMode transitions are
-              followed within the shared run bounds until the final answer authenticates.
+              followed within the shared run bounds until the final answer authenticates. RSA,
+              ECDSA, and Ed25519 signature operations use browser Web Crypto. Ed448 uses a
+              dynamically loaded, independently reviewed cryptographic primitive; DNS wire
+              binding, canonicalisation, work bounds, key policy, and result classification
+              remain ZoneSkein-owned code.
             </p>
             <p>
               Secure means that this exact root-to-name chain validated at the captured time. It

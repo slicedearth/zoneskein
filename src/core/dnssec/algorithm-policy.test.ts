@@ -18,7 +18,7 @@ describe('DNSSEC algorithm policy', () => {
     },
   );
 
-  it.each([8, 10, 13, 14, 15])(
+  it.each([8, 10, 13, 14, 15, 16])(
     'accepts supported modern algorithm %s for signatures and DS trust paths',
     (algorithm) => {
       expect(canVerifyRrsigAlgorithm(algorithm)).toBe(true);

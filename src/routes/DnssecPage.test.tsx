@@ -4,7 +4,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { DNSSEC_APPLICATION_TYPES } from '../core/dnssec/application';
 import * as dnssecChain from '../core/dnssec/chain';
-import { ROOT_TRUST_ANCHOR_SOURCE } from '../core/dnssec/trust-anchors';
+import {
+  assessRootTrustAnchorMaintenance,
+  ROOT_TRUST_ANCHOR_SOURCE,
+} from '../core/dnssec/trust-anchors';
 import { DnssecPage } from './DnssecPage';
 
 afterEach(() => {
@@ -100,12 +103,14 @@ describe('DnssecPage', () => {
         },
       ],
       explanation: 'The fixture chain validated locally.',
+      evidenceValidUntil: new Date(1_800_003_600_000).toISOString(),
       state: 'secure',
       steps: [],
       target: 'example.test.',
+      trustAnchorMaintenance: assessRootTrustAnchorMaintenance(1_800_000_000_000),
       trustAnchorSource: ROOT_TRUST_ANCHOR_SOURCE,
       validatedAt: new Date(1_800_000_000_000).toISOString(),
-      validatorVersion: 3,
+      validatorVersion: 4,
     });
     render(<DnssecPage />);
 
@@ -124,9 +129,11 @@ describe('DnssecPage', () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
     const evidence = JSON.parse(String(writeText.mock.calls[0]?.[0])) as {
       readonly evidence: readonly { readonly rawDnsBase64?: string }[];
+      readonly evidenceValidUntil?: string;
       readonly validatorVersion: number;
     };
-    expect(evidence.validatorVersion).toBe(3);
+    expect(evidence.validatorVersion).toBe(4);
+    expect(evidence.evidenceValidUntil).toBe(new Date(1_800_003_600_000).toISOString());
     expect(evidence.evidence[0]?.rawDnsBase64).toBe('AA==');
 
     fireEvent.change(target, { target: { value: 'HTTPS' } });

@@ -1,8 +1,8 @@
 // RFC 9905 retains algorithms 5 and 7 for legacy RRSIG validation, but forbids
 // using their DS records to establish a secure delegation.
-const VERIFIABLE_RRSIG_ALGORITHMS = new Set([5, 7, 8, 10, 13, 14, 15]);
+const VERIFIABLE_RRSIG_ALGORITHMS = new Set([5, 7, 8, 10, 13, 14, 15, 16]);
 
-const ACCEPTABLE_DS_TRUST_PATH_ALGORITHMS = new Set([8, 10, 13, 14, 15]);
+const ACCEPTABLE_DS_TRUST_PATH_ALGORITHMS = new Set([8, 10, 13, 14, 15, 16]);
 
 const VALIDATABLE_DS_DIGEST_TYPES = new Set([1, 2, 4]);
 

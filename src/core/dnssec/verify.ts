@@ -350,7 +350,7 @@ function bitLength(bytes: Uint8Array): number {
   return (bytes.length - firstIndex - 1) * 8 + (32 - Math.clz32(first));
 }
 
-function browserAlgorithmSupported(algorithm: number): boolean {
+function verificationAlgorithmSupported(algorithm: number): boolean {
   return canVerifyRrsigAlgorithm(algorithm);
 }
 
@@ -407,6 +407,11 @@ async function verifyWithKey(
   signature: RrsigInfo,
   data: Uint8Array,
 ): Promise<boolean | null> {
+  if (key.algorithm === 16) {
+    if (key.key.length !== 57 || signature.signature.length !== 114) return false;
+    const { ed448 } = await import('@noble/curves/ed448.js');
+    return ed448.verify(signature.signature, data, key.key);
+  }
   const cryptoKey = await importVerificationKey(key);
   if (cryptoKey === null) return null;
   if (key.algorithm === 13 || key.algorithm === 14) {
@@ -529,8 +534,16 @@ export async function verifyRrset(
     let supported = false;
     let verified = false;
     for (const key of candidates) {
-      if (!browserAlgorithmSupported(key.algorithm)) continue;
+      if (!verificationAlgorithmSupported(key.algorithm)) continue;
       if (!budget.consume('cryptographicVerifications')) {
+        results.push({
+          ...signatureIdentity,
+          message: budget.explanation,
+          status: 'resource-limit',
+        });
+        return results;
+      }
+      if (key.algorithm === 16 && !budget.consume('ed448Verifications')) {
         results.push({
           ...signatureIdentity,
           message: budget.explanation,
@@ -562,7 +575,7 @@ export async function verifyRrset(
         ? `The ${signature.typeCovered} RRset signature verified locally.`
         : supported
           ? `The ${signature.typeCovered} RRset signature did not verify with the trusted key.`
-          : 'This browser cannot verify this DNSSEC signature algorithm.',
+          : 'This validator cannot verify this DNSSEC signature algorithm.',
       status: verified ? 'verified' : supported ? 'invalid' : 'unsupported',
     });
   }

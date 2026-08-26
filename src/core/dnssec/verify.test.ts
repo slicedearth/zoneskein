@@ -88,7 +88,7 @@ describe('local DNSKEY RRset signature verification', () => {
     ]);
   });
 
-  it('reports expired, not-yet-valid, and unsupported signatures without calling them valid', async () => {
+  it('reports expired, not-yet-valid, and invalid Ed448 signatures without calling them valid', async () => {
     const rdata = new Uint8Array([1, 1, 3, 16, ...new Uint8Array(57).fill(7)]);
     const keyTag = dnskeyKeyTag(rdata);
     const dnskey: DnsRecord = {
@@ -130,10 +130,10 @@ describe('local DNSKEY RRset signature verification', () => {
     expect(results.map((result) => result.status)).toEqual([
       'outside-validity',
       'outside-validity',
-      'unsupported',
+      'invalid',
     ]);
     expect(results.map((result) => result.message).join(' ')).toMatch(
-      /expired.*not yet valid.*cannot verify/iu,
+      /expired.*not yet valid.*did not verify/iu,
     );
   });
 });

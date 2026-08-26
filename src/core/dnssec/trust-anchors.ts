@@ -20,6 +20,23 @@ export interface RootTrustAnchorMatch {
   readonly key: DnskeyInfo;
 }
 
+export type RootTrustAnchorMaintenanceState =
+  'current' | 'review-due' | 'overdue' | 'certificate-review-due';
+
+export interface RootTrustAnchorMaintenance {
+  readonly checkedAgeDays: number;
+  readonly checkedAt: string;
+  readonly nextReviewAt: string;
+  readonly pinnedCertificateExpiresAt: string;
+  readonly state: RootTrustAnchorMaintenanceState;
+}
+
+const ANCHOR_REVIEW_INTERVAL_DAYS = 45;
+const ANCHOR_OVERDUE_DAYS = 90;
+const CERTIFICATE_REVIEW_DAYS = 180;
+const DAY_MILLISECONDS = 86_400_000;
+export const ROOT_ANCHOR_CERTIFICATE_EXPIRES_AT = '2029-12-18T23:59:59.999Z';
+
 function bytes(value: string): Uint8Array {
   if (!/^(?:[0-9a-f]{2})+$/iu.test(value))
     throw new Error('Malformed root trust-anchor digest.');
@@ -39,6 +56,32 @@ export const ROOT_TRUST_ANCHOR_SOURCE = {
   source: anchorData.source,
   sourceUpdated: anchorData.sourceUpdated,
 } as const;
+
+export function assessRootTrustAnchorMaintenance(now = Date.now()): RootTrustAnchorMaintenance {
+  const checkedAt = Date.parse(`${ROOT_TRUST_ANCHOR_SOURCE.retrievedAt}T23:59:59.999Z`);
+  const certificateExpiresAt = Date.parse(ROOT_ANCHOR_CERTIFICATE_EXPIRES_AT);
+  if (!Number.isFinite(checkedAt) || !Number.isFinite(certificateExpiresAt))
+    throw new Error('The bundled root trust-anchor maintenance dates are malformed.');
+  const checkedAgeDays = Math.max(0, Math.floor((now - checkedAt) / DAY_MILLISECONDS));
+  const certificateDaysRemaining = Math.floor((certificateExpiresAt - now) / DAY_MILLISECONDS);
+  const state: RootTrustAnchorMaintenanceState =
+    certificateDaysRemaining <= CERTIFICATE_REVIEW_DAYS
+      ? 'certificate-review-due'
+      : checkedAgeDays > ANCHOR_OVERDUE_DAYS
+        ? 'overdue'
+        : checkedAgeDays > ANCHOR_REVIEW_INTERVAL_DAYS
+          ? 'review-due'
+          : 'current';
+  return {
+    checkedAgeDays,
+    checkedAt: new Date(checkedAt).toISOString(),
+    nextReviewAt: new Date(
+      checkedAt + ANCHOR_REVIEW_INTERVAL_DAYS * DAY_MILLISECONDS,
+    ).toISOString(),
+    pinnedCertificateExpiresAt: ROOT_ANCHOR_CERTIFICATE_EXPIRES_AT,
+    state,
+  };
+}
 
 export const ROOT_TRUST_ANCHORS: readonly RootTrustAnchor[] = anchorData.anchors.map(
   (anchor) => {

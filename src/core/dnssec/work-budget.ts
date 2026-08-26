@@ -1,6 +1,7 @@
 export type DnssecWorkKind =
   | 'cryptographicVerifications'
   | 'digestOperations'
+  | 'ed448Verifications'
   | 'keys'
   | 'nsec3HashRounds'
   | 'records'
@@ -9,6 +10,7 @@ export type DnssecWorkKind =
 const DEFAULT_LIMITS: Readonly<Record<DnssecWorkKind, number>> = {
   cryptographicVerifications: 512,
   digestOperations: 512,
+  ed448Verifications: 64,
   keys: 1024,
   nsec3HashRounds: 20_000,
   records: 4096,
@@ -18,6 +20,7 @@ const DEFAULT_LIMITS: Readonly<Record<DnssecWorkKind, number>> = {
 const WORK_KIND_LABELS: Readonly<Record<DnssecWorkKind, string>> = {
   cryptographicVerifications: 'cryptographic-verification',
   digestOperations: 'digest-operation',
+  ed448Verifications: 'Ed448-verification',
   keys: 'key',
   nsec3HashRounds: 'NSEC3 hash-round',
   records: 'record',
@@ -35,6 +38,7 @@ export class DnssecWorkBudget {
   readonly #used: Record<DnssecWorkKind, number> = {
     cryptographicVerifications: 0,
     digestOperations: 0,
+    ed448Verifications: 0,
     keys: 0,
     nsec3HashRounds: 0,
     records: 0,

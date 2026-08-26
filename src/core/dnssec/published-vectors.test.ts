@@ -242,6 +242,61 @@ describe('published and independently generated DNSSEC vectors', () => {
     );
   });
 
+  it('verifies the corrected RFC 8080 erratum Ed448 MX signature', async () => {
+    const dnskey: DnsRecord = {
+      class: 'IN',
+      data: {},
+      owner: 'example.com.',
+      rawRdata: concatenate(
+        new Uint8Array([1, 1, 3, 16]),
+        base64('3kgROaDjrh0H2iuixWBrc8g2EpBBLCdGzHmn+G2MpTPhpj/OiBVHHSfPodx1FYYUcJKm1MDpJtIA'),
+      ),
+      section: 'answer',
+      ttl: 3600,
+      type: 'DNSKEY',
+      typeCode: 48,
+    };
+    const mx: DnsRecord = {
+      class: 'IN',
+      data: { exchange: 'mail.example.com.', preference: 10 },
+      owner: 'example.com.',
+      rawRdata: new Uint8Array(),
+      section: 'answer',
+      ttl: 3600,
+      type: 'MX',
+      typeCode: 15,
+    };
+    const rrsig: DnsRecord = {
+      class: 'IN',
+      data: {
+        algorithm: 16,
+        expiration: 1_440_021_600,
+        inception: 1_438_207_200,
+        keyTag: 9713,
+        labels: 2,
+        originalTTL: 3600,
+        signature: base64(
+          '3cPAHkmlnxcDHMyg7vFC34l0blBhuG1qpwLmjInI8w1CMB29FkEAIJUA0amxWndkmnBZ6SKiwZSAxGILn/NBtOXft0+Gj7FSvOKxE/07+4RQvE581N3Aj/JtIyaiYVdnYtyMWbSNyGEY2213WKsJlwEA',
+        ),
+        signersName: 'example.com.',
+        typeCovered: 'MX',
+      },
+      owner: 'example.com.',
+      rawRdata: new Uint8Array(),
+      section: 'answer',
+      ttl: 3600,
+      type: 'RRSIG',
+      typeCode: 46,
+    };
+    const key = parseDnskey(dnskey);
+    if (key === null) throw new Error('The RFC 8080 Ed448 DNSKEY did not parse.');
+
+    expect(key.keyTag).toBe(9713);
+    await expect(verifyRrset([mx, rrsig], 'MX', [key], 1_439_000_000)).resolves.toEqual([
+      expect.objectContaining({ algorithm: 16, keyTag: 9713, status: 'verified' }),
+    ]);
+  });
+
   it('uses RFC 4034 canonical name wire form and RFC 1982 serial arithmetic', () => {
     expect(hex(canonicalName('WWW.Example.COM.'))).toBe('03777777076578616D706C6503636F6D00');
 

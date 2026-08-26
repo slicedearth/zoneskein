@@ -56,8 +56,10 @@ artefact: it contains exactly `dist`, `netlify/functions/quad9-doh.ts`,
 `zoneskein-corresponding-source.tar.gz` is the machine-readable source used for
 the build, including all production package source distributions and the Vite
 and Rolldown package source for helpers emitted into the browser assets, and is
-capped at 3 MiB. The static archive is capped at 4 MiB and the
-complete deployment archive at 8 MiB.
+capped at 4 MiB. The static archive is capped at 4 MiB and the
+complete deployment archive at 8 MiB. The independently checked, uncompressed
+`dist` file set is capped at 5 MiB because it contains the source archive as
+well as the browser assets and public documents.
 
 The workflow also produces a bounded CycloneDX software bill of materials and a
 SHA-256 checksum file covering all three archives and the SBOM. GitHub records

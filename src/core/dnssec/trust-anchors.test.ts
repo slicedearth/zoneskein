@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import type { DnsRecord } from '../dns/types';
 import { parseDnskey } from './records';
-import { matchRootTrustAnchors, ROOT_TRUST_ANCHORS } from './trust-anchors';
+import {
+  assessRootTrustAnchorMaintenance,
+  matchRootTrustAnchors,
+  ROOT_ANCHOR_CERTIFICATE_EXPIRES_AT,
+  ROOT_TRUST_ANCHORS,
+} from './trust-anchors';
 
 function base64(value: string): Uint8Array {
   return Uint8Array.from(atob(value), (character) => character.charCodeAt(0));
@@ -35,5 +40,24 @@ describe('IANA root trust anchors', () => {
     expect(matches[0]?.anchor).toMatchObject({ id: 'Klajeyz', keyTag: 20326 });
     expect(matches[0]?.key).toBe(key);
     expect(ROOT_TRUST_ANCHORS.map((anchor) => anchor.keyTag)).toEqual([20326, 38696]);
+  });
+
+  it('makes the signed anchor-review and pinned-certificate lifecycle explicit', () => {
+    expect(assessRootTrustAnchorMaintenance(Date.parse('2026-08-14T00:00:00Z'))).toMatchObject({
+      checkedAgeDays: 0,
+      state: 'current',
+    });
+    expect(assessRootTrustAnchorMaintenance(Date.parse('2026-09-29T00:00:00Z'))).toMatchObject({
+      checkedAgeDays: 46,
+      state: 'review-due',
+    });
+    expect(assessRootTrustAnchorMaintenance(Date.parse('2026-11-13T00:00:00Z'))).toMatchObject({
+      checkedAgeDays: 91,
+      state: 'overdue',
+    });
+    expect(assessRootTrustAnchorMaintenance(Date.parse('2029-07-01T00:00:00Z'))).toMatchObject({
+      pinnedCertificateExpiresAt: ROOT_ANCHOR_CERTIFICATE_EXPIRES_AT,
+      state: 'certificate-review-due',
+    });
   });
 });

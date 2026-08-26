@@ -52,7 +52,7 @@ jobs:
           sha256sum --check SHA256SUMS
           test "$(wc -c < "$ARCHIVE_FILE")" -le 4194304
           test "$(wc -c < "$NETLIFY_ARCHIVE_FILE")" -le 8388608
-          test "$(wc -c < "$SOURCE_ARCHIVE_FILE")" -le 3145728
+          test "$(wc -c < "$SOURCE_ARCHIVE_FILE")" -le 4194304
           test "$(wc -c < "$SBOM_FILE")" -le 4194304
           jq -e '.bomFormat == "CycloneDX" and (.components | type == "array")' "$SBOM_FILE" >/dev/null
       - name: Attest static-client provenance

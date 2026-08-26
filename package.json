@@ -28,6 +28,7 @@
   },
   "dependencies": {
     "@dnsquery/dns-packet": "6.1.1",
+    "@noble/curves": "2.3.0",
     "cidr-tools": "13.0.1",
     "idb": "8.0.3",
     "ipaddr.js": "2.5.0",

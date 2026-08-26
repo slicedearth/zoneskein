@@ -296,6 +296,8 @@ describe('independent DNSSEC chain validation', () => {
     expect(report.steps.map((step) => step.state)).toEqual(['secure', 'secure']);
     expect(report.evidence).toHaveLength(3);
     expect(report.steps[1]?.dsMatches.some((match) => match.matches)).toBe(true);
+    expect(report.evidenceValidUntil).toBe(new Date((NOW_SECONDS + 3600) * 1000).toISOString());
+    expect(report.validatorVersion).toBe(4);
   });
 
   it('retains the selected resolver provenance when a DNS question fails', async () => {
