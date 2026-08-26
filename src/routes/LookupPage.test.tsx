@@ -78,7 +78,11 @@ describe('DNS record explorer', () => {
       if (['A', 'AAAA', 'MX', 'TXT'].includes(type)) expect(checkbox).toBeChecked();
       else expect(checkbox).not.toBeChecked();
     }
-    expect(screen.getByText(/all 17 forward record types/iu)).toBeVisible();
+    expect(
+      screen.getByText(
+        new RegExp(`all ${String(DNS_RECORD_TYPES.length - 1)} forward record types`, 'iu'),
+      ),
+    ).toBeVisible();
     expect(screen.getByRole('button', { name: 'Clear query and results' })).toBeVisible();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();

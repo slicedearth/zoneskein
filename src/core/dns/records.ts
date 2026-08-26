@@ -62,6 +62,19 @@ function readUint16(bytes: Uint8Array, offset: number): number | null {
   return high === undefined || low === undefined ? null : (high << 8) | low;
 }
 
+function readUint32(bytes: Uint8Array, offset: number): number | null {
+  const first = bytes[offset];
+  const second = bytes[offset + 1];
+  const third = bytes[offset + 2];
+  const fourth = bytes[offset + 3];
+  return first === undefined ||
+    second === undefined ||
+    third === undefined ||
+    fourth === undefined
+    ? null
+    : ((first << 24) | (second << 16) | (third << 8) | fourth) >>> 0;
+}
+
 function parseUncompressedName(bytes: Uint8Array, initialOffset: number) {
   const labels: string[] = [];
   let offset = initialOffset;
@@ -166,6 +179,20 @@ function tlsaView(raw: Uint8Array): ParsedRecordView | null {
   return { fields, text: textFromFields(fields) };
 }
 
+function zonemdView(raw: Uint8Array): ParsedRecordView | null {
+  const serial = readUint32(raw, 0);
+  const scheme = raw[4];
+  const hashAlgorithm = raw[5];
+  if (serial === null || scheme === undefined || hashAlgorithm === undefined) return null;
+  const fields = [
+    field('SOA serial', serial),
+    field('Scheme', scheme),
+    field('Hash algorithm', hashAlgorithm),
+    field('Digest', raw.slice(6)),
+  ];
+  return { fields, text: textFromFields(fields) };
+}
+
 export function parseRecordView(record: DnsRecord): ParsedRecordView {
   if (record.type === 'TXT') return txtView(record.data, record.rawRdata);
   if (record.type === 'SVCB' || record.type === 'HTTPS') {
@@ -179,6 +206,14 @@ export function parseRecordView(record: DnsRecord): ParsedRecordView {
   if (record.type === 'TLSA') {
     return (
       tlsaView(record.rawRdata) ?? {
+        fields: [],
+        text: `\\# ${String(record.rawRdata.length)} ${hex(record.rawRdata)}`,
+      }
+    );
+  }
+  if (record.type === 'ZONEMD') {
+    return (
+      zonemdView(record.rawRdata) ?? {
         fields: [],
         text: `\\# ${String(record.rawRdata.length)} ${hex(record.rawRdata)}`,
       }

@@ -326,12 +326,14 @@ function wireResponseCodeMatches(parsed: ParsedWireResponse, decoded: string): b
 }
 
 function typeCode(type: string): number {
+  if (type === 'ZONEMD') return 63;
   if (type === 'SVCB') return 64;
   if (type === 'HTTPS') return 65;
   return toType(type);
 }
 
 function typeText(code: number): string {
+  if (code === 63) return 'ZONEMD';
   if (code === 64) return 'SVCB';
   if (code === 65) return 'HTTPS';
   return dnsTypeName(code).replace('UNKNOWN_', 'TYPE');
@@ -366,6 +368,7 @@ function canonicalApplicationRdata(
     record.typeCode === 48 ||
     record.typeCode === 50 ||
     record.typeCode === 52 ||
+    record.typeCode === 63 ||
     record.typeCode === 257
   )
     return raw;

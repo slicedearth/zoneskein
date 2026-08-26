@@ -15,6 +15,7 @@ export const DNS_RECORD_TYPES = [
   'NSEC',
   'NSEC3',
   'TLSA',
+  'ZONEMD',
   'HTTPS',
   'SVCB',
 ] as const;

@@ -353,6 +353,14 @@ function tlsaRdata(raw: Uint8Array): string | null {
     : `${String(usage)} ${String(selector)} ${String(matchingType)} ${hex(raw.slice(3))}`;
 }
 
+function zonemdRdata(raw: Uint8Array): string | null {
+  if (raw.length < 6) return null;
+  const serial =
+    (((raw[0] ?? 0) << 24) | ((raw[1] ?? 0) << 16) | ((raw[2] ?? 0) << 8) | (raw[3] ?? 0)) >>>
+    0;
+  return `${String(serial)} ${String(raw[4])} ${String(raw[5])} ${hex(raw.slice(6))}`;
+}
+
 export function recordDataText(record: DnsRecord): string {
   let formatted: string | null = null;
   if (record.type === 'TXT') formatted = txtRdata(record);
@@ -369,6 +377,7 @@ export function recordDataText(record: DnsRecord): string {
   else if (record.type === 'NSEC') formatted = nsecRdata(record.data);
   else if (record.type === 'NSEC3') formatted = nsec3Rdata(record.data);
   else if (record.type === 'TLSA') formatted = tlsaRdata(record.rawRdata);
+  else if (record.type === 'ZONEMD') formatted = zonemdRdata(record.rawRdata);
   return formatted ?? genericRdata(record.rawRdata);
 }
 

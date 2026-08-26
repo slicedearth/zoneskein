@@ -696,8 +696,8 @@ export function LookupPage() {
             </button>
           </div>
           <p className="detail-note record-picker-note">
-            Select all includes all 17 forward record types. PTR remains a separate
-            reverse-address mode.
+            Select all includes all {FORWARD_RECORD_TYPES.length} forward record types. PTR
+            remains a separate reverse-address mode.
           </p>
           <div>
             {DNS_RECORD_TYPES.map((type) => (

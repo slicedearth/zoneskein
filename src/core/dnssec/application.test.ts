@@ -337,6 +337,11 @@ describe('application RDATA canonicalisation', () => {
       SVCB: record('SVCB', {}, join(uint16(1), target)),
       TLSA: record('TLSA', {}, new Uint8Array([3, 1, 1, 0xaa])),
       TXT: record('TXT', [new Uint8Array([97, 98, 99])], new Uint8Array([3, 97, 98, 99])),
+      ZONEMD: record(
+        'ZONEMD',
+        {},
+        join(uint32(2), new Uint8Array([1, 1]), new Uint8Array(48).fill(0xaa)),
+      ),
     };
 
     expect(Object.keys(fixtures).sort()).toEqual([...DNSSEC_APPLICATION_TYPES].sort());

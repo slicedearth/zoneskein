@@ -87,6 +87,7 @@ function bytesKey(bytes: Uint8Array): string {
 }
 
 function recordTypeCode(type: string): number {
+  if (type === 'ZONEMD') return 63;
   if (type === 'SVCB') return 64;
   if (type === 'HTTPS') return 65;
   return toType(type);
@@ -219,6 +220,7 @@ function validOpaqueRdata(record: DnsRecord): boolean {
   if (record.type === 'A') return record.rawRdata.length === 4;
   if (record.type === 'AAAA') return record.rawRdata.length === 16;
   if (record.type === 'TLSA') return record.rawRdata.length >= 3;
+  if (record.type === 'ZONEMD') return record.rawRdata.length >= 18;
   if (record.type === 'CAA') {
     const tagLength = record.rawRdata[1];
     return tagLength !== undefined && tagLength > 0 && tagLength + 2 <= record.rawRdata.length;

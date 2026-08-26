@@ -30,6 +30,19 @@ www 300 IN A 192.0.2.10 ; deployed address
     ]);
   });
 
+  it('does not confuse mnemonic-looking owner labels with omitted owners', () => {
+    const document = parseZoneSnippet(
+      'ns 300 IN A 192.0.2.1\nin 600 IN AAAA 2001:db8::1\n300 900 IN TXT "numeric owner"',
+      { origin: 'example.com' },
+    );
+
+    expect(document.records).toEqual([
+      expect.objectContaining({ owner: 'ns.example.com.', ttl: 300, type: 'A' }),
+      expect.objectContaining({ owner: 'in.example.com.', ttl: 600, type: 'AAAA' }),
+      expect.objectContaining({ owner: '300.example.com.', ttl: 900, type: 'TXT' }),
+    ]);
+  });
+
   it('reports unterminated quotes and parentheses without discarding all records', () => {
     const quote = parseZoneSnippet('www IN A 192.0.2.1\n@ IN TXT "unfinished');
     const parenthesis = parseZoneSnippet('www IN A 192.0.2.1\n@ IN MX ( 10 mail');

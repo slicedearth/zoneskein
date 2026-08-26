@@ -20,6 +20,7 @@ export const DNSSEC_APPLICATION_TYPES = [
   'SVCB',
   'TLSA',
   'TXT',
+  'ZONEMD',
 ] as const;
 
 export type DnssecApplicationType = (typeof DNSSEC_APPLICATION_TYPES)[number];

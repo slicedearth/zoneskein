@@ -28,6 +28,7 @@ function serialBefore(left: number, right: number): boolean {
 }
 
 function displayType(type: string): string {
+  if (type === 'UNKNOWN_63') return 'ZONEMD';
   if (type === 'UNKNOWN_64') return 'SVCB';
   if (type === 'UNKNOWN_65') return 'HTTPS';
   return type.replace('UNKNOWN_', 'TYPE');

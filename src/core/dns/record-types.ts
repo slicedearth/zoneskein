@@ -3,9 +3,11 @@ import type { DnsRecordType } from './types';
 const CUSTOM_WIRE_TYPES: Readonly<Record<string, string>> = {
   HTTPS: 'UNKNOWN_65',
   SVCB: 'UNKNOWN_64',
+  ZONEMD: 'UNKNOWN_63',
 };
 
 const CUSTOM_DISPLAY_TYPES: Readonly<Record<string, DnsRecordType>> = {
+  UNKNOWN_63: 'ZONEMD',
   UNKNOWN_64: 'SVCB',
   UNKNOWN_65: 'HTTPS',
 };

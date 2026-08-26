@@ -42,6 +42,7 @@ const KNOWN_TYPES = new Set([
   'TLSA',
   'TXT',
   'URI',
+  'ZONEMD',
 ]);
 
 interface LogicalStatement {
@@ -419,15 +420,6 @@ function absoluteOwner(value: string, origin: string | undefined): string {
     : `${value.toLowerCase()}.${origin}`.replace('..', '.');
 }
 
-function looksLikeTtl(value: string): boolean {
-  return parseTtl(value) !== null;
-}
-
-function isRecordPreamble(value: string): boolean {
-  const upper = value.toUpperCase();
-  return upper === 'IN' || KNOWN_TYPES.has(upper) || looksLikeTtl(value);
-}
-
 export function parseZoneSnippet(source: string, options: ZoneParseOptions = {}): ZoneDocument {
   const budget = new ParseBudget();
   if (source.length > ZONE_ANALYSIS_LIMITS.characters) {
@@ -503,7 +495,7 @@ export function parseZoneSnippet(source: string, options: ZoneParseOptions = {})
     }
 
     let index = 0;
-    const omittedOwner = statement.leadingWhitespace || isRecordPreamble(first.value);
+    const omittedOwner = statement.leadingWhitespace;
     const ownerToken = omittedOwner ? '' : first.raw;
     let owner: string;
     if (omittedOwner) {

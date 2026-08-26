@@ -946,6 +946,7 @@ function failureResult(evidence: DenialEvidence, explanation: string): Applicati
 }
 
 function applicationTypeCode(type: string): number {
+  if (type === 'ZONEMD') return 63;
   if (type === 'SVCB') return 64;
   if (type === 'HTTPS') return 65;
   return toType(type);

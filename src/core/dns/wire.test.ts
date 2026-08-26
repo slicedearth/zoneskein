@@ -95,6 +95,35 @@ describe('DNS wire messages', () => {
     expect(result.answers[0]?.data).toHaveLength(2);
   });
 
+  it('encodes and decodes the numeric wire type used for complete-zone digests', () => {
+    const query = encodeDnsQuery(
+      { name: name('example.com'), type: 'ZONEMD' },
+      { checkingDisabled: true, dnssecOk: true },
+    );
+    expect(decode(query).questions?.[0]?.type).toBe('UNKNOWN_63');
+
+    const rdata = Uint8Array.from([0, 0, 0, 1, 1, 1, ...new Uint8Array(48).fill(0xaa)]);
+    const response = encode({
+      answers: [
+        {
+          class: 'IN',
+          data: rdata,
+          name: 'example.com.',
+          ttl: 300,
+          type: 'UNKNOWN_63',
+        } as never,
+      ],
+      flags: 0x8180,
+      id: 0,
+      questions: [{ class: 'IN', name: 'example.com.', type: 'UNKNOWN_63' }],
+      type: 'response',
+    });
+    const message = decodeDnsMessage(response);
+    expect(message.questions[0]?.type).toBe('ZONEMD');
+    expect(message.answers[0]).toMatchObject({ type: 'ZONEMD', typeCode: 63 });
+    expect(message.answers[0]?.rawRdata).toEqual(rdata);
+  });
+
   it('rejects malformed and non-response messages', () => {
     expect(() => decodeDnsMessage(new Uint8Array([0, 1]))).toThrow(/shorter/);
     const query = encode({

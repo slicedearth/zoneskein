@@ -121,4 +121,20 @@ describe('DNS master-file presentation', () => {
     const raw = Uint8Array.from([1, 1, 4, 15, 0, 255, 1]);
     expect(recordDataText(record('DNSKEY', {}, raw))).toBe('257 4 15 AP8B');
   });
+
+  it('formats complete-zone digest wire evidence without relying on dependency decoding', () => {
+    const raw = Uint8Array.from([
+      0x78,
+      0x48,
+      0xb9,
+      0x1c,
+      1,
+      1,
+      ...new Uint8Array(48).fill(0xaa),
+    ]);
+    const value = recordDataText(record('ZONEMD', {}, raw));
+
+    expect(value).toBe(`2018031900 1 1 ${'AA'.repeat(48)}`);
+    expect(parseZoneSnippet(`example. 300 IN ZONEMD ${value}`).diagnostics).toEqual([]);
+  });
 });

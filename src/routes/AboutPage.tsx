@@ -45,8 +45,8 @@ export function AboutPage() {
           <div>
             <strong>DNS lookup</strong>
             <span>
-              Wire-format DoH, 18 explicit record types, PTR, resolver comparison, exact message
-              sizes, normalised fields, and exports.
+              Wire-format DoH, 19 explicit record types including PTR, resolver comparison,
+              exact message sizes, normalised fields, and exports.
             </span>
           </div>
           <div>

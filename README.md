@@ -8,13 +8,14 @@ It is not a subdomain scanner, reconnaissance platform, monitoring service, DNS 
 
 ## Features
 
-- DNS record explorer with A, AAAA, CNAME, MX, NS, TXT, SOA, CAA, SRV, PTR, DS, DNSKEY, RRSIG, NSEC, NSEC3, TLSA, HTTPS, and SVCB support.
+- DNS record explorer with A, AAAA, CNAME, MX, NS, TXT, SOA, CAA, SRV, PTR, DS, DNSKEY, RRSIG, NSEC, NSEC3, TLSA, ZONEMD, HTTPS, and SVCB support.
 - RFC 8484 wire-format DNS-over-HTTPS to fixed Google Public DNS, Cloudflare 1.1.1.1, and Quad9 endpoints, using the GET or POST method expected by each endpoint. **Quad9 (direct)** remains the default Quad9 path, with explicit **Quad9 (compatibility mode)** for browser paths that cannot preserve HTTP/2 or HTTP/3.
 - Side-by-side recursive-resolver comparison, exact DNS message sizes, EDNS Extended DNS Error explanations, RFC 2308 negative-cache TTLs, normalised record fields, PTR conversion, and plain, BIND, JSON, or Markdown exports.
 - Independent DNSSEC validation from bundled IANA root trust anchors, with authenticated DS and DNSKEY chains, positive and negative selected application answers, wildcard proofs, bounded CNAME/DNAME/SVCB/HTTPS alias continuation, SHA-1/SHA-256/SHA-384 DS matching, explicit NSEC3 Opt-Out uncertainty, browser-native RSA/ECDSA/Ed25519 verification, and bounded Ed448 verification through an independently reviewed primitive.
 - Ordered SPF lexer and parser, recursive include/redirect graph, path-aware ten-term and void-lookup analysis, A/MX expansion, cycle detection, and guarded point-in-time snapshots with provenance.
 - Sender-context SPF evaluation for a supplied SMTP client IP, MAIL FROM identity, HELO/EHLO domain, and optional receiver name, with ordered mechanism evaluation, bounded macro expansion and DNS work, publisher explanations, and a replayable evidence trace.
 - Recoverable zone-snippet parser and linter for common records, directives, inherited owners, multiline records, TXT chunks, and cross-record conflicts.
+- Explicit complete-zone ZONEMD verification and SHA-384 or SHA-512 record generation using an in-house canonical DNS encoder, numeric-type ordering, standard duplicate and exclusion rules, and published interoperability vectors.
 - DNS Record Studio for locally authoring A, AAAA, CAA, CNAME, DNSKEY, DS, HTTPS, MX, NAPTR, NS, PTR, SOA, SRV, SSHFP, SVCB, TLSA, TXT, and URI records, with diagnostics, BIND and JSON output, safe TXT chunks, a deduplicated bounded working set, and local linting. It never publishes DNS.
 - Change Lab semantic comparison with unordered RRsets, TTL-only and presentation-only categories, risk findings, preparation deadlines, rollback cache horizons, and staged rollout guidance. It neither publishes records nor assigns a universal propagation-complete time.
 - Portable Change Workspace files for carrying bounded current and intended zone states, explicit incomplete states, structured analysis, rollout and rollback guidance, historical resolver evidence, and SHA-256 internal-consistency checks between Record Studio and Change Lab. Imports remain local and never turn retained resolver endpoints into network targets.
@@ -36,7 +37,7 @@ Queries are not persisted by default. A bounded anonymous rate-limit ledger stor
 
 Change Workspaces remain in page memory unless explicitly downloaded as a bounded JSON file. Importing one reads it locally, performs strict schema and SHA-256 consistency checks, and never contacts resolver endpoints retained as provenance. Import validation does not reproduce or endorse stored analysis; treat it as supplied historical data until running local reanalysis. A mismatch shows that the content no longer matches the included digest. A match shows internal consistency only: because the digest is stored with the file and can be recomputed, it provides no authenticity, authorisation, or tamper resistance. Downloaded files can contain DNS names, records, operational timing, and historical resolver evidence, so they should be handled as sensitive operational documents.
 
-See [PRIVACY.md](PRIVACY.md), [SECURITY.md](SECURITY.md), [TERMS.md](TERMS.md), and [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md).
+See [PRIVACY.md](PRIVACY.md), [SECURITY.md](SECURITY.md), [TERMS.md](TERMS.md), [docs/ZONEMD-MODEL.md](docs/ZONEMD-MODEL.md), and [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md).
 
 ## Abuse controls
 
@@ -115,7 +116,7 @@ ZoneSkein reports evidence conservatively:
 - recursive answers are point-in-time observations, not authoritative answers or proof of global propagation;
 - DNSSEC validates supported delegation, positive, NODATA, NXDOMAIN, wildcard, and alias-continuation proof paths from bundled IANA root trust anchors at one common instant. It is still a bounded selected-type validator rather than a general recursive resolver, and an NSEC3 Opt-Out interval cannot authenticate whether a covered delegation exists;
 - SPF flattening is a time-bound snapshot and is withheld whenever preserving the effective pass set would require guessing or sender context;
-- the zone parser is a practical subset, not a complete BIND or provider-specific parser;
+- the zone parser is a practical subset, not a complete BIND or provider-specific parser; complete-zone digest mode stops when that subset cannot encode a record exactly and never infers that a snippet is complete;
 - DMARC policy publication does not prove alignment. Alignment mode evaluates supplied prior SPF and DKIM authentication results; DKIM message mode verifies supported signatures but does not establish DMARC alignment, ARC handling, reputation, or delivery; CAA publication does not guarantee issuance.
 
 See [LIMITATIONS.md](LIMITATIONS.md), [docs/DNSSEC-MODEL.md](docs/DNSSEC-MODEL.md), and [docs/SPF-FLATTENING-MODEL.md](docs/SPF-FLATTENING-MODEL.md).

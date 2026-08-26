@@ -632,6 +632,35 @@ function lintRecord(record: ZoneRecord, options: ZoneParseOptions): readonly Zon
       );
   }
 
+  if (record.type === 'ZONEMD') {
+    const hashAlgorithm = record.rdata[2];
+    const digestOctets = hexadecimalOctets(
+      record.rdata
+        .slice(3)
+        .map((token) => token.value)
+        .join(''),
+    );
+    const expected =
+      hashAlgorithm?.value === '1' ? 48 : hashAlgorithm?.value === '2' ? 64 : undefined;
+    if (
+      record.rdata.length < 4 ||
+      !integer(record.rdata[0], 0, 0xffff_ffff) ||
+      !integer(record.rdata[1], 0, 255) ||
+      !integer(hashAlgorithm, 0, 255) ||
+      digestOctets === null ||
+      digestOctets < 12 ||
+      (expected !== undefined && digestOctets !== expected)
+    )
+      diagnostics.push(
+        item(
+          record,
+          'zonemd-malformed',
+          'error',
+          'ZONEMD requires an SOA serial, scheme, hash algorithm, and a full hexadecimal digest of at least 12 octets.',
+        ),
+      );
+  }
+
   if (record.type === 'HTTPS' || record.type === 'SVCB') diagnostics.push(...lintSvcb(record));
 
   if (record.type === 'NAPTR') {
@@ -886,6 +915,51 @@ export function lintZoneSnippet(source: string, options: ZoneParseOptions = {}):
       )) {
         addDiagnostic(item(record, 'spf-after-all', 'warning', spfDiagnostic.message));
       }
+    }
+  }
+  if (document.origin !== undefined) {
+    const apexSoa = records.find(
+      (record) => record.owner === document.origin && record.type === 'SOA',
+    );
+    const soaSerial = apexSoa?.rdata[2]?.value;
+    const zonemdTuples = new Map<string, ZoneRecord>();
+    for (const record of records.filter((item) => item.type === 'ZONEMD')) {
+      if (record.owner !== document.origin) {
+        addDiagnostic(
+          item(
+            record,
+            'zonemd-non-apex',
+            'information',
+            'A non-apex ZONEMD record has no verification meaning and is digested as ordinary zone data.',
+          ),
+        );
+        continue;
+      }
+      if (soaSerial !== undefined && record.rdata[0]?.value !== soaSerial)
+        addDiagnostic(
+          item(
+            record,
+            'zonemd-serial-mismatch',
+            'error',
+            'The ZONEMD serial does not match the apex SOA serial.',
+            record.rdata[0],
+          ),
+        );
+      const scheme = record.rdata[1]?.value;
+      const hash = record.rdata[2]?.value;
+      if (scheme === undefined || hash === undefined) continue;
+      const key = `${scheme}|${hash}`;
+      const prior = zonemdTuples.get(key);
+      if (prior === undefined) zonemdTuples.set(key, record);
+      else
+        addDiagnostic(
+          item(
+            record,
+            'zonemd-tuple-duplicate',
+            'error',
+            `The scheme and hash tuple duplicates the apex ZONEMD record on line ${String(prior.line)}.`,
+          ),
+        );
     }
   }
   if (diagnosticsTruncated)
