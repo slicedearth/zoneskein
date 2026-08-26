@@ -57,7 +57,7 @@ export function resolverById(id: ResolverId): ResolverDefinition {
 }
 
 export function resolverOptionLabel(id: SelectableResolverId): string {
-  return id === 'quad9' ? 'Quad9 (automatic)' : RESOLVERS[id].label;
+  return id === 'quad9' ? 'Quad9' : RESOLVERS[id].label;
 }
 
 export function resolverSelectionNote(id: SelectableResolverId): string | undefined {

@@ -22,7 +22,7 @@ describe('DnssecPage', () => {
     const target = screen.getByLabelText('Validation target');
     expect(target).toHaveValue('chain');
     expect(screen.getAllByRole('option')).toHaveLength(DNSSEC_APPLICATION_TYPES.length + 4);
-    expect(screen.getByRole('option', { name: 'Quad9 (automatic)' })).toHaveValue('quad9');
+    expect(screen.getByRole('option', { name: 'Quad9' })).toHaveValue('quad9');
     expect(
       screen.queryByRole('option', { name: 'Quad9 (compatibility mode)' }),
     ).not.toBeInTheDocument();

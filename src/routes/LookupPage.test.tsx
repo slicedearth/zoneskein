@@ -112,9 +112,7 @@ describe('DNS record explorer', () => {
 
     const resolver = screen.getByLabelText('Resolver');
     expect(within(resolver).getAllByRole('option')).toHaveLength(3);
-    expect(within(resolver).getByRole('option', { name: 'Quad9 (automatic)' })).toHaveValue(
-      'quad9',
-    );
+    expect(within(resolver).getByRole('option', { name: 'Quad9' })).toHaveValue('quad9');
     expect(
       within(resolver).queryByRole('option', { name: 'Quad9 (compatibility mode)' }),
     ).not.toBeInTheDocument();
