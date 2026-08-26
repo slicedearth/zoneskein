@@ -146,7 +146,7 @@ export function ZoneLintPage() {
 
   return (
     <div className="tool-page">
-      <ToolIntro eyebrow="Zone-snippet linter" title="Catch record mistakes before publishing.">
+      <ToolIntro eyebrow="Zone-snippet linter" title="Catch the snags before you publish.">
         Parse a practical, recoverable subset of zone-file syntax locally. Your original text
         stays untouched; ZoneSkein offers individual corrections only when they are unambiguous.
       </ToolIntro>

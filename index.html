@@ -5,16 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; connect-src 'self' https://dns.google https://cloudflare-dns.com https://dns.quad9.net; img-src 'self' data:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-src 'none'; manifest-src 'self'"
+      content="default-src 'self'; connect-src 'self' https://dns.google https://cloudflare-dns.com https://dns.quad9.net; img-src 'self' data:; style-src 'self'; script-src 'self' 'sha256-v1MKFqEKTHLem8WauqboCbBC+ZvCH/yevuVaRkAY8hs='; object-src 'none'; base-uri 'self'; form-action 'self'; frame-src 'none'; manifest-src 'self'"
     />
-    <meta
-      name="description"
-      content="Inspect DNS evidence, analyse email policy, lint zone snippets, and review changes before publishing."
-    />
+    <!-- zoneskein:seo -->
     <meta name="referrer" content="no-referrer" />
     <meta name="theme-color" content="#17102f" />
-    <link rel="icon" href="%BASE_URL%favicon.svg" type="image/svg+xml" />
-    <title>ZoneSkein — Untangle DNS.</title>
+    <link
+      rel="icon"
+      href="%BASE_URL%favicon.ico"
+      sizes="16x16 32x32 48x48 64x64 128x128 256x256"
+      type="image/x-icon"
+    />
+    <link rel="apple-touch-icon" href="%BASE_URL%apple-touch-icon.png" sizes="180x180" />
   </head>
   <body>
     <a class="skip-link" href="#main-content">Skip to main content</a>

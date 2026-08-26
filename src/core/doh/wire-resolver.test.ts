@@ -368,7 +368,7 @@ describe('wire DoH resolver', () => {
     expect(failure.code).toBe('transport-error');
     expect(failure.message).toContain('HTTPS transport failed');
     expect(failure.message).toContain('end-to-end HTTP/2 or HTTP/3');
-    expect(failure.message).toContain('choose another resolver or a compatible network path');
+    expect(failure.message).toContain('direct path unavailable');
     expect(failure.message).not.toContain('Failed to fetch');
     expect(failure.message).not.toContain('NXDOMAIN');
   });

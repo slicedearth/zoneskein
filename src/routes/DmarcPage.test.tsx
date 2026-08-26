@@ -172,14 +172,14 @@ describe('DmarcPage', () => {
     expect(onEvidenceChange).toHaveBeenLastCalledWith(evidence);
   });
 
-  it('discloses the Netlify intermediary when the Quad9 relay is selected', async () => {
+  it('discloses the automatic Quad9 compatibility boundary', async () => {
     const user = userEvent.setup();
     render(<DmarcPage />);
 
     const resolver = screen.getByLabelText('Resolver');
-    await user.selectOptions(resolver, 'quad9-relay');
+    await user.selectOptions(resolver, 'quad9');
 
-    const note = screen.getByText(/DNS question and connection metadata to Netlify/iu);
+    const note = screen.getByText(/compatibility mode lets Netlify observe the DNS question/iu);
     expect(note).toHaveAttribute('id', 'dmarc-resolver-note');
     expect(resolver).toHaveAttribute('aria-describedby', 'dmarc-resolver-note');
   });

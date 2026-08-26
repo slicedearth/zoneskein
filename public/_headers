@@ -1,5 +1,5 @@
 /*
-  Content-Security-Policy: default-src 'self'; connect-src 'self' https://dns.google https://cloudflare-dns.com https://dns.quad9.net; img-src 'self' data:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; manifest-src 'self'
+  Content-Security-Policy: default-src 'self'; connect-src 'self' https://dns.google https://cloudflare-dns.com https://dns.quad9.net; img-src 'self' data:; style-src 'self'; script-src 'self' 'sha256-v1MKFqEKTHLem8WauqboCbBC+ZvCH/yevuVaRkAY8hs='; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; manifest-src 'self'
   Cross-Origin-Opener-Policy: same-origin
   Cross-Origin-Resource-Policy: same-origin
   Permissions-Policy: camera=(), geolocation=(), microphone=(), payment=(), usb=()
@@ -10,6 +10,18 @@
 
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
+
+/apple-touch-icon.png
+  Cache-Control: public, max-age=86400
+
+/favicon.ico
+  Cache-Control: public, max-age=86400
+
+/social-card.jpg
+  Cache-Control: public, max-age=86400
+
+/sitemap.xml
+  Content-Type: application/xml; charset=UTF-8
 
 /LICENSE
   Content-Type: text/plain; charset=UTF-8

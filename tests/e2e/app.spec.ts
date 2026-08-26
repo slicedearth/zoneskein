@@ -110,11 +110,13 @@ for (const path of STATIC_ROUTES) {
 
 test('the shell remains keyboard usable', async ({ page }) => {
   await page.goto('/');
-  const theme = page.getByRole('button', { name: /Use (?:light|dark) theme/u });
-  const initialName = await theme.getAttribute('aria-label');
+  const theme = page.getByRole('button', {
+    name: /Theme: (?:Light|Dark)/u,
+  });
+  const initialText = await theme.innerText();
   await theme.focus();
   await page.keyboard.press('Enter');
-  await expect(theme).not.toHaveAttribute('aria-label', initialName ?? '');
+  await expect(theme).not.toHaveText(initialText);
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1),
   ).toBe(true);

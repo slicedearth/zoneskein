@@ -55,15 +55,38 @@ afterEach(() => {
 });
 
 describe('DkimPage', () => {
-  it('discloses the Netlify intermediary when the Quad9 relay is selected', () => {
+  it('discloses the automatic Quad9 compatibility boundary', () => {
     render(<DkimPage />);
 
     const resolver = screen.getByLabelText('Resolver');
-    fireEvent.change(resolver, { target: { value: 'quad9-relay' } });
+    fireEvent.change(resolver, { target: { value: 'quad9' } });
 
-    const note = screen.getByText(/DNS question and connection metadata to Netlify/iu);
+    const note = screen.getByText(/compatibility mode lets Netlify observe the DNS question/iu);
     expect(note).toHaveAttribute('id', 'dkim-resolver-note');
     expect(resolver).toHaveAttribute('aria-describedby', 'dkim-resolver-note');
+  });
+
+  it('shows the actual Quad9 path used for selector evidence', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(new TypeError('Direct transport unavailable.'))
+      .mockImplementation((input, init) =>
+        Promise.resolve(txtResponse(input, init, ED25519_KEY)),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    render(<DkimPage />);
+
+    fireEvent.change(screen.getByLabelText('Resolver'), { target: { value: 'quad9' } });
+    fireEvent.change(screen.getByLabelText('Signing domain'), {
+      target: { value: 'example.test' },
+    });
+    fireEvent.change(screen.getByLabelText('Selector'), { target: { value: 'key' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect DKIM key' }));
+
+    expect(
+      await screen.findByText('Quad9 (compatibility mode)', { selector: 'dd' }),
+    ).toBeVisible();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('rejects non-LDH and overlong complete selector names before DNS', () => {

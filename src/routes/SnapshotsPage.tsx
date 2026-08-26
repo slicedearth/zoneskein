@@ -176,7 +176,10 @@ export function SnapshotsPage() {
 
   return (
     <div className="tool-page">
-      <ToolIntro eyebrow="Local snapshot vault" title="Keep evidence only when you choose.">
+      <ToolIntro
+        eyebrow="Local snapshot vault"
+        title="Keep only the evidence you mean to keep."
+      >
         Persistent storage is off by default. After you opt in, manual saves stay in IndexedDB
         on this browser. ZoneSkein never uploads them to an application backend.
       </ToolIntro>

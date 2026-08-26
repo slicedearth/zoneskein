@@ -21,8 +21,14 @@ import {
   type ResolverId,
 } from '../core/dns/types';
 import { DnsQueryRun } from '../core/doh/query-run';
-import { RESOLVERS } from '../core/doh/resolvers';
-import { WireDnsResolver } from '../core/doh/wire-resolver';
+import {
+  createDnsResolver,
+  RESOLVERS,
+  resolverOptionLabel,
+  resolverSelectionNote,
+  SELECTABLE_RESOLVER_IDS,
+  type SelectableResolverId,
+} from '../core/doh/resolvers';
 import {
   escapeTechnicalText,
   markdownLiteral,
@@ -38,12 +44,10 @@ const DEFAULT_RECORD_TYPES = [
   'TXT',
 ] as const satisfies readonly DnsRecordType[];
 const FORWARD_RECORD_TYPES = DNS_RECORD_TYPES.filter((type) => type !== 'PTR');
-const RESOLVER_IDS = Object.keys(RESOLVERS) as ResolverId[];
 const DIRECT_COMPARISON_RESOLVERS = [
   'cloudflare',
   'google',
 ] as const satisfies readonly ResolverId[];
-type Quad9ComparisonResolverId = 'quad9' | 'quad9-relay';
 
 interface QueryResultBase {
   readonly question: DnsQuestion;
@@ -499,10 +503,8 @@ export function LookupPage() {
   const [selectedTypes, setSelectedTypes] = useState<Set<DnsRecordType>>(
     () => new Set(DEFAULT_RECORD_TYPES),
   );
-  const [resolverId, setResolverId] = useState<ResolverId>('google');
+  const [resolverId, setResolverId] = useState<SelectableResolverId>('google');
   const [compare, setCompare] = useState(false);
-  const [comparisonQuad9ResolverId, setComparisonQuad9ResolverId] =
-    useState<Quad9ComparisonResolverId>('quad9');
   const [state, setState] = useState<RunState>('idle');
   const [completedRun, setCompletedRun] = useState<CompletedLookupRun | null>(null);
   const [localError, setLocalError] = useState('');
@@ -525,8 +527,8 @@ export function LookupPage() {
     [completedRun],
   );
   const resolverNote = compare
-    ? `Comparison uses ${RESOLVERS[comparisonQuad9ResolverId].label}. ${RESOLVERS[comparisonQuad9ResolverId].selectionNote ?? RESOLVERS[comparisonQuad9ResolverId].transportNote ?? ''}`.trim()
-    : (RESOLVERS[resolverId].selectionNote ?? RESOLVERS[resolverId].transportNote);
+    ? resolverSelectionNote('quad9')
+    : resolverSelectionNote(resolverId);
 
   useEffect(
     () => () => {
@@ -588,8 +590,8 @@ export function LookupPage() {
     activeRun.current = run;
     setCompletedRun(null);
     setState('loading');
-    const targetResolvers: readonly ResolverId[] = compare
-      ? [...DIRECT_COMPARISON_RESOLVERS, comparisonQuad9ResolverId]
+    const targetResolvers: readonly SelectableResolverId[] = compare
+      ? [...DIRECT_COMPARISON_RESOLVERS, 'quad9']
       : [resolverId];
     const descriptor: LookupRunDescriptor = {
       comparison: compare,
@@ -598,17 +600,17 @@ export function LookupPage() {
       startedAt: new Date().toISOString(),
       submittedInput: input.trim(),
     };
-    const clients = Object.fromEntries(
+    const clients = new Map(
       targetResolvers.map((targetResolver) => [
         targetResolver,
-        new WireDnsResolver(RESOLVERS[targetResolver]),
+        createDnsResolver(targetResolver),
       ]),
-    ) as Partial<Record<ResolverId, WireDnsResolver>>;
+    );
     const settled = await Promise.all(
       questions.flatMap((question) =>
         targetResolvers.map(async (targetResolver): Promise<QueryResult> => {
           try {
-            const client = clients[targetResolver];
+            const client = clients.get(targetResolver);
             if (client === undefined) throw new Error('Resolver client was not created.');
             const response = await run.query(client, question, {
               checkingDisabled: false,
@@ -617,15 +619,16 @@ export function LookupPage() {
             return {
               outcome: 'response',
               question,
-              resolverId: targetResolver,
+              resolverId: response.resolver.id,
               response,
             };
           } catch (cause) {
+            const client = clients.get(targetResolver);
             return {
               error: asError(cause),
               outcome: 'error',
               question,
-              resolverId: targetResolver,
+              resolverId: client?.definition.id ?? targetResolver,
             };
           }
         }),
@@ -635,7 +638,10 @@ export function LookupPage() {
     activeRun.current = null;
     setCompletedRun({
       completedAt: new Date().toISOString(),
-      descriptor,
+      descriptor: {
+        ...descriptor,
+        resolverIds: [...new Set(settled.map((result) => result.resolverId))],
+      },
       results: settled,
     });
     const successes = settled.filter((result) => result.outcome === 'response').length;
@@ -664,10 +670,10 @@ export function LookupPage() {
 
   return (
     <div className="tool-page">
-      <ToolIntro eyebrow="DNS record explorer" title="Inspect a recursive answer.">
-        Query explicitly selected record types using DNS-over-HTTPS wire messages. Results are
-        point-in-time observations from the resolver you choose, not proof of global
-        propagation.
+      <ToolIntro eyebrow="DNS record explorer" title="Follow a name to its answers.">
+        Choose the record types and resolver. ZoneSkein reads the wire answer, keeps its
+        provenance attached, and shows the loose ends. Results remain point-in-time
+        observations, not proof of global propagation.
       </ToolIntro>
 
       <form className="workbench-form" onSubmit={(event) => void submit(event)}>
@@ -700,13 +706,13 @@ export function LookupPage() {
             }
             onChange={(event) => {
               invalidateRun();
-              setResolverId(event.currentTarget.value as ResolverId);
+              setResolverId(event.currentTarget.value as SelectableResolverId);
             }}
             disabled={compare}
           >
-            {RESOLVER_IDS.map((id) => (
+            {SELECTABLE_RESOLVER_IDS.map((id) => (
               <option value={id} key={id}>
-                {RESOLVERS[id].label}
+                {resolverOptionLabel(id)}
               </option>
             ))}
           </select>
@@ -725,27 +731,10 @@ export function LookupPage() {
           />
           Compare Cloudflare, Google and Quad9
         </label>
-        {compare ? (
-          <div className="field-group">
-            <label htmlFor="lookup-comparison-quad9">Quad9 comparison path</label>
-            <select
-              id="lookup-comparison-quad9"
-              value={comparisonQuad9ResolverId}
-              aria-describedby="lookup-resolver-note"
-              onChange={(event) => {
-                invalidateRun();
-                setComparisonQuad9ResolverId(
-                  event.currentTarget.value as Quad9ComparisonResolverId,
-                );
-              }}
-            >
-              <option value="quad9">{RESOLVERS.quad9.label}</option>
-              <option value="quad9-relay">{RESOLVERS['quad9-relay'].label}</option>
-            </select>
-            {resolverNote === undefined ? null : (
-              <small id="lookup-resolver-note">{resolverNote}</small>
-            )}
-          </div>
+        {compare && resolverNote !== undefined ? (
+          <small id="lookup-resolver-note" className="field-wide">
+            {resolverNote}
+          </small>
         ) : null}
         <fieldset className="record-picker">
           <legend>Record types</legend>

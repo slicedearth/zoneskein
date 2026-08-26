@@ -10,6 +10,13 @@ import {
   SOURCE_MANIFEST_NAME,
   sourceArchiveDigest,
 } from './source-archive.ts';
+import {
+  renderSeoHead,
+  replaceSeoHead,
+  SEO_ROUTES,
+  sitemapXml,
+  STRUCTURED_DATA_JSON,
+} from '../src/seo.ts';
 
 const root = resolve(import.meta.dirname, '..');
 const output = join(root, 'dist');
@@ -32,11 +39,17 @@ const REQUIRED_ROOT_FILES = new Set([
   'TRADEMARKS.md',
   '_headers',
   '_redirects',
-  'favicon.svg',
+  'apple-touch-icon.png',
+  'favicon.ico',
   'index.html',
   'logo.svg',
   'robots.txt',
+  'sitemap.xml',
+  'social-card.jpg',
 ]);
+const ROUTE_HTML_FILES = new Set(
+  SEO_ROUTES.filter((route) => route.path !== '').map((route) => `${route.path}/index.html`),
+);
 const ALLOWED_ASSET_EXTENSIONS = new Set(['.css', '.js', '.woff2']);
 
 function fail(message: string): never {
@@ -67,6 +80,122 @@ async function requireExactCopy(sourceName: string, outputName = sourceName): Pr
     readFile(join(output, outputName)),
   ]);
   if (!source.equals(built)) fail(`${outputName} does not exactly match ${sourceName}.`);
+}
+
+async function verifyFaviconIco(): Promise<void> {
+  const favicon = await readFile(join(root, 'public/favicon.ico'));
+  const expectedSizes = [16, 32, 48, 64, 128, 256] as const;
+  const directoryOctets = 6 + expectedSizes.length * 16;
+  if (
+    favicon.length < directoryOctets ||
+    favicon.readUInt16LE(0) !== 0 ||
+    favicon.readUInt16LE(2) !== 1 ||
+    favicon.readUInt16LE(4) !== expectedSizes.length
+  ) {
+    fail('favicon.ico has an invalid icon directory.');
+  }
+  let expectedImageOffset = directoryOctets;
+  const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  for (const [index, expectedSize] of expectedSizes.entries()) {
+    const entryOffset = 6 + index * 16;
+    const width = favicon[entryOffset] === 0 ? 256 : favicon[entryOffset];
+    const height = favicon[entryOffset + 1] === 0 ? 256 : favicon[entryOffset + 1];
+    const imageOctets = favicon.readUInt32LE(entryOffset + 8);
+    const imageOffset = favicon.readUInt32LE(entryOffset + 12);
+    const imageEnd = imageOffset + imageOctets;
+    if (
+      width !== expectedSize ||
+      height !== expectedSize ||
+      favicon.readUInt16LE(entryOffset + 4) !== 1 ||
+      favicon.readUInt16LE(entryOffset + 6) !== 32 ||
+      imageOctets < 24 ||
+      imageOffset !== expectedImageOffset ||
+      imageEnd > favicon.length ||
+      !favicon.subarray(imageOffset, imageOffset + 8).equals(pngSignature) ||
+      favicon.subarray(imageOffset + 12, imageOffset + 16).toString('ascii') !== 'IHDR' ||
+      favicon.readUInt32BE(imageOffset + 16) !== expectedSize ||
+      favicon.readUInt32BE(imageOffset + 20) !== expectedSize
+    ) {
+      fail(`favicon.ico has an invalid ${String(expectedSize)}-pixel image.`);
+    }
+    expectedImageOffset = imageEnd;
+  }
+  if (expectedImageOffset !== favicon.length) fail('favicon.ico has unexpected trailing data.');
+}
+
+async function verifyPng(
+  sourceName: string,
+  expectedWidth: number,
+  expectedHeight: number,
+  maximumOctets: number,
+): Promise<void> {
+  const png = await readFile(join(root, sourceName));
+  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  if (
+    png.length < 45 ||
+    png.length > maximumOctets ||
+    !png.subarray(0, 8).equals(signature) ||
+    png.readUInt32BE(8) !== 13 ||
+    png.subarray(12, 16).toString('ascii') !== 'IHDR' ||
+    png.readUInt32BE(16) !== expectedWidth ||
+    png.readUInt32BE(20) !== expectedHeight ||
+    png.readUInt32BE(png.length - 12) !== 0 ||
+    png.subarray(png.length - 8, png.length - 4).toString('ascii') !== 'IEND'
+  ) {
+    fail(
+      `${sourceName} is not a bounded ${String(expectedWidth)} by ${String(expectedHeight)} PNG.`,
+    );
+  }
+}
+
+async function verifyJpeg(
+  sourceName: string,
+  expectedWidth: number,
+  expectedHeight: number,
+  maximumOctets: number,
+): Promise<void> {
+  const jpeg = await readFile(join(root, sourceName));
+  if (
+    jpeg.length < 16 ||
+    jpeg.length > maximumOctets ||
+    jpeg[0] !== 0xff ||
+    jpeg[1] !== 0xd8 ||
+    jpeg[jpeg.length - 2] !== 0xff ||
+    jpeg[jpeg.length - 1] !== 0xd9
+  ) {
+    fail(`${sourceName} is not a bounded JPEG image.`);
+  }
+  const startOfFrame = new Set([
+    0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf,
+  ]);
+  let offset = 2;
+  while (offset + 8 < jpeg.length) {
+    if (jpeg[offset] !== 0xff) fail(`${sourceName} has an invalid JPEG marker boundary.`);
+    while (jpeg[offset] === 0xff) offset += 1;
+    const marker = jpeg[offset];
+    offset += 1;
+    if (marker === undefined || marker === 0xd9 || marker === 0xda) break;
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd8)) continue;
+    if (offset + 2 > jpeg.length) fail(`${sourceName} has a truncated JPEG segment.`);
+    const length = jpeg.readUInt16BE(offset);
+    if (length < 2 || offset + length > jpeg.length) {
+      fail(`${sourceName} has an invalid JPEG segment length.`);
+    }
+    if (startOfFrame.has(marker)) {
+      if (
+        length < 8 ||
+        jpeg.readUInt16BE(offset + 3) !== expectedHeight ||
+        jpeg.readUInt16BE(offset + 5) !== expectedWidth
+      ) {
+        fail(
+          `${sourceName} is not a ${String(expectedWidth)} by ${String(expectedHeight)} JPEG.`,
+        );
+      }
+      return;
+    }
+    offset += length;
+  }
+  fail(`${sourceName} has no supported JPEG frame header.`);
 }
 
 async function verifyCorrespondingSource(): Promise<string> {
@@ -147,7 +276,7 @@ for (const path of files) {
       fail(`unexpected asset extension in ${name}.`);
     if (details.size > MAX_SINGLE_ASSET_OCTETS)
       fail(`${name} exceeds the ${String(MAX_SINGLE_ASSET_OCTETS)}-octet asset limit.`);
-  } else if (!REQUIRED_ROOT_FILES.has(name)) {
+  } else if (!REQUIRED_ROOT_FILES.has(name) && !ROUTE_HTML_FILES.has(name)) {
     fail(`unexpected root output file ${name}.`);
   }
 }
@@ -167,12 +296,20 @@ await Promise.all([
   requireExactCopy('TRADEMARKS.md'),
   requireExactCopy('public/_headers', '_headers'),
   requireExactCopy('public/_redirects', '_redirects'),
-  requireExactCopy('public/favicon.svg', 'favicon.svg'),
+  requireExactCopy('public/apple-touch-icon.png', 'apple-touch-icon.png'),
+  requireExactCopy('public/favicon.ico', 'favicon.ico'),
   requireExactCopy('public/logo.svg', 'logo.svg'),
   requireExactCopy('public/robots.txt', 'robots.txt'),
+  requireExactCopy('public/sitemap.xml', 'sitemap.xml'),
+  requireExactCopy('public/social-card.jpg', 'social-card.jpg'),
 ]);
 
 const sourceDigest = await verifyCorrespondingSource();
+await Promise.all([
+  verifyFaviconIco(),
+  verifyPng('public/apple-touch-icon.png', 180, 180, 128 * 1024),
+  verifyJpeg('public/social-card.jpg', 1200, 630, 256 * 1024),
+]);
 
 const [html, headers, redirects, resolverSource, netlifyConfig, relaySource] =
   await Promise.all([
@@ -183,6 +320,44 @@ const [html, headers, redirects, resolverSource, netlifyConfig, relaySource] =
     readFile(join(root, 'netlify.toml'), 'utf8'),
     quad9RelaySource(),
   ]);
+
+if (
+  !/<link\b(?=[^>]*\brel="icon")(?=[^>]*\bhref="\/favicon\.ico")(?=[^>]*\btype="image\/x-icon")[^>]*>/u.test(
+    html,
+  )
+) {
+  fail('the document does not declare the stable favicon.ico asset.');
+}
+if (
+  !/<link\b(?=[^>]*\brel="apple-touch-icon")(?=[^>]*\bhref="\/apple-touch-icon\.png")(?=[^>]*\bsizes="180x180")[^>]*>/u.test(
+    html,
+  )
+) {
+  fail('the document does not declare the 180-pixel Apple touch icon.');
+}
+
+const homeSeo = renderSeoHead(SEO_ROUTES[0]);
+if (!html.includes(homeSeo)) fail('index.html does not contain the exact home-page metadata.');
+for (const route of SEO_ROUTES) {
+  if (route.path === '') continue;
+  const routeHtml = await readFile(join(output, route.path, 'index.html'), 'utf8');
+  if (routeHtml !== replaceSeoHead(html, route)) {
+    fail(`${route.path}/index.html does not contain the exact route metadata.`);
+  }
+}
+
+const [robots, sitemap] = await Promise.all([
+  readFile(join(output, 'robots.txt'), 'utf8'),
+  readFile(join(output, 'sitemap.xml'), 'utf8'),
+]);
+if (sitemap !== sitemapXml()) fail('sitemap.xml does not match the indexable route set.');
+if (
+  robots
+    .split(/\r?\n/u)
+    .filter((line) => line === 'Sitemap: https://www.zoneskein.com/sitemap.xml').length !== 1
+) {
+  fail('robots.txt does not declare the canonical sitemap exactly once.');
+}
 
 if (!redirects.split(/\r?\n/u).includes('/*  /index.html  200'))
   fail('SPA fallback redirect is missing.');
@@ -281,6 +456,10 @@ const resolverOrigins = new Set(
 );
 if (resolverOrigins.size !== 3) fail('expected exactly three fixed resolver origins.');
 const expectedConnections = new Set(["'self'", ...resolverOrigins]);
+const structuredDataHash = `'sha256-${createHash('sha256')
+  .update(STRUCTURED_DATA_JSON)
+  .digest('base64')}'`;
+const expectedScripts = new Set(["'self'", structuredDataHash]);
 
 const headerPolicy = /^\s*Content-Security-Policy:\s*(.+)$/mu.exec(headers)?.[1];
 const metaPolicy = /http-equiv="Content-Security-Policy"\s+content="([^"]+)"/u.exec(html)?.[1];
@@ -288,6 +467,12 @@ if (headerPolicy === undefined || metaPolicy === undefined)
   fail('CSP is missing from the output.');
 assertSameSet(directiveValues(headerPolicy, 'connect-src'), expectedConnections, 'Header CSP');
 assertSameSet(directiveValues(metaPolicy, 'connect-src'), expectedConnections, 'HTML CSP');
+assertSameSet(
+  directiveValues(headerPolicy, 'script-src'),
+  expectedScripts,
+  'Header script CSP',
+);
+assertSameSet(directiveValues(metaPolicy, 'script-src'), expectedScripts, 'HTML script CSP');
 
 const referencedAssets = [
   ...html.matchAll(/(?:src|href)="(\/assets\/[A-Za-z0-9_-]+\.(?:css|js))"/gu),
@@ -297,7 +482,17 @@ if (referencedAssets.length < 2 || referencedAssets.some((value) => value === un
 for (const asset of referencedAssets as string[]) {
   if (!files.includes(join(output, asset.slice(1)))) fail(`HTML references missing ${asset}.`);
 }
-if (/<script(?![^>]+\bsrc=)[^>]*>/iu.test(html)) fail('HTML contains an inline script.');
+const inlineScripts = [
+  ...html.matchAll(/<script\b(?![^>]*\bsrc=)([^>]*)>([\s\S]*?)<\/script>/giu),
+];
+if (
+  inlineScripts.length !== 1 ||
+  !/\bid="zoneskein-structured-data"/u.test(inlineScripts[0]?.[1] ?? '') ||
+  !/\btype="application\/ld\+json"/u.test(inlineScripts[0]?.[1] ?? '') ||
+  inlineScripts[0]?.[2] !== STRUCTURED_DATA_JSON
+) {
+  fail('HTML does not contain exactly the checked structured-data script.');
+}
 
 const entryHashes = await Promise.all(
   (referencedAssets as string[]).map(async (asset) => {

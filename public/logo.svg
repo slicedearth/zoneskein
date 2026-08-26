@@ -1,38 +1,23 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 64">
-  <title>ZoneSkein strands resolving from a knot</title>
-  <g
-    fill="none"
-    stroke="#211438"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-    stroke-width="11"
-  >
-    <path d="M8 18c8-12 25-9 23 4-2 12-20 8-19 22 1 12 18 15 26 3 9-14 9-28 31-29" />
-    <path d="M8 32c8-10 19-8 23 2 5 13 18 14 38 13" />
-    <path d="M9 48c10 10 24 6 30-6 6-13 13-11 30-10" />
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 84 68">
+  <title>ZoneSkein interwoven Z and S strands</title>
+  <desc>A rounded coral Z and mint S cross like two strands being untangled.</desc>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 12h59L18 56h57" stroke="#211438" stroke-width="11" />
+    <path d="M9 12h59L18 56h57" stroke="#ff668c" stroke-width="6" />
+
+    <path
+      d="M73 12C57 5 29 6 19 17c-9 10 2 17 23 19 20 2 32 6 28 18-4 11-32 12-58 2"
+      stroke="#211438"
+      stroke-width="11"
+    />
+    <path
+      d="M73 12C57 5 29 6 19 17c-9 10 2 17 23 19 20 2 32 6 28 18-4 11-32 12-58 2"
+      stroke="#73edc5"
+      stroke-width="6"
+    />
+
+    <path d="M47 30.5 36 40.2" stroke="#211438" stroke-width="11" />
+    <path d="M47 30.5 36 40.2" stroke="#ff668c" stroke-width="6" />
   </g>
-  <path
-    d="M8 18c8-12 25-9 23 4-2 12-20 8-19 22 1 12 18 15 26 3 9-14 9-28 31-29"
-    fill="none"
-    stroke="#ff668c"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-    stroke-width="6"
-  />
-  <path
-    d="M8 32c8-10 19-8 23 2 5 13 18 14 38 13"
-    fill="none"
-    stroke="#ffd25f"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-    stroke-width="6"
-  />
-  <path
-    d="M9 48c10 10 24 6 30-6 6-13 13-11 30-10"
-    fill="none"
-    stroke="#73edc5"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-    stroke-width="6"
-  />
+  <circle cx="41.5" cy="35.35" r="2.5" fill="#ffd25f" />
 </svg>

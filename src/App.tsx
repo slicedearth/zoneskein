@@ -3,6 +3,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { MailAuthenticationEvidence } from './core/mail/evidence';
 import type { ActiveChangeWorkspace, ChangeWorkspace } from './core/project';
 import type { ChangeLabInput } from './routes/DiffPage';
+import { applyDocumentSeo } from './seo';
 
 const AboutPage = lazy(() =>
   import('./routes/AboutPage').then((module) => ({ default: module.AboutPage })),
@@ -70,7 +71,7 @@ const inspectLinks = [
 ] as const satisfies readonly NavigationLink[];
 
 const prepareLinks = [
-  { path: 'zone-lint/', label: 'Zone lint' },
+  { path: 'zone-lint/', label: 'Zone Lint' },
   { path: 'studio/', label: 'Record Studio' },
   { path: 'diff/', label: 'Change Lab' },
   { path: 'workspace/', label: 'Change Workspace' },
@@ -80,30 +81,6 @@ const directLinks = [
   { path: 'snapshots/', label: 'Snapshots' },
   { path: 'about/', label: 'About' },
 ] as const satisfies readonly NavigationLink[];
-
-const routeTitles: Readonly<Record<string, string>> = {
-  '': 'ZoneSkein — Untangle DNS.',
-  about: 'About — ZoneSkein',
-  caa: 'CAA inspection — ZoneSkein',
-  diff: 'Change Lab — ZoneSkein',
-  dkim: 'DKIM inspection — ZoneSkein',
-  dmarc: 'DMARC analysis — ZoneSkein',
-  dnssec: 'DNSSEC inspection — ZoneSkein',
-  lookup: 'DNS record lookup — ZoneSkein',
-  licence: 'Software licence — ZoneSkein',
-  privacy: 'Privacy — ZoneSkein',
-  security: 'Security — ZoneSkein',
-  source: 'Corresponding source — ZoneSkein',
-  'source-checksum': 'Source archive checksum — ZoneSkein',
-  snapshots: 'Local snapshots — ZoneSkein',
-  spf: 'SPF analysis — ZoneSkein',
-  studio: 'Record Studio — ZoneSkein',
-  terms: 'Hosted service terms — ZoneSkein',
-  'third-party-notices': 'Third-party notices — ZoneSkein',
-  trademarks: 'Trademarks — ZoneSkein',
-  workspace: 'Change Workspace — ZoneSkein',
-  'zone-lint': 'Zone lint — ZoneSkein',
-};
 
 function applicationPath(): string {
   return window.location.pathname.replace(/^\/+|\/+$/g, '');
@@ -120,23 +97,23 @@ function normalisePath(path: string): string {
 const tools = [
   {
     path: 'dnssec/',
-    label: 'Inspect DNSSEC',
-    description: 'Review resolver and chain evidence.',
+    label: 'Trace DNSSEC trust',
+    description: 'Follow the chain from root trust to the answer.',
   },
   {
     path: 'spf/',
-    label: 'Analyse SPF',
-    description: 'Map dependencies, test sender context, and build safe snapshots.',
+    label: 'Unwind SPF',
+    description: 'Map includes, redirects, and sender paths before receivers do.',
   },
   {
     path: 'zone-lint/',
-    label: 'Lint a zone snippet',
-    description: 'Catch record mistakes before publishing.',
+    label: 'Tidy a zone snippet',
+    description: 'Catch loose records before they reach production.',
   },
   {
     path: 'diff/',
-    label: 'Open Change Lab',
-    description: 'Compare semantic changes and plan a bounded rollout.',
+    label: 'Rehearse a DNS change',
+    description: 'See what moves, what might snag, and how to roll back.',
   },
 ] as const;
 
@@ -164,7 +141,7 @@ export function App() {
   }, [theme]);
 
   useEffect(() => {
-    document.title = routeTitles[route] ?? 'Page not found — ZoneSkein';
+    applyDocumentSeo(route, document);
   }, [route]);
 
   useEffect(() => {
@@ -339,13 +316,22 @@ export function App() {
             </a>
           ))}
         </nav>
+        <span id="theme-toggle-description" className="visually-hidden">
+          Switch to {theme === 'dark' ? 'light' : 'dark'} theme
+        </span>
         <button
-          className="quiet-button"
+          className="theme-toggle"
           type="button"
           onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-          aria-label={`Use ${theme === 'dark' ? 'light' : 'dark'} theme`}
+          aria-describedby="theme-toggle-description"
+          title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
         >
-          {theme === 'dark' ? 'Light' : 'Dark'}
+          <span className="theme-toggle-label">Theme:</span>{' '}
+          <strong>{theme === 'dark' ? 'Dark' : 'Light'}</strong>
+          <span
+            className={`theme-toggle-symbol theme-toggle-symbol-${theme}`}
+            aria-hidden="true"
+          />
         </button>
       </header>
 
@@ -354,7 +340,7 @@ export function App() {
           fallback={
             <section className="page-intro" aria-live="polite">
               <p className="eyebrow">ZoneSkein</p>
-              <h1>Loading tool…</h1>
+              <h1>Opening the workbench…</h1>
             </section>
           }
         >
@@ -413,19 +399,19 @@ export function App() {
           ) : route === '' ? (
             <section className="hero" aria-labelledby="home-title">
               <div className="hero-copy">
-                <p className="eyebrow">A browser-based DNS workbench</p>
+                <p className="eyebrow">DNS, without the knots</p>
                 <h1 id="home-title">Untangle DNS.</h1>
                 <p className="lede">
-                  Follow every strand from question to evidence. Inspect live answers,
-                  understand policy dependencies, and rehearse changes before anything gets
-                  published.
+                  Start with a name, then follow every strand through live answers, policy
+                  dependencies, and change plans. Leave with evidence you can inspect, explain,
+                  and carry forward.
                 </p>
                 <div className="hero-actions" aria-label="Get started">
                   <a className="primary-button" href={href('lookup/')}>
-                    Start with a lookup
+                    Trace a DNS name
                   </a>
                   <a className="quiet-link" href={href('about/')}>
-                    See how it works
+                    Tour the workbench
                   </a>
                 </div>
               </div>
@@ -466,7 +452,7 @@ export function App() {
                 ))}
               </div>
               <div className="secondary-tools" aria-label="Additional tools">
-                <span>Follow another thread</span>
+                <span>Pick up another thread</span>
                 <a href={href('lookup/')}>Record explorer</a>
                 <a href={href('studio/')}>Record Studio</a>
                 <a href={href('workspace/')}>Change Workspace</a>
@@ -479,10 +465,10 @@ export function App() {
           ) : (
             <section className="page-intro" aria-labelledby="route-title">
               <p className="eyebrow">ZoneSkein</p>
-              <h1 id="route-title">{route.replace('/', '').replace('-', ' ')}</h1>
-              <p className="lede">That page does not exist in this static build.</p>
+              <h1 id="route-title">This thread goes nowhere.</h1>
+              <p className="lede">There is no page at this address in the static build.</p>
               <a className="text-link" href={href('')}>
-                Return home
+                Back to the workbench
               </a>
             </section>
           )}
@@ -490,10 +476,7 @@ export function App() {
       </main>
 
       <footer>
-        <p>
-          Static-first by design. DNS is direct by default; Quad9 (compatibility mode) is
-          explicit. No warranty.
-        </p>
+        <p>Follow the evidence, mind the loose ends, and publish only when you’re ready.</p>
         <div>
           <a href={href('privacy/')}>Privacy</a>
           <a href={href('source/')}>Source</a>

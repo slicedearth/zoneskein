@@ -35,4 +35,5 @@ jobs:
       - run: npm run test:coverage
       - run: npm run build
       - run: npx playwright install --with-deps chromium firefox webkit
+      - run: npm run generate:favicon -- --check
       - run: npm run test:e2e

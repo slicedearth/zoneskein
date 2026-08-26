@@ -21,13 +21,14 @@ describe('DnssecPage', () => {
 
     const target = screen.getByLabelText('Validation target');
     expect(target).toHaveValue('chain');
-    expect(screen.getAllByRole('option')).toHaveLength(DNSSEC_APPLICATION_TYPES.length + 5);
-    expect(screen.getByRole('option', { name: 'Quad9 (compatibility mode)' })).toHaveValue(
-      'quad9-relay',
-    );
+    expect(screen.getAllByRole('option')).toHaveLength(DNSSEC_APPLICATION_TYPES.length + 4);
+    expect(screen.getByRole('option', { name: 'Quad9 (automatic)' })).toHaveValue('quad9');
+    expect(
+      screen.queryByRole('option', { name: 'Quad9 (compatibility mode)' }),
+    ).not.toBeInTheDocument();
     const resolver = screen.getByLabelText('Resolver transport');
-    fireEvent.change(resolver, { target: { value: 'quad9-relay' } });
-    const note = screen.getByText(/DNS question and connection metadata to Netlify/iu);
+    fireEvent.change(resolver, { target: { value: 'quad9' } });
+    const note = screen.getByText(/compatibility mode lets Netlify observe the DNS question/iu);
     expect(note).toHaveAttribute('id', 'dnssec-resolver-note');
     expect(resolver).toHaveAttribute('aria-describedby', 'dnssec-resolver-note');
 

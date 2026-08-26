@@ -17,8 +17,14 @@ import {
 import { evaluateSpfSender, type SpfSenderEvaluation } from '../core/spf/sender-evaluator';
 import type { SpfAnalysis, SpfSnapshot } from '../core/spf/types';
 import { DnsQueryRun } from '../core/doh/query-run';
-import { RESOLVERS } from '../core/doh/resolvers';
-import { WireDnsResolver } from '../core/doh/wire-resolver';
+import {
+  createDnsResolver,
+  RESOLVERS,
+  resolverOptionLabel,
+  resolverSelectionNote,
+  SELECTABLE_RESOLVER_IDS,
+  type SelectableResolverId,
+} from '../core/doh/resolvers';
 import {
   escapeTechnicalText,
   markdownLiteral,
@@ -33,7 +39,6 @@ import {
 } from '../core/mail/evidence';
 
 type Mode = 'analysis' | 'flatten' | 'sender';
-const RESOLVER_IDS = Object.keys(RESOLVERS) as ResolverId[];
 
 interface SpfRunReport {
   readonly analysis: SpfAnalysis;
@@ -723,7 +728,7 @@ export function SpfPage({ onUseForDmarc }: SpfPageProps = {}) {
   const [mailFrom, setMailFrom] = useState('');
   const [heloDomain, setHeloDomain] = useState('');
   const [receiver, setReceiver] = useState('');
-  const [resolverId, setResolverId] = useState<ResolverId>('google');
+  const [resolverId, setResolverId] = useState<SelectableResolverId>('google');
   const [mode, setMode] = useState<Mode>('analysis');
   const [state, setState] = useState<'idle' | 'loading' | 'complete' | 'cancelled'>('idle');
   const [error, setError] = useState('');
@@ -802,7 +807,8 @@ export function SpfPage({ onUseForDmarc }: SpfPageProps = {}) {
     setSenderReport(null);
     setState('loading');
     const selectedResolverId = resolverId;
-    const dns = new WireSpfDnsClient(new WireDnsResolver(RESOLVERS[selectedResolverId]), run);
+    const resolver = createDnsResolver(selectedResolverId);
+    const dns = new WireSpfDnsClient(resolver, run);
     try {
       if (mode === 'sender') {
         const evaluation = await evaluateSpfSender(
@@ -822,7 +828,7 @@ export function SpfPage({ onUseForDmarc }: SpfPageProps = {}) {
           setState('cancelled');
           return;
         }
-        setSenderReport({ evaluation, resolverId: selectedResolverId });
+        setSenderReport({ evaluation, resolverId: resolver.definition.id });
       } else if (mode === 'analysis') {
         const analysis = await analyseSpf(policyDomain, dns, run.signal);
         if (activeRun.current !== run) return;
@@ -833,7 +839,7 @@ export function SpfPage({ onUseForDmarc }: SpfPageProps = {}) {
         setReport({
           analysis,
           dnsQuestions: run.questionsUsed,
-          resolverId: selectedResolverId,
+          resolverId: resolver.definition.id,
         });
       } else {
         const result = await flattenSpf(policyDomain, dns, new Date(), run.signal);
@@ -845,7 +851,7 @@ export function SpfPage({ onUseForDmarc }: SpfPageProps = {}) {
         setReport({
           analysis: result.analysis,
           dnsQuestions: run.questionsUsed,
-          resolverId: selectedResolverId,
+          resolverId: resolver.definition.id,
           snapshot: result.snapshot,
         });
       }
@@ -876,7 +882,7 @@ export function SpfPage({ onUseForDmarc }: SpfPageProps = {}) {
 
   return (
     <div className="tool-page">
-      <ToolIntro eyebrow="SPF policy workbench" title="Count policy paths before receivers do.">
+      <ToolIntro eyebrow="SPF policy workbench" title="Unwind SPF before receivers have to.">
         Parse ordered SPF terms, follow include and redirect dependencies, separate protocol
         limits from browser requests, simulate one sender context, and create a guarded
         point-in-time snapshot only when it is safe.
@@ -1019,25 +1025,23 @@ export function SpfPage({ onUseForDmarc }: SpfPageProps = {}) {
           <select
             id="spf-resolver"
             aria-describedby={
-              RESOLVERS[resolverId].selectionNote === undefined
-                ? undefined
-                : 'spf-resolver-note'
+              resolverSelectionNote(resolverId) === undefined ? undefined : 'spf-resolver-note'
             }
             value={resolverId}
             disabled={state === 'loading'}
             onChange={(event) => {
               invalidateResult();
-              setResolverId(event.currentTarget.value as ResolverId);
+              setResolverId(event.currentTarget.value as SelectableResolverId);
             }}
           >
-            {RESOLVER_IDS.map((id) => (
+            {SELECTABLE_RESOLVER_IDS.map((id) => (
               <option key={id} value={id}>
-                {RESOLVERS[id].label}
+                {resolverOptionLabel(id)}
               </option>
             ))}
           </select>
-          {RESOLVERS[resolverId].selectionNote === undefined ? null : (
-            <small id="spf-resolver-note">{RESOLVERS[resolverId].selectionNote}</small>
+          {resolverSelectionNote(resolverId) === undefined ? null : (
+            <small id="spf-resolver-note">{resolverSelectionNote(resolverId)}</small>
           )}
         </div>
         {error !== '' ? (

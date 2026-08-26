@@ -9,10 +9,15 @@ import { validateDnsName } from '../core/dns/names';
 import { queryPolicyRecords } from '../core/dns/policy-query';
 import type { ResolverId } from '../core/dns/types';
 import { DnsQueryRun } from '../core/doh/query-run';
-import { RESOLVERS } from '../core/doh/resolvers';
-import { WireDnsResolver } from '../core/doh/wire-resolver';
+import {
+  createDnsResolver,
+  RESOLVERS,
+  resolverOptionLabel,
+  resolverSelectionNote,
+  SELECTABLE_RESOLVER_IDS,
+  type SelectableResolverId,
+} from '../core/doh/resolvers';
 
-const RESOLVER_IDS = Object.keys(RESOLVERS) as ResolverId[];
 type CaaRunState = 'idle' | 'loading' | 'complete' | 'partial' | 'error' | 'cancelled';
 
 function runStatusMessage(state: CaaRunState): string {
@@ -34,10 +39,11 @@ function runStatusMessage(state: CaaRunState): string {
 
 export function CaaPage() {
   const [domain, setDomain] = useState('');
-  const [resolverId, setResolverId] = useState<ResolverId>('google');
+  const [resolverId, setResolverId] = useState<SelectableResolverId>('google');
   const [state, setState] = useState<CaaRunState>('idle');
   const [error, setError] = useState('');
   const [report, setReport] = useState<CaaDiscoveryReport | null>(null);
+  const [usedResolverId, setUsedResolverId] = useState<ResolverId | null>(null);
   const [issuer, setIssuer] = useState('letsencrypt.org');
   const [tag, setTag] = useState<'issue' | 'issuewild' | 'issuemail'>('issue');
   const [accountUri, setAccountUri] = useState('');
@@ -75,8 +81,9 @@ export function CaaPage() {
     activeRun.current = run;
     setError('');
     setReport(null);
+    setUsedResolverId(null);
     setState('loading');
-    const resolver = new WireDnsResolver(RESOLVERS[resolverId]);
+    const resolver = createDnsResolver(resolverId);
     let discovered: CaaDiscoveryReport;
     try {
       const parentWalk = caaParentWalk(parsed.value.ascii);
@@ -118,6 +125,7 @@ export function CaaPage() {
       return;
     }
     activeRun.current = null;
+    setUsedResolverId(resolver.definition.id);
     setReport(discovered);
     setState(discovered.errors.length === 0 ? 'complete' : 'partial');
   }
@@ -140,6 +148,7 @@ export function CaaPage() {
     activeRun.current = null;
     setError('');
     setReport(null);
+    setUsedResolverId(null);
     setState('idle');
   }
 
@@ -152,7 +161,7 @@ export function CaaPage() {
     <div className="tool-page">
       <ToolIntro
         eyebrow="CAA inspection and authoring"
-        title="See where certificate policy is inherited."
+        title="Follow certificate policy up the tree."
       >
         Ask a recursive resolver to process aliases, then walk the original requested name
         towards its parents and stop at the first observed CAA RRset. Explain critical
@@ -179,24 +188,22 @@ export function CaaPage() {
           <select
             id="caa-resolver"
             aria-describedby={
-              RESOLVERS[resolverId].selectionNote === undefined
-                ? undefined
-                : 'caa-resolver-note'
+              resolverSelectionNote(resolverId) === undefined ? undefined : 'caa-resolver-note'
             }
             value={resolverId}
             onChange={(event) => {
               invalidateInspection();
-              setResolverId(event.currentTarget.value as ResolverId);
+              setResolverId(event.currentTarget.value as SelectableResolverId);
             }}
           >
-            {RESOLVER_IDS.map((id) => (
+            {SELECTABLE_RESOLVER_IDS.map((id) => (
               <option key={id} value={id}>
-                {RESOLVERS[id].label}
+                {resolverOptionLabel(id)}
               </option>
             ))}
           </select>
-          {RESOLVERS[resolverId].selectionNote === undefined ? null : (
-            <small id="caa-resolver-note">{RESOLVERS[resolverId].selectionNote}</small>
+          {resolverSelectionNote(resolverId) === undefined ? null : (
+            <small id="caa-resolver-note">{resolverSelectionNote(resolverId)}</small>
           )}
         </div>
         {error !== '' ? (
@@ -290,6 +297,12 @@ export function CaaPage() {
               <div>
                 <dt>TTL</dt>
                 <dd>{report.ttl ?? 'Unknown'}</dd>
+              </div>
+              <div>
+                <dt>Resolver</dt>
+                <dd>
+                  {usedResolverId === null ? 'Unavailable' : RESOLVERS[usedResolverId].label}
+                </dd>
               </div>
             </dl>
             {report.records.length === 0 ? (

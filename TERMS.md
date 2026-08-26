@@ -1,8 +1,8 @@
 # Hosted service terms
 
-Effective: 16 August 2026
+Effective: 27 August 2026
 
-These terms apply to the hosted ZoneSkein website and its optional Quad9 compatibility relay. They do not restrict the rights granted in ZoneSkein’s source code by the GNU Affero General Public License version 3.
+These terms apply to the hosted ZoneSkein website and its automatic Quad9 compatibility relay. They do not restrict the rights granted in ZoneSkein’s source code by the GNU Affero General Public License version 3.
 
 ## Intended use
 
@@ -22,7 +22,7 @@ The source licence permits running modified copies. These hosted-use limits gove
 
 ## DNS and third-party services
 
-Starting a live operation instructs the browser to send bounded DNS questions to the resolver you select. Selecting Quad9 compatibility mode also sends the question and connection metadata through Netlify before it reaches Quad9. Those providers apply their own terms, privacy practices, availability limits, filtering choices, and legal obligations. ZoneSkein does not control their answers, logging, retention, or continued availability.
+Starting a live operation instructs the browser to send bounded DNS questions to the resolver you select. The Quad9 option starts directly; after a qualifying direct transport, timeout, or HTTP failure, automatic compatibility mode sends the question and connection metadata through Netlify before it reaches Quad9. [Google Public DNS](https://developers.google.com/speed/public-dns/terms), [Cloudflare 1.1.1.1](https://developers.cloudflare.com/1.1.1.1/terms-of-use/), [Quad9](https://quad9.net/privacy/policy/), and [Netlify](https://www.netlify.com/legal/acceptable-use-policy/) apply their own terms, privacy practices, availability limits, filtering choices, and legal obligations. ZoneSkein does not control their answers, logging, retention, or continued availability.
 
 ## Local inputs and exports
 

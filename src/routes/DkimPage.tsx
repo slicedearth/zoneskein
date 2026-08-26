@@ -20,8 +20,14 @@ import { validateDnsName } from '../core/dns/names';
 import { queryPolicyRecords } from '../core/dns/policy-query';
 import type { ResolverId } from '../core/dns/types';
 import { DnsQueryRun } from '../core/doh/query-run';
-import { RESOLVERS } from '../core/doh/resolvers';
-import { WireDnsResolver } from '../core/doh/wire-resolver';
+import {
+  createDnsResolver,
+  RESOLVERS,
+  resolverOptionLabel,
+  resolverSelectionNote,
+  SELECTABLE_RESOLVER_IDS,
+  type SelectableResolverId,
+} from '../core/doh/resolvers';
 import {
   encodeMailAuthenticationEvidence,
   evidenceFromDkim,
@@ -34,13 +40,13 @@ import {
   utf8Base64Evidence,
 } from '../core/technical-text';
 
-const RESOLVER_IDS = Object.keys(RESOLVERS) as ResolverId[];
 type DkimMode = 'key' | 'message';
 
 interface DkimReport {
   readonly inspection?: DkimKeyInspection;
   readonly key?: DkimKeyRecord;
   readonly name: string;
+  readonly resolverId: ResolverId;
   readonly responseCode: string;
   readonly ttl?: number;
 }
@@ -296,7 +302,7 @@ export function DkimPage({ onUseForDmarc }: DkimPageProps = {}) {
   const [rawMessage, setRawMessage] = useState('');
   const [messageBytes, setMessageBytes] = useState<Uint8Array | null>(null);
   const [messageFileName, setMessageFileName] = useState('');
-  const [resolverId, setResolverId] = useState<ResolverId>('google');
+  const [resolverId, setResolverId] = useState<SelectableResolverId>('google');
   const [state, setState] = useState<'idle' | 'loading' | 'complete' | 'cancelled'>('idle');
   const [error, setError] = useState('');
   const [report, setReport] = useState<DkimReport | null>(null);
@@ -344,8 +350,7 @@ export function DkimPage({ onUseForDmarc }: DkimPageProps = {}) {
       setReport(null);
       setMessageReport(null);
       setState('loading');
-      const selectedResolverId = resolverId;
-      const resolver = new WireDnsResolver(RESOLVERS[selectedResolverId]);
+      const resolver = createDnsResolver(resolverId);
       const capturedAt = new Date();
       try {
         const results = await verifyParsedDkimMessage(
@@ -381,7 +386,7 @@ export function DkimPage({ onUseForDmarc }: DkimPageProps = {}) {
           inputLabel,
           inputKind,
           lineEndingsNormalised: message.lineEndingsNormalised,
-          resolverId: selectedResolverId,
+          resolverId: resolver.definition.id,
           results,
           sourceOctets: message.sourceOctets,
         });
@@ -415,12 +420,8 @@ export function DkimPage({ onUseForDmarc }: DkimPageProps = {}) {
     setReport(null);
     setMessageReport(null);
     setState('loading');
-    const result = await queryPolicyRecords(
-      new WireDnsResolver(RESOLVERS[resolverId]),
-      run,
-      name,
-      'TXT',
-    );
+    const resolver = createDnsResolver(resolverId);
+    const result = await queryPolicyRecords(resolver, run, name, 'TXT');
     if (activeRun.current !== run) return;
     if (run.cancelled) {
       setState('cancelled');
@@ -449,6 +450,7 @@ export function DkimPage({ onUseForDmarc }: DkimPageProps = {}) {
     if (record === undefined) {
       setReport({
         name,
+        resolverId: resolver.definition.id,
         responseCode: result.responseCode,
         ...(bound.ttl === undefined ? {} : { ttl: bound.ttl }),
       });
@@ -460,6 +462,7 @@ export function DkimPage({ onUseForDmarc }: DkimPageProps = {}) {
         inspection,
         key,
         name,
+        resolverId: resolver.definition.id,
         responseCode: result.responseCode,
         ...(bound.ttl === undefined ? {} : { ttl: bound.ttl }),
       });
@@ -515,7 +518,10 @@ export function DkimPage({ onUseForDmarc }: DkimPageProps = {}) {
 
   return (
     <div className="tool-page">
-      <ToolIntro eyebrow="DKIM key inspector" title="Inspect the selector you intend to use.">
+      <ToolIntro
+        eyebrow="DKIM key inspector"
+        title="Put selectors and signatures under the lens."
+      >
         Inspect a published selector or verify every bounded DKIM signature in a pasted message
         or byte-preserving .eml file. Canonicalisation and signature checks run locally through
         Web Crypto; only selector DNS questions leave the browser.
@@ -624,24 +630,22 @@ export function DkimPage({ onUseForDmarc }: DkimPageProps = {}) {
           <select
             id="dkim-resolver"
             aria-describedby={
-              RESOLVERS[resolverId].selectionNote === undefined
-                ? undefined
-                : 'dkim-resolver-note'
+              resolverSelectionNote(resolverId) === undefined ? undefined : 'dkim-resolver-note'
             }
             value={resolverId}
             onChange={(event) => {
               invalidateRun();
-              setResolverId(event.currentTarget.value as ResolverId);
+              setResolverId(event.currentTarget.value as SelectableResolverId);
             }}
           >
-            {RESOLVER_IDS.map((id) => (
+            {SELECTABLE_RESOLVER_IDS.map((id) => (
               <option value={id} key={id}>
-                {RESOLVERS[id].label}
+                {resolverOptionLabel(id)}
               </option>
             ))}
           </select>
-          {RESOLVERS[resolverId].selectionNote === undefined ? null : (
-            <small id="dkim-resolver-note">{RESOLVERS[resolverId].selectionNote}</small>
+          {resolverSelectionNote(resolverId) === undefined ? null : (
+            <small id="dkim-resolver-note">{resolverSelectionNote(resolverId)}</small>
           )}
         </div>
         {error !== '' ? (
@@ -720,6 +724,20 @@ export function DkimPage({ onUseForDmarc }: DkimPageProps = {}) {
               </StatusBadge>
             )}
           </div>
+          <dl className="metadata-grid">
+            <div>
+              <dt>Resolver</dt>
+              <dd>{RESOLVERS[report.resolverId].label}</dd>
+            </div>
+            <div>
+              <dt>Response</dt>
+              <dd>{report.responseCode}</dd>
+            </div>
+            <div>
+              <dt>TTL</dt>
+              <dd>{report.ttl ?? 'Unknown'}</dd>
+            </div>
+          </dl>
           {report.key === undefined || report.inspection === undefined ? (
             <article className="conclusion-panel">
               <StatusBadge tone="unknown">{report.responseCode}</StatusBadge>
@@ -759,10 +777,6 @@ export function DkimPage({ onUseForDmarc }: DkimPageProps = {}) {
                         ? 'Unknown'
                         : `${String(report.inspection.bits)} bits`}
                     </dd>
-                  </div>
-                  <div>
-                    <dt>TTL</dt>
-                    <dd>{report.ttl ?? 'Unknown'}</dd>
                   </div>
                   <div>
                     <dt>Mode</dt>

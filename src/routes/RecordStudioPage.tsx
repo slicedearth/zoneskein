@@ -625,7 +625,7 @@ export function RecordStudioPage({ onCreateWorkspace }: RecordStudioPageProps = 
 
   return (
     <div className="tool-page">
-      <ToolIntro eyebrow="DNS Record Studio" title="Author records without publishing them.">
+      <ToolIntro eyebrow="DNS Record Studio" title="Shape records without touching production.">
         Build standards-based record text locally, inspect exactly what would be copied, and
         lint a temporary working set before making any provider change. Nothing here sends DNS
         updates or contacts a nameserver.

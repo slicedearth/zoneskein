@@ -89,13 +89,13 @@ describe('SpfPage', () => {
     ).toBeVisible();
   });
 
-  it('discloses the Netlify intermediary when the Quad9 relay is selected', () => {
+  it('discloses the automatic Quad9 compatibility boundary', () => {
     render(<SpfPage />);
 
     const resolver = screen.getByLabelText('Resolver');
-    fireEvent.change(resolver, { target: { value: 'quad9-relay' } });
+    fireEvent.change(resolver, { target: { value: 'quad9' } });
 
-    const note = screen.getByText(/DNS question and connection metadata to Netlify/iu);
+    const note = screen.getByText(/compatibility mode lets Netlify observe the DNS question/iu);
     expect(note).toHaveAttribute('id', 'spf-resolver-note');
     expect(resolver).toHaveAttribute('aria-describedby', 'spf-resolver-note');
   });
@@ -348,7 +348,7 @@ describe('SpfPage', () => {
     expect(evidence.textProjection).toBe('visible-escapes-v1');
   });
 
-  it('retains relay and fixed-upstream provenance in analysis and snapshot exports', async () => {
+  it('retains automatic relay and fixed-upstream provenance in analysis and snapshot exports', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
@@ -356,12 +356,16 @@ describe('SpfPage', () => {
     });
     vi.stubGlobal(
       'fetch',
-      vi.fn<typeof fetch>((input, init) => Promise.resolve(spfAnswer(input, init))),
+      vi.fn<typeof fetch>((input, init) =>
+        typeof input === 'string' && input.startsWith('https://dns.quad9.net/')
+          ? Promise.reject(new TypeError('Quad9 direct transport unavailable.'))
+          : Promise.resolve(spfAnswer(input, init)),
+      ),
     );
     render(<SpfPage />);
 
     fireEvent.change(screen.getByLabelText('Resolver'), {
-      target: { value: 'quad9-relay' },
+      target: { value: 'quad9' },
     });
     fireEvent.change(screen.getByLabelText('Domain'), {
       target: { value: 'spf-relay-evidence.test' },

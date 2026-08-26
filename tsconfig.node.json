@@ -27,6 +27,7 @@
     "playwright.config.ts",
     "netlify/functions/**/*.ts",
     "scripts/**/*.ts",
+    "src/seo.ts",
     "tests/build/**/*.ts",
     "tests/e2e",
     "tests/functions/**/*.ts"

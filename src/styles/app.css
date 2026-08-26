@@ -197,8 +197,12 @@ a {
   display: inline-flex;
 }
 
-.brand-wordmark > span:last-child {
+.brand-wordmark > span:first-child {
   color: var(--coral);
+}
+
+.brand-wordmark > span:last-child {
+  color: var(--accent);
 }
 
 .primary-nav {
@@ -324,6 +328,61 @@ a {
   border-color: var(--coral);
   box-shadow: 1px 1px 0 var(--bg-deep);
   color: var(--coral);
+  transform: translate(2px, 2px);
+}
+
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0.5rem 0.7rem;
+  border: 2px solid var(--line);
+  border-radius: 0.85rem 0.85rem 0.3rem;
+  background: var(--surface);
+  box-shadow: 3px 3px 0 var(--bg-deep);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.82rem;
+  white-space: nowrap;
+  gap: 0.35rem;
+}
+
+.theme-toggle-label {
+  color: var(--muted);
+  font-weight: 650;
+}
+
+.theme-toggle strong {
+  font-family: var(--display-font);
+  font-size: 0.86rem;
+  font-weight: 780;
+}
+
+.theme-toggle-symbol {
+  width: 0.82rem;
+  height: 0.82rem;
+  flex: 0 0 auto;
+  border: 2px solid var(--text);
+  border-radius: 50%;
+  transition:
+    background-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.theme-toggle-symbol-dark {
+  background: var(--sky);
+  box-shadow: inset 0.22rem -0.12rem 0 var(--surface);
+}
+
+.theme-toggle-symbol-light {
+  background: var(--warm);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--warm) 22%, transparent);
+}
+
+.theme-toggle:hover {
+  border-color: var(--coral);
+  box-shadow: 1px 1px 0 var(--bg-deep);
   transform: translate(2px, 2px);
 }
 
@@ -477,6 +536,20 @@ h1 {
   margin-top: 2rem;
   flex-wrap: wrap;
   gap: 0.9rem;
+}
+
+.hero-actions > :is(.primary-button, .quiet-link) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  padding: 0.72rem 1rem;
+  font-family: var(--display-font);
+  font-size: 1rem;
+  font-weight: 760;
+  letter-spacing: -0.01em;
+  line-height: 1;
+  text-align: center;
 }
 
 .hero-actions .quiet-link {
@@ -2709,7 +2782,8 @@ details {
   }
 
   .hero h1 {
-    font-size: clamp(3.8rem, 23vw, 5.4rem);
+    font-size: clamp(3.2rem, 20vw, 5.4rem);
+    text-wrap: balance;
   }
 
   .skein-board {
@@ -2735,17 +2809,31 @@ details {
   }
 
   .primary-nav {
-    gap: 0.05rem;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.15rem;
+  }
+
+  .primary-nav > a,
+  .nav-group {
+    width: 100%;
   }
 
   .primary-nav > a,
   .nav-group > summary {
-    padding-inline: 0.48rem;
+    width: 100%;
+    justify-content: center;
+    padding-inline: 0.4rem;
     font-size: 0.8rem;
   }
 
   .nav-group-links {
     min-width: 12.75rem;
+  }
+
+  .nav-group:nth-of-type(2) .nav-group-links {
+    right: 0;
+    left: auto;
   }
 
   .tool-links {

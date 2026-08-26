@@ -252,8 +252,10 @@ for (const theme of ['light', 'dark'] as const) {
   }) => {
     await page.emulateMedia({ forcedColors: 'active', reducedMotion: 'reduce' });
     await page.goto('/lookup/');
-    const themeControl = page.getByRole('button', { name: /Use (?:light|dark) theme/u });
-    if ((await themeControl.getAttribute('aria-label')) === `Use ${theme} theme`) {
+    const themeControl = page.getByRole('button', {
+      name: /Theme: (?:Light|Dark)/u,
+    });
+    if ((await page.locator('html').getAttribute('data-theme')) !== theme) {
       await themeControl.click();
     }
 

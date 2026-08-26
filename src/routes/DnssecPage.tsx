@@ -6,7 +6,7 @@ import { StatusBadge } from '../components/StatusBadge';
 import { ToolIntro } from '../components/ToolIntro';
 import { validateDnsName } from '../core/dns/names';
 import { parseRecordView } from '../core/dns/records';
-import type { DnsQuestion, ResolverId, ValidatedDnsName } from '../core/dns/types';
+import type { DnsQuestion, ValidatedDnsName } from '../core/dns/types';
 import {
   DNSSEC_APPLICATION_TYPES,
   type DnssecApplicationResult,
@@ -24,16 +24,19 @@ import { digestTypeName, dnssecAlgorithmName } from '../core/dnssec/records';
 import type { RootTrustAnchorMaintenanceState } from '../core/dnssec/trust-anchors';
 import type { SignatureVerification } from '../core/dnssec/types';
 import { DnsQueryRun } from '../core/doh/query-run';
-import { RESOLVERS } from '../core/doh/resolvers';
-import { WireDnsResolver } from '../core/doh/wire-resolver';
+import {
+  createDnsResolver,
+  resolverOptionLabel,
+  resolverSelectionNote,
+  SELECTABLE_RESOLVER_IDS,
+  type SelectableResolverId,
+} from '../core/doh/resolvers';
 import { MAX_SNAPSHOT_CONTENT_OCTETS } from '../core/snapshots/store';
 import {
   escapeTechnicalText,
   projectedTechnicalText,
   stringifyTechnicalEvidence,
 } from '../core/technical-text';
-
-const RESOLVER_IDS = Object.keys(RESOLVERS) as ResolverId[];
 
 const ROOT_NAME: ValidatedDnsName = {
   absolute: '.',
@@ -473,7 +476,7 @@ function StepDetails({ step }: { readonly step: DnssecChainStep }) {
 
 export function DnssecPage() {
   const [input, setInput] = useState('');
-  const [resolverId, setResolverId] = useState<ResolverId>('google');
+  const [resolverId, setResolverId] = useState<SelectableResolverId>('google');
   const [rrsetType, setRrsetType] = useState<'chain' | DnssecApplicationType>('chain');
   const [state, setState] = useState<'idle' | 'loading' | 'complete' | 'cancelled'>('idle');
   const [error, setError] = useState('');
@@ -506,8 +509,7 @@ export function DnssecPage() {
     setError('');
     setReport(null);
     setState('loading');
-    const selectedResolver = RESOLVERS[resolverId];
-    const resolver = new WireDnsResolver(selectedResolver);
+    const resolver = createDnsResolver(resolverId);
     const query: DnssecChainQuery = async (absoluteName, type) => {
       const validated =
         absoluteName === '.' ? ROOT_NAME : validateDnsName(absoluteName.replace(/\.$/u, ''));
@@ -521,7 +523,8 @@ export function DnssecPage() {
     try {
       const next = await validateDnssecChain(parsed.value.absolute, query, {
         ...(rrsetType === 'chain' ? {} : { rrsetType }),
-        resolver: selectedResolver,
+        resolver: resolver.definition,
+        resolverDefinition: () => resolver.definition,
         signal: run.signal,
       });
       if (activeRun.current !== run) return;
@@ -553,7 +556,7 @@ export function DnssecPage() {
     <div className="tool-page">
       <ToolIntro
         eyebrow="Independent DNSSEC validator"
-        title="Build trust from the root to an RRset locally."
+        title="Follow the chain of trust, link by link."
       >
         Validate each DS and DNSKEY RRset from bundled IANA root trust anchors using DNS wire
         evidence and local cryptography, then optionally authenticate a selected positive,
@@ -603,25 +606,25 @@ export function DnssecPage() {
           <select
             id="dnssec-resolver"
             aria-describedby={
-              RESOLVERS[resolverId].selectionNote === undefined
+              resolverSelectionNote(resolverId) === undefined
                 ? undefined
                 : 'dnssec-resolver-note'
             }
             value={resolverId}
             disabled={state === 'loading'}
             onChange={(event) => {
-              setResolverId(event.currentTarget.value as ResolverId);
+              setResolverId(event.currentTarget.value as SelectableResolverId);
               invalidateResult();
             }}
           >
-            {RESOLVER_IDS.map((id) => (
+            {SELECTABLE_RESOLVER_IDS.map((id) => (
               <option key={id} value={id}>
-                {RESOLVERS[id].label}
+                {resolverOptionLabel(id)}
               </option>
             ))}
           </select>
-          {RESOLVERS[resolverId].selectionNote === undefined ? null : (
-            <small id="dnssec-resolver-note">{RESOLVERS[resolverId].selectionNote}</small>
+          {resolverSelectionNote(resolverId) === undefined ? null : (
+            <small id="dnssec-resolver-note">{resolverSelectionNote(resolverId)}</small>
           )}
         </div>
         {error === '' ? null : (

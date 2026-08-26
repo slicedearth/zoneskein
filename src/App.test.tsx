@@ -24,16 +24,16 @@ describe('application shell', () => {
     render(<App />);
 
     expect(screen.getByRole('heading', { level: 1, name: 'Untangle DNS.' })).toBeVisible();
-    expect(screen.getByRole('link', { name: 'Start with a lookup' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Trace a DNS name' })).toHaveAttribute(
       'href',
       '/lookup/',
     );
-    expect(screen.getByRole('link', { name: 'See how it works' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Tour the workbench' })).toHaveAttribute(
       'href',
       '/about/',
     );
     expect(document.querySelector('.brand img')).toHaveAttribute('src', '/logo.svg');
-    expect(screen.getByRole('link', { name: /Inspect DNSSEC/ })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: /Trace DNSSEC trust/ })).toHaveAttribute(
       'href',
       '/dnssec/',
     );
@@ -49,10 +49,19 @@ describe('application shell', () => {
     document.head.append(themeColour);
     render(<App />);
 
-    const control = screen.getByRole('button', { name: 'Use light theme' });
+    const control = screen.getByRole('button', {
+      name: 'Theme: Dark',
+    });
+    expect(control).toHaveTextContent('Theme: Dark');
+    expect(control).toHaveAccessibleDescription('Switch to light theme');
     await user.click(control);
 
-    expect(screen.getByRole('button', { name: 'Use dark theme' })).toBeVisible();
+    expect(
+      screen.getByRole('button', {
+        name: 'Theme: Light',
+      }),
+    ).toHaveTextContent('Theme: Light');
+    expect(control).toHaveAccessibleDescription('Switch to dark theme');
     expect(document.documentElement).toHaveAttribute('data-theme', 'light');
     expect(themeColour).toHaveAttribute('content', '#fff3dc');
     themeColour.remove();
@@ -90,12 +99,20 @@ describe('application shell', () => {
 
     await user.click(inspectSummary);
     expect(inspectSummary.closest('details')).toHaveAttribute('open');
-    await user.click(screen.getByRole('button', { name: /Use (?:light|dark) theme/u }));
+    await user.click(
+      screen.getByRole('button', {
+        name: /Theme: (?:Light|Dark)/u,
+      }),
+    );
     expect(inspectSummary.closest('details')).not.toHaveAttribute('open');
 
     await user.click(prepareSummary);
     expect(prepareSummary.closest('details')).toHaveAttribute('open');
     expect(inspectSummary.closest('details')).not.toHaveAttribute('open');
+    expect(within(navigation).getByRole('link', { name: 'Zone Lint' })).toHaveAttribute(
+      'href',
+      '/zone-lint/',
+    );
 
     window.history.pushState(null, '', '/dmarc/');
     act(() => {
@@ -139,7 +156,9 @@ describe('application shell', () => {
     window.history.replaceState(null, '', '/privacy/');
     render(<App />);
 
-    expect(await screen.findByRole('heading', { level: 1, name: 'Privacy' })).toBeVisible();
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Privacy' }, { timeout: 5_000 }),
+    ).toBeVisible();
     expect(screen.getByRole('link', { name: 'Download raw PRIVACY.md' })).toHaveAttribute(
       'href',
       '/PRIVACY.md',
@@ -156,7 +175,10 @@ describe('application shell', () => {
     });
 
     expect(
-      await screen.findByRole('heading', { level: 1, name: 'A workbench, not a scanner.' }),
+      await screen.findByRole('heading', {
+        level: 1,
+        name: 'A workbench for the thread in front of you.',
+      }),
     ).toBeVisible();
     expect(document.querySelector('#main-content')).toHaveFocus();
   });
@@ -183,7 +205,7 @@ describe('application shell', () => {
     expect(
       await screen.findByRole('heading', {
         level: 1,
-        name: 'Carry a DNS change without a backend.',
+        name: 'Keep the whole DNS change on one thread.',
       }),
     ).toBeVisible();
     expect(window.location.pathname).toBe('/workspace/');
@@ -225,7 +247,7 @@ describe('application shell', () => {
     expect(
       await screen.findByRole('heading', {
         level: 1,
-        name: 'Compare records and plan a bounded rollout.',
+        name: 'Rehearse the change before DNS feels it.',
       }),
     ).toBeVisible();
     expect(screen.getByLabelText('Origin for relative names')).toHaveValue('observed.example.');
@@ -283,7 +305,7 @@ describe('application shell', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Open in Change Lab' }));
     expect(
       await screen.findByRole('heading', {
-        name: 'Compare records and plan a bounded rollout.',
+        name: 'Rehearse the change before DNS feels it.',
       }),
     ).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Return to Change Workspace' }));

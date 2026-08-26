@@ -139,29 +139,34 @@ describe('DNS Change Lab', () => {
     ]);
   });
 
-  it('captures the explicit Netlify relay path as inert Change Workspace evidence', async () => {
+  it('captures the automatic compatibility path as inert Change Workspace evidence', async () => {
     const onCreateWorkspace = vi.fn<(workspace: ChangeWorkspace) => void>();
-    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
-      dnsResponse(
-        [
-          {
-            class: 'IN',
-            data: '192.0.2.45',
-            name: 'relay-workspace.example.',
-            ttl: 300,
-            type: 'A',
-          },
-        ],
-        'relay-workspace.example.',
-      ),
-    );
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(new TypeError('Quad9 direct transport unavailable.'))
+      .mockResolvedValueOnce(
+        dnsResponse(
+          [
+            {
+              class: 'IN',
+              data: '192.0.2.45',
+              name: 'relay-workspace.example.',
+              ttl: 300,
+              type: 'A',
+            },
+          ],
+          'relay-workspace.example.',
+        ),
+      );
     vi.stubGlobal('fetch', fetchMock);
     render(<DiffPage onCreateWorkspace={onCreateWorkspace} />);
     selectOnlyA('relay-workspace.example');
     fireEvent.change(screen.getByLabelText('Resolver'), {
-      target: { value: 'quad9-relay' },
+      target: { value: 'quad9' },
     });
-    const resolverNote = screen.getByText(/DNS question and connection metadata to Netlify/iu);
+    const resolverNote = screen.getByText(
+      /compatibility mode lets Netlify observe the DNS question/iu,
+    );
     expect(resolverNote).toHaveAttribute('id', 'diff-resolver-note');
     expect(screen.getByLabelText('Resolver')).toHaveAttribute(
       'aria-describedby',
@@ -174,8 +179,8 @@ describe('DNS Change Lab', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Compare snapshots' }));
 
     expect(await screen.findByText('Comparison found 0 classified changes.')).toBeVisible();
-    expect(fetchMock).toHaveBeenCalledOnce();
-    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/doh/quad9');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/doh/quad9');
     fireEvent.click(screen.getByRole('button', { name: 'Open in Change Workspace' }));
     expect(onCreateWorkspace.mock.calls[0]?.[0].evidence.runs[0]?.resolvers[0]).toMatchObject({
       endpoint: '/api/doh/quad9',

@@ -104,26 +104,26 @@ describe('DNS record explorer', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('offers an explicit Netlify relay choice with its privacy disclosure', async () => {
+  it('offers one automatic Quad9 choice with its fallback privacy disclosure', async () => {
     const fetchMock = vi.fn<typeof fetch>();
     vi.stubGlobal('fetch', fetchMock);
     const user = userEvent.setup();
     render(<LookupPage />);
 
     const resolver = screen.getByLabelText('Resolver');
-    expect(within(resolver).getAllByRole('option')).toHaveLength(4);
-    expect(within(resolver).getByRole('option', { name: 'Quad9 (direct)' })).toHaveValue(
+    expect(within(resolver).getAllByRole('option')).toHaveLength(3);
+    expect(within(resolver).getByRole('option', { name: 'Quad9 (automatic)' })).toHaveValue(
       'quad9',
     );
     expect(
-      within(resolver).getByRole('option', { name: 'Quad9 (compatibility mode)' }),
-    ).toHaveValue('quad9-relay');
+      within(resolver).queryByRole('option', { name: 'Quad9 (compatibility mode)' }),
+    ).not.toBeInTheDocument();
 
-    await user.selectOptions(resolver, 'quad9-relay');
+    await user.selectOptions(resolver, 'quad9');
     expect(resolver).toHaveAccessibleDescription(
-      /sends the DNS question and connection metadata to Netlify before the fixed Quad9 upstream/iu,
+      /switches once to the same-origin compatibility relay/iu,
     );
-    expect(screen.getByText(/never selected as a silent fallback/iu)).toBeVisible();
+    expect(screen.getByText(/lets Netlify observe the DNS question/iu)).toBeVisible();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -287,17 +287,17 @@ describe('DNS record explorer', () => {
     expect(evidence.run.resolvers.map((resolver) => resolver.id)).toEqual([
       'cloudflare',
       'google',
-      'quad9',
+      'quad9-relay',
     ]);
     expect(evidence.observations).toHaveLength(3);
     expect(
       evidence.observations.filter((observation) => observation.outcome === 'error'),
     ).toHaveLength(2);
     expect(
-      evidence.observations.find((observation) => observation.resolver.id === 'quad9'),
+      evidence.observations.find((observation) => observation.resolver.id === 'quad9-relay'),
     ).toMatchObject({
       error: { code: 'transport-error' },
-      resolver: { endpoint: 'https://dns.quad9.net/dns-query' },
+      resolver: { endpoint: '/api/doh/quad9' },
     });
 
     fireEvent.click(screen.getByRole('button', { name: 'Copy Markdown evidence' }));
@@ -305,16 +305,19 @@ describe('DNS record explorer', () => {
     const markdown = String(writeText.mock.calls[1]?.[0]);
     expect(markdown).toContain('comparison-lookup.example');
     expect(markdown).toContain('### Cloudflare 1.1.1.1 — transport-error');
-    expect(markdown).toContain('### Quad9 (direct) — transport-error');
+    expect(markdown).toContain('### Quad9 (compatibility mode) — transport-error');
     expect(markdown).toContain('end-to-end HTTP/2 or HTTP/3');
   });
 
-  it('replaces direct Quad9 with the selected relay path and exports that immutable provenance', async () => {
+  it('automatically falls back to the relay and exports that immutable provenance', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     const fetchMock = vi.fn<typeof fetch>((target) => {
       if (typeof target !== 'string') throw new Error('Expected a string resolver URL.');
       if (target.startsWith('https://cloudflare-dns.com/')) {
         return Promise.reject(new TypeError('Cloudflare transport unavailable.'));
+      }
+      if (target.startsWith('https://dns.quad9.net/')) {
+        return Promise.reject(new TypeError('Quad9 direct transport unavailable.'));
       }
       return Promise.resolve(answerResponse('relay-comparison.example.'));
     });
@@ -333,12 +336,9 @@ describe('DNS record explorer', () => {
     await user.click(
       screen.getByRole('checkbox', { name: 'Compare Cloudflare, Google and Quad9' }),
     );
-    const quad9Path = screen.getByLabelText('Quad9 comparison path');
-    expect(quad9Path).toHaveValue('quad9');
-    await user.selectOptions(quad9Path, 'quad9-relay');
-    expect(quad9Path).toHaveAccessibleDescription(
-      /sends the DNS question and connection metadata to Netlify/iu,
-    );
+    expect(
+      screen.getByText(/switches once to the same-origin compatibility relay/iu),
+    ).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'Inspect records' }));
 
     expect(
@@ -347,7 +347,7 @@ describe('DNS record explorer', () => {
         name: 'Lookup results for relay-comparison.example',
       }),
     ).toBeVisible();
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
     const targets = fetchMock.mock.calls.map(([target]) => {
       if (typeof target !== 'string') throw new Error('Expected a string resolver URL.');
       return target;
@@ -355,9 +355,9 @@ describe('DNS record explorer', () => {
     expect(targets).toEqual([
       'https://cloudflare-dns.com/dns-query',
       expect.stringMatching(/^https:\/\/dns\.google\/dns-query\?dns=/u),
+      expect.stringMatching(/^https:\/\/dns\.quad9\.net\/dns-query\?dns=/u),
       '/api/doh/quad9',
     ]);
-    expect(targets.some((target) => target.startsWith('https://dns.quad9.net/'))).toBe(false);
     expect(
       screen.getByLabelText(/Quad9 \(compatibility mode\), NOERROR, 1 answer/iu),
     ).toBeVisible();
@@ -413,17 +413,22 @@ describe('DNS record explorer', () => {
       '- Quad9 (compatibility mode): Netlify compatibility relay → Quad9 (https://dns.quad9.net/dns-query)',
     );
 
-    await user.selectOptions(quad9Path, 'quad9');
+    await user.click(
+      screen.getByRole('checkbox', { name: 'Compare Cloudflare, Google and Quad9' }),
+    );
     expect(
       screen.queryByRole('heading', { name: /Lookup results for/iu }),
     ).not.toBeInTheDocument();
     expect(screen.getByRole('status', { name: 'DNS lookup status' })).toBeEmptyDOMElement();
   });
 
-  it('reports a relay HTTP 429 without silently retrying another Quad9 path', async () => {
+  it('reports a compatibility-relay HTTP 429 without another fallback', async () => {
     const fetchMock = vi
       .fn<typeof fetch>()
-      .mockResolvedValue(new Response('', { headers: { 'Retry-After': '9' }, status: 429 }));
+      .mockRejectedValueOnce(new TypeError('Quad9 direct transport unavailable.'))
+      .mockResolvedValueOnce(
+        new Response('', { headers: { 'Retry-After': '9' }, status: 429 }),
+      );
     vi.stubGlobal('fetch', fetchMock);
     const user = userEvent.setup();
     render(<LookupPage />);
@@ -431,14 +436,16 @@ describe('DNS record explorer', () => {
     for (const type of ['AAAA', 'MX', 'TXT']) {
       await user.click(screen.getByRole('checkbox', { name: type }));
     }
-    await user.selectOptions(screen.getByLabelText('Resolver'), 'quad9-relay');
+    await user.selectOptions(screen.getByLabelText('Resolver'), 'quad9');
     await user.type(screen.getByLabelText('DNS name'), 'relay-limited.example');
     await user.click(screen.getByRole('button', { name: 'Inspect records' }));
 
     expect(await screen.findByText('rate-limited')).toBeVisible();
-    expect(screen.getByText('The resolver rate-limited this browser.')).toBeVisible();
-    expect(fetchMock).toHaveBeenCalledOnce();
-    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/doh/quad9');
+    expect(
+      screen.getByText(/Automatic compatibility mode also failed: The resolver rate-limited/iu),
+    ).toBeVisible();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/doh/quad9');
   });
 
   it('escapes HTML-like DNS text in Markdown evidence', async () => {

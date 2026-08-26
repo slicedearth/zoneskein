@@ -14,8 +14,9 @@ ZoneSkein is static-first. It produces a static `dist` directory with:
 The deployment also contains exactly one Netlify Function source,
 `netlify/functions/quad9-doh.ts`. Its exported configuration exposes the fixed
 same-origin path `/api/doh/quad9` and applies Netlify's 120-request-per-minute
-rate limit aggregated by source IP address and site domain. It is an explicit,
-opt-in **Quad9 (compatibility mode)** path only; **Quad9 (direct)** remains the default Quad9 path.
+rate limit aggregated by source IP address and site domain. The single Quad9
+option tries its first question directly and uses **Quad9 (compatibility mode)**
+automatically only after a qualifying transport, timeout, or HTTP failure.
 There are no Edge Functions or other server-side application components.
 
 The committed `netlify.toml` uses:
@@ -94,7 +95,7 @@ commit has landed on `main`.
 6. Open `/`, `/lookup/`, `/dnssec/`, `/spf/`, `/zone-lint/`, `/studio/`, `/diff/`, `/workspace/`, `/dmarc/`, `/dkim/`, `/caa/`, `/snapshots/`, and `/about/` directly.
 7. Refresh each route and confirm the application loads.
 8. Run manual direct checks against Google, Cloudflare, and Quad9 from a supported browser.
-9. Explicitly enable Quad9 compatibility mode and confirm a valid DNS wire POST to `/api/doh/quad9` succeeds while invalid methods, media types, query strings, oversized or malformed bodies, and unsupported question shapes are rejected. Confirm responses declare `Cache-Control: no-store`.
+9. Exercise automatic Quad9 fallback from a path that cannot complete the direct request, and confirm the result identifies **Quad9 (compatibility mode)**. Confirm a valid DNS wire POST to `/api/doh/quad9` succeeds while invalid methods, media types, query strings, oversized or malformed bodies, and unsupported question shapes are rejected. Confirm responses declare `Cache-Control: no-store`.
 10. Inspect the deploy log's post-processing stage and confirm Netlify accepted the code-based rate-limit rule. Then confirm the deployed rule aggregates by source IP address and site domain, permits no more than 120 requests in 60 seconds, and does not expose a caller-selected upstream. Netlify does not necessarily fail a deploy when a code-based rule is invalid, so a successful build alone is insufficient.
 
 ## Security headers
@@ -115,11 +116,20 @@ the committed HSTS `includeSubDomains` policy causes supporting browsers to
 require HTTPS for them after the first secure visit. The project does not claim
 preload registration.
 
-## Custom domains
+## Production domain
 
-Configure the custom domain in Netlify, follow its DNS and certificate instructions, and wait for HTTPS provisioning before advertising the site. ZoneSkein itself does not require a specific hostname.
+The production origin is `https://www.zoneskein.com`. Configure it as follows:
 
-If the site hostname is moved, test URL-fragment report links, direct-route fallback, favicon loading, direct resolver CSP connections, same-origin relay requests, and immutable asset caching. Confirm that the relay rate limit still aggregates by the intended Netlify site domain.
+1. Add both `zoneskein.com` and `www.zoneskein.com` to the Netlify site before changing DNS.
+2. Set `www.zoneskein.com` as the primary domain in Netlify. Netlify then redirects the apex hostname to the canonical `www` hostname.
+3. In the authoritative Cloudflare zone, point `www` to the Netlify target shown in the site’s domain settings and keep the record **DNS only**. Configure the apex with the external-DNS value shown by Netlify and keep it **DNS only** as well.
+4. Remove stale or conflicting A, AAAA, and CNAME records. Do not add a second apex-to-`www` redirect in Cloudflare.
+5. Wait for Netlify to provision HTTPS for both hostnames, then enable Cloudflare DNSSEC and publish the supplied DS record through the registrar.
+6. If CAA records restrict certificate authorities, use the current value shown by Netlify for the site rather than a copied account identifier.
+
+DNS-only records make Cloudflare authoritative for hostname lookups without placing its reverse proxy in the HTTP path. Netlify therefore remains responsible for TLS, canonical redirects, security headers, static caching, function routing, and source-IP rate-limit aggregation. Cloudflare proxying is outside the verified deployment boundary because it would add another TLS, redirect, caching, header, privacy, and client-address layer.
+
+After configuration, verify both hostnames, the apex-to-`www` redirect, `/robots.txt`, `/sitemap.xml`, each route’s `https://www.zoneskein.com/.../` canonical URL, the favicon and social image, direct resolver connections, the same-origin relay, and immutable hashed assets.
 
 ## Costs and external services
 

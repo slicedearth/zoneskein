@@ -101,14 +101,14 @@ describe('CaaPage', () => {
     expect(screen.getByText(/safety budget was exhausted before b\.c\.test/iu)).toBeVisible();
   });
 
-  it('discloses the Netlify intermediary when the Quad9 relay is selected', async () => {
+  it('discloses the automatic Quad9 compatibility boundary', async () => {
     const user = userEvent.setup();
     render(<CaaPage />);
 
     const resolver = screen.getByLabelText('Resolver');
-    await user.selectOptions(resolver, 'quad9-relay');
+    await user.selectOptions(resolver, 'quad9');
 
-    const note = screen.getByText(/DNS question and connection metadata to Netlify/iu);
+    const note = screen.getByText(/compatibility mode lets Netlify observe the DNS question/iu);
     expect(note).toHaveAttribute('id', 'caa-resolver-note');
     expect(resolver).toHaveAttribute('aria-describedby', 'caa-resolver-note');
   });

@@ -100,6 +100,7 @@ export interface DnssecChainOptions {
   readonly matchTrustAnchors?: typeof matchRootTrustAnchors;
   readonly now?: number;
   readonly resolver?: ResolverDefinition;
+  readonly resolverDefinition?: () => ResolverDefinition;
   readonly rrsetType?: DnssecApplicationType;
   readonly signal?: AbortSignal;
 }
@@ -233,14 +234,15 @@ export async function validateDnssecChain(
   const evidence: DnssecChainEvidence[] = [];
   const steps: DnssecChainStep[] = [];
   const authenticatedGroups: (readonly SignatureVerification[])[] = [];
-  const selectedResolverEvidence =
-    options.resolver === undefined
-      ? {}
-      : {
-          resolver: options.resolver.label,
-          resolverEndpoint: options.resolver.endpoint,
-          resolverId: options.resolver.id,
-        };
+  const selectedResolverEvidence = () => {
+    const resolver = options.resolverDefinition?.() ?? options.resolver;
+    if (resolver === undefined) return {};
+    return {
+      resolver: resolver.label,
+      resolverEndpoint: resolver.endpoint,
+      resolverId: resolver.id,
+    };
+  };
   let rootAnchorMatches: readonly RootTrustAnchorMatch[] = [];
   let application: DnssecApplicationResult | undefined;
   let questionsUsed = 0;
@@ -251,7 +253,7 @@ export async function validateDnssecChain(
       evidence.push({
         error: `The DNSSEC run reached its ${String(MAX_CHAIN_QUESTIONS)}-question bound.`,
         name,
-        ...selectedResolverEvidence,
+        ...selectedResolverEvidence(),
         type,
       });
       return undefined;
@@ -290,7 +292,7 @@ export async function validateDnssecChain(
       evidence.push({
         error: errorMessage(cause),
         name,
-        ...selectedResolverEvidence,
+        ...selectedResolverEvidence(),
         type,
       });
       return undefined;

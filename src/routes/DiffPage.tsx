@@ -29,8 +29,14 @@ import {
   type ResolverId,
 } from '../core/dns/types';
 import { DnsQueryRun } from '../core/doh/query-run';
-import { RESOLVERS } from '../core/doh/resolvers';
-import { WireDnsResolver } from '../core/doh/wire-resolver';
+import {
+  createDnsResolver,
+  RESOLVERS,
+  resolverOptionLabel,
+  resolverSelectionNote,
+  SELECTABLE_RESOLVER_IDS,
+  type SelectableResolverId,
+} from '../core/doh/resolvers';
 import {
   escapeTechnicalText,
   markdownLiteral,
@@ -51,7 +57,6 @@ const CURRENT_TYPES = [
   'SRV',
 ] as const satisfies readonly DnsRecordType[];
 const DEFAULT_CURRENT_TYPES = new Set<DnsRecordType>(['A', 'AAAA', 'MX', 'TXT', 'CAA']);
-const RESOLVER_IDS = Object.keys(RESOLVERS) as ResolverId[];
 
 interface DisplayReport {
   readonly after: ZoneDocument;
@@ -350,7 +355,7 @@ export function DiffPage({ initialInput, onCreateWorkspace }: DiffPageProps = {}
     suppliedOrigin(initialInput?.intendedOrigin, initialInput?.origin),
   );
   const [plannedAt, setPlannedAt] = useState('');
-  const [resolverId, setResolverId] = useState<ResolverId>('google');
+  const [resolverId, setResolverId] = useState<SelectableResolverId>('google');
   const [types, setTypes] = useState(DEFAULT_CURRENT_TYPES);
   const [state, setState] = useState<
     'idle' | 'loading' | 'complete' | 'cancelled' | 'incomplete'
@@ -491,7 +496,7 @@ export function DiffPage({ initialInput, onCreateWorkspace }: DiffPageProps = {}
     const run = new DnsQueryRun();
     activeRun.current = run;
     setState('loading');
-    const resolver = new WireDnsResolver(RESOLVERS[resolverId]);
+    const resolver = createDnsResolver(resolverId);
     const startedAt = new Date().toISOString();
     const outcomes = await Promise.all(
       selected.map(async (type) => {
@@ -657,7 +662,7 @@ export function DiffPage({ initialInput, onCreateWorkspace }: DiffPageProps = {}
       dependencySnapshot,
       evidence: currentEvidence(
         outcomes,
-        resolverId,
+        resolver.definition.id,
         parsed.value.absolute,
         startedAt,
         completedAt,
@@ -781,7 +786,7 @@ export function DiffPage({ initialInput, onCreateWorkspace }: DiffPageProps = {}
 
   return (
     <div className="tool-page">
-      <ToolIntro eyebrow="DNS Change Lab" title="Compare records and plan a bounded rollout.">
+      <ToolIntro eyebrow="DNS Change Lab" title="Rehearse the change before DNS feels it.">
         Compare unordered RRsets, TTLs, priorities, values, and presentation. Use pasted
         snapshots or observe selected current records, then review preflight risk, timing,
         rollback, and staged rollout guidance for a proposed snippet.
@@ -910,24 +915,24 @@ export function DiffPage({ initialInput, onCreateWorkspace }: DiffPageProps = {}
               <select
                 id="diff-resolver"
                 aria-describedby={
-                  RESOLVERS[resolverId].selectionNote === undefined
+                  resolverSelectionNote(resolverId) === undefined
                     ? undefined
                     : 'diff-resolver-note'
                 }
                 value={resolverId}
                 onChange={(event) => {
                   invalidateResult();
-                  setResolverId(event.currentTarget.value as ResolverId);
+                  setResolverId(event.currentTarget.value as SelectableResolverId);
                 }}
               >
-                {RESOLVER_IDS.map((id) => (
+                {SELECTABLE_RESOLVER_IDS.map((id) => (
                   <option value={id} key={id}>
-                    {RESOLVERS[id].label}
+                    {resolverOptionLabel(id)}
                   </option>
                 ))}
               </select>
-              {RESOLVERS[resolverId].selectionNote === undefined ? null : (
-                <small id="diff-resolver-note">{RESOLVERS[resolverId].selectionNote}</small>
+              {resolverSelectionNote(resolverId) === undefined ? null : (
+                <small id="diff-resolver-note">{resolverSelectionNote(resolverId)}</small>
               )}
             </div>
             <fieldset className="record-picker">

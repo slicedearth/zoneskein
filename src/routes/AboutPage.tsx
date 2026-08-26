@@ -4,7 +4,7 @@ import { ToolIntro } from '../components/ToolIntro';
 const boundaries = [
   {
     title: 'Static-first, bounded relay',
-    text: 'DNS questions travel directly to the selected resolver by default. The only server-side component is an explicitly selected, tightly bounded Quad9 compatibility relay.',
+    text: 'DNS questions travel directly to the selected resolver by default. Quad9 can switch automatically to the only server-side component: a tightly bounded compatibility relay.',
   },
   {
     title: 'Evidence, not omniscience',
@@ -23,10 +23,10 @@ const boundaries = [
 export function AboutPage() {
   return (
     <div className="tool-page about-page">
-      <ToolIntro eyebrow="About ZoneSkein" title="A workbench, not a scanner.">
-        ZoneSkein helps domain owners and operators inspect, author, and compare the DNS records
-        they already intend to work with. It does not discover subdomains, scan address space,
-        publish DNS automatically, or access provider accounts.
+      <ToolIntro eyebrow="About ZoneSkein" title="A workbench for the thread in front of you.">
+        ZoneSkein helps domain owners and operators follow, shape, and compare the DNS records
+        they already intend to work with. It stays firmly in bounds: no subdomain discovery,
+        address-space scanning, automatic publishing, or provider-account access.
       </ToolIntro>
 
       <section className="about-boundaries" aria-label="Design boundaries">
@@ -40,7 +40,7 @@ export function AboutPage() {
 
       <section className="prose-section" aria-labelledby="capabilities-title">
         <p className="eyebrow">Capabilities</p>
-        <h2 id="capabilities-title">One protocol core, several focused tools</h2>
+        <h2 id="capabilities-title">One protocol core, plenty of useful threads</h2>
         <div className="capability-list">
           <div>
             <strong>DNS lookup</strong>
@@ -111,23 +111,24 @@ export function AboutPage() {
               connection information; that resolver’s privacy policy applies. ZoneSkein uses
               fixed allowlisted endpoints for Google Public DNS, Cloudflare 1.1.1.1, and Quad9.
               Resolver URLs cannot be supplied by a user. Cloudflare uses a wire-format POST;
-              Google and Quad9 (direct) use standard base64url wire-format GET so their
+              Google and the direct Quad9 path use standard base64url wire-format GET so their
               endpoints work from an ordinary browser. Base64url is readable encoding, not
               encryption; the resolver and local browser tooling can observe the encoded URL.
-              Quad9 (direct) remains the default Quad9 path. If you explicitly select Quad9
-              (compatibility mode), the browser sends a bounded wire-format POST to the
-              same-origin `/api/doh/quad9` endpoint, and Netlify forwards it only to Quad9 over
-              HTTP/2. Netlify sees your connection in compatibility mode, while Quad9 sees the
-              relay connection; both receive the question.
+              Quad9 begins directly. If the first Quad9 question in a run has a qualifying
+              transport, timeout, or HTTP failure, the run switches once to a bounded
+              wire-format POST through the same-origin `/api/doh/quad9` endpoint. Netlify then
+              forwards it only to Quad9 over HTTP/2. Netlify sees your connection in
+              compatibility mode, while Quad9 sees the relay connection; both receive the
+              question. Results and exports identify the path used.
             </p>
           </div>
           <div>
             <h3>Page requests</h3>
             <p>
               Netlify receives ordinary page and asset requests and may retain connection logs
-              under its own policies. In explicitly selected Quad9 relay mode it also receives
-              the DNS wire question and ordinary connection metadata. The fixed relay uses a
-              POST body rather than a DNS-name-bearing path or query string, does not add
+              under its own policies. When automatic Quad9 compatibility mode is used it also
+              receives the DNS wire question and ordinary connection metadata. The fixed relay
+              uses a POST body rather than a DNS-name-bearing path or query string, does not add
               cookies or credentials, and does not log or server-cache the question in
               application code.
             </p>
@@ -172,7 +173,7 @@ export function AboutPage() {
         <ul className="guidance-list">
           <li>
             Client-side rate limiting protects normal users and public resolvers from accidental
-            bursts, but a modified client can bypass it. The optional Quad9 relay separately
+            bursts, but a modified client can bypass it. Quad9 compatibility mode separately
             enforces strict request and response bounds and 120 requests per minute per source
             IP address and site domain.
           </li>

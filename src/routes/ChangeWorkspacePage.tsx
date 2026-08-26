@@ -449,7 +449,7 @@ export function ChangeWorkspacePage({
   if (workspace === null || draft === null) {
     return (
       <div className="tool-page">
-        <ToolIntro eyebrow="Local Change Workspace" title="Build a portable DNS change file.">
+        <ToolIntro eyebrow="Local Change Workspace" title="Start a portable DNS change thread.">
           Workspaces remain local unless you explicitly export one.
         </ToolIntro>
         <p className="form-error" role="alert">
@@ -468,7 +468,10 @@ export function ChangeWorkspacePage({
 
   return (
     <div className="tool-page">
-      <ToolIntro eyebrow="Local Change Workspace" title="Carry a DNS change without a backend.">
+      <ToolIntro
+        eyebrow="Local Change Workspace"
+        title="Keep the whole DNS change on one thread."
+      >
         Create, edit, analyse, import, and export one bounded workspace in memory. Nothing is
         saved to browser storage, placed in a URL fragment, uploaded, published, or queried
         automatically.

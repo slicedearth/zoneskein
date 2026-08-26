@@ -12,6 +12,8 @@ import { join, relative, resolve, sep } from 'node:path';
 import react from '@vitejs/plugin-react';
 import { defineConfig, type Plugin } from 'vite';
 
+import { renderSeoHead, replaceSeoHead, SEO_ROUTES, seoRoute } from './src/seo.ts';
+
 const repositoryRoot = realpathSync(import.meta.dirname);
 
 function publicDocumentSource(fileName: string): string {
@@ -69,6 +71,45 @@ function publicDocuments(): Plugin {
   };
 }
 
+function routeMetadataPages(): Plugin {
+  const marker = '<!-- zoneskein:seo -->';
+  return {
+    generateBundle: {
+      handler(_options, bundle) {
+        const entry = bundle['index.html'];
+        if (entry?.type !== 'asset') {
+          throw new Error('The Vite build did not produce an index.html asset.');
+        }
+        const source =
+          typeof entry.source === 'string'
+            ? entry.source
+            : new TextDecoder().decode(entry.source);
+        for (const route of SEO_ROUTES) {
+          if (route.path === '') continue;
+          this.emitFile({
+            fileName: `${route.path}/index.html`,
+            source: replaceSeoHead(source, route),
+            type: 'asset',
+          });
+        }
+      },
+      order: 'post',
+    },
+    name: 'zoneskein-route-metadata-pages',
+    transformIndexHtml: {
+      handler(html, context) {
+        const matches = html.split(marker).length - 1;
+        if (matches !== 1) {
+          throw new Error('Expected exactly one ZoneSkein SEO marker.');
+        }
+        const route = seoRoute(context.path) ?? SEO_ROUTES[0];
+        return html.replace(marker, renderSeoHead(route));
+      },
+      order: 'pre',
+    },
+  };
+}
+
 function developmentStyleCompatibility(): Plugin {
   const metaPolicy = /\s*<meta\s+http-equiv="Content-Security-Policy"\s+content="[^"]+"\s*\/>/u;
   return {
@@ -90,5 +131,5 @@ export default defineConfig({
     outDir: 'dist',
     sourcemap: false,
   },
-  plugins: [react(), developmentStyleCompatibility(), publicDocuments()],
+  plugins: [routeMetadataPages(), react(), developmentStyleCompatibility(), publicDocuments()],
 });

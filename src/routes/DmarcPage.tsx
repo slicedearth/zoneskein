@@ -21,10 +21,16 @@ import {
 import type { DmarcDestination, DmarcPolicy } from '../core/dmarc/types';
 import { validateDnsName } from '../core/dns/names';
 import { queryPolicyRecords } from '../core/dns/policy-query';
-import type { ResolverId } from '../core/dns/types';
+import type { DnsResolver, ResolverId } from '../core/dns/types';
 import { DnsQueryRun } from '../core/doh/query-run';
-import { RESOLVERS } from '../core/doh/resolvers';
-import { WireDnsResolver } from '../core/doh/wire-resolver';
+import {
+  createDnsResolver,
+  RESOLVERS,
+  resolverOptionLabel,
+  resolverSelectionNote,
+  SELECTABLE_RESOLVER_IDS,
+  type SelectableResolverId,
+} from '../core/doh/resolvers';
 import {
   decodeMailAuthenticationEvidence,
   encodeMailAuthenticationEvidence,
@@ -38,7 +44,6 @@ import {
   utf8Base64Evidence,
 } from '../core/technical-text';
 
-const RESOLVER_IDS = Object.keys(RESOLVERS) as ResolverId[];
 const SPF_RESULTS = [
   'none',
   'neutral',
@@ -211,8 +216,7 @@ function isLookupSuccess(responseCode: string): boolean {
   return responseCode === 'NOERROR' || responseCode === 'NXDOMAIN';
 }
 
-function createLookup(resolverId: ResolverId, run: DnsQueryRun): DmarcTxtLookup {
-  const resolver = new WireDnsResolver(RESOLVERS[resolverId]);
+function createLookup(resolver: DnsResolver, run: DnsQueryRun): DmarcTxtLookup {
   return async (name): Promise<DmarcTxtLookupResult> => {
     const result = await queryPolicyRecords(resolver, run, name, 'TXT');
     if (run.cancelled)
@@ -620,7 +624,7 @@ export function DmarcPage({ initialEvidence, onEvidenceChange }: DmarcPageProps 
   const [evidenceAcknowledged, setEvidenceAcknowledged] = useState(false);
   const [evidenceInput, setEvidenceInput] = useState('');
   const [evidenceError, setEvidenceError] = useState('');
-  const [resolverId, setResolverId] = useState<ResolverId>('google');
+  const [resolverId, setResolverId] = useState<SelectableResolverId>('google');
   const [state, setState] = useState<'idle' | 'loading' | 'complete' | 'cancelled'>('idle');
   const [error, setError] = useState('');
   const [policyReport, setPolicyReport] = useState<PolicyReport | null>(null);
@@ -638,7 +642,7 @@ export function DmarcPage({ initialEvidence, onEvidenceChange }: DmarcPageProps 
     lookup: DmarcTxtLookup,
     run: DnsQueryRun,
     capturedAt: string,
-    selectedResolverId: ResolverId,
+    resolver: DnsResolver,
   ): Promise<void> {
     const stopped = () => activeRun.current !== run || run.cancelled;
     const session = new DmarcDiscoverySession(lookup, 80, () => run.cancelled);
@@ -672,7 +676,7 @@ export function DmarcPage({ initialEvidence, onEvidenceChange }: DmarcPageProps 
       discovery,
       ...(policy === undefined ? {} : { policy }),
       reporting,
-      resolverId: selectedResolverId,
+      resolverId: resolver.definition.id,
     });
   }
 
@@ -708,10 +712,10 @@ export function DmarcPage({ initialEvidence, onEvidenceChange }: DmarcPageProps 
     setAlignmentReport(null);
     setState('loading');
     const capturedAt = new Date().toISOString();
-    const selectedResolverId = resolverId;
-    const lookup = createLookup(selectedResolverId, run);
+    const resolver = createDnsResolver(resolverId);
+    const lookup = createLookup(resolver, run);
     try {
-      if (mode === 'policy') await inspectPolicy(lookup, run, capturedAt, selectedResolverId);
+      if (mode === 'policy') await inspectPolicy(lookup, run, capturedAt, resolver);
       else {
         const dkimEvidence = dkim.domains.map((dkimDomain) => {
           const transferred = transferredEvidence?.dkim.find(
@@ -764,7 +768,7 @@ export function DmarcPage({ initialEvidence, onEvidenceChange }: DmarcPageProps 
             capturedAt,
             evidenceAcknowledged,
             ...(transferredEvidence === null ? {} : { priorEvidence: transferredEvidence }),
-            resolverId: selectedResolverId,
+            resolverId: resolver.definition.id,
           });
       }
       if (activeRun.current === run) setState(run.cancelled ? 'cancelled' : 'complete');
@@ -848,7 +852,7 @@ export function DmarcPage({ initialEvidence, onEvidenceChange }: DmarcPageProps 
     <div className="tool-page">
       <ToolIntro
         eyebrow="DMARC policy workbench"
-        title="Find the policy and compare trusted sender domains."
+        title="Follow policy, reporting, and alignment."
       >
         Follow the bounded DMARC DNS Tree Walk, inspect policy and reporting boundaries, or
         check whether earlier passing DKIM or SPF results align, without uploading a message.
@@ -1106,7 +1110,7 @@ export function DmarcPage({ initialEvidence, onEvidenceChange }: DmarcPageProps 
           <select
             id="dmarc-resolver"
             aria-describedby={
-              RESOLVERS[resolverId].selectionNote === undefined
+              resolverSelectionNote(resolverId) === undefined
                 ? undefined
                 : 'dmarc-resolver-note'
             }
@@ -1114,17 +1118,17 @@ export function DmarcPage({ initialEvidence, onEvidenceChange }: DmarcPageProps 
             disabled={state === 'loading'}
             onChange={(event) => {
               resetResults();
-              setResolverId(event.currentTarget.value as ResolverId);
+              setResolverId(event.currentTarget.value as SelectableResolverId);
             }}
           >
-            {RESOLVER_IDS.map((id) => (
+            {SELECTABLE_RESOLVER_IDS.map((id) => (
               <option key={id} value={id}>
-                {RESOLVERS[id].label}
+                {resolverOptionLabel(id)}
               </option>
             ))}
           </select>
-          {RESOLVERS[resolverId].selectionNote === undefined ? null : (
-            <small id="dmarc-resolver-note">{RESOLVERS[resolverId].selectionNote}</small>
+          {resolverSelectionNote(resolverId) === undefined ? null : (
+            <small id="dmarc-resolver-note">{resolverSelectionNote(resolverId)}</small>
           )}
         </div>
         {error !== '' ? (
