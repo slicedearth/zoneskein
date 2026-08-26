@@ -1,5 +1,9 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 
+import {
+  mergeMailAuthenticationEvidence,
+  type MailAuthenticationEvidence,
+} from './core/mail/evidence';
 import type { ChangeWorkspace } from './core/project';
 import type { ChangeLabInput } from './routes/DiffPage';
 
@@ -150,6 +154,8 @@ export function App() {
   const [openNavGroups, setOpenNavGroups] = useState({ inspect: false, prepare: false });
   const [workspace, setWorkspace] = useState<ChangeWorkspace | null>(null);
   const [changeLabInput, setChangeLabInput] = useState<ChangeLabInput | undefined>();
+  const [mailAuthenticationEvidence, setMailAuthenticationEvidence] =
+    useState<MailAuthenticationEvidence | null>(null);
   const workspaceRef = useRef<ChangeWorkspace | null>(null);
   const navigationRef = useRef<HTMLElement | null>(null);
 
@@ -222,6 +228,11 @@ export function App() {
   function retainWorkspace(value: ChangeWorkspace): void {
     workspaceRef.current = value;
     setWorkspace(value);
+  }
+
+  function openDmarcWithEvidence(value: MailAuthenticationEvidence): void {
+    setMailAuthenticationEvidence((current) => mergeMailAuthenticationEvidence(current, value));
+    openRoute('dmarc/');
   }
 
   return (
@@ -353,9 +364,14 @@ export function App() {
           ) : route === 'caa' ? (
             <CaaPage />
           ) : route === 'dkim' ? (
-            <DkimPage />
+            <DkimPage onUseForDmarc={openDmarcWithEvidence} />
           ) : route === 'dmarc' ? (
-            <DmarcPage />
+            <DmarcPage
+              {...(mailAuthenticationEvidence === null
+                ? {}
+                : { initialEvidence: mailAuthenticationEvidence })}
+              onEvidenceChange={setMailAuthenticationEvidence}
+            />
           ) : route === 'diff' ? (
             <DiffPage
               {...(changeLabInput === undefined ? {} : { initialInput: changeLabInput })}
@@ -372,7 +388,7 @@ export function App() {
           ) : route === 'zone-lint' ? (
             <ZoneLintPage />
           ) : route === 'spf' ? (
-            <SpfPage />
+            <SpfPage onUseForDmarc={openDmarcWithEvidence} />
           ) : route === 'dnssec' ? (
             <DnssecPage />
           ) : route === 'lookup' ? (

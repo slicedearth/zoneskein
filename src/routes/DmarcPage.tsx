@@ -24,6 +24,12 @@ import type { ResolverId } from '../core/dns/types';
 import { DnsQueryRun } from '../core/doh/query-run';
 import { RESOLVERS } from '../core/doh/resolvers';
 import { WireDnsResolver } from '../core/doh/wire-resolver';
+import {
+  decodeMailAuthenticationEvidence,
+  encodeMailAuthenticationEvidence,
+  MAIL_AUTHENTICATION_EVIDENCE_LIMITS,
+  type MailAuthenticationEvidence,
+} from '../core/mail/evidence';
 
 const RESOLVER_IDS = Object.keys(RESOLVERS) as ResolverId[];
 const SPF_RESULTS = [
@@ -542,12 +548,24 @@ function DmarcAlignmentResults({ report }: { readonly report: DmarcAlignmentRepo
   );
 }
 
-export function DmarcPage() {
-  const [mode, setMode] = useState<Mode>('policy');
+export interface DmarcPageProps {
+  readonly initialEvidence?: MailAuthenticationEvidence;
+  readonly onEvidenceChange?: (evidence: MailAuthenticationEvidence | null) => void;
+}
+
+export function DmarcPage({ initialEvidence, onEvidenceChange }: DmarcPageProps = {}) {
+  const [mode, setMode] = useState<Mode>(
+    initialEvidence === undefined ? 'policy' : 'alignment',
+  );
   const [domain, setDomain] = useState('');
-  const [dkimDomains, setDkimDomains] = useState('');
-  const [spfResult, setSpfResult] = useState<SpfResult>('none');
-  const [spfDomain, setSpfDomain] = useState('');
+  const [dkimDomains, setDkimDomains] = useState(
+    initialEvidence?.dkim.map((entry) => entry.domain).join('\n') ?? '',
+  );
+  const [spfResult, setSpfResult] = useState<SpfResult>(initialEvidence?.spf?.result ?? 'none');
+  const [spfDomain, setSpfDomain] = useState(initialEvidence?.spf?.domain ?? '');
+  const [transferredEvidence, setTransferredEvidence] = useState(initialEvidence ?? null);
+  const [evidenceInput, setEvidenceInput] = useState('');
+  const [evidenceError, setEvidenceError] = useState('');
   const [resolverId, setResolverId] = useState<ResolverId>('google');
   const [state, setState] = useState<'idle' | 'loading' | 'complete' | 'cancelled'>('idle');
   const [error, setError] = useState('');
@@ -674,12 +692,54 @@ export function DmarcPage() {
     setState('idle');
   }
 
+  function detachTransferredEvidence() {
+    if (transferredEvidence === null) return;
+    setTransferredEvidence(null);
+    onEvidenceChange?.(null);
+  }
+
+  function applyTransferredEvidence(evidence: MailAuthenticationEvidence) {
+    resetResults();
+    setMode('alignment');
+    setDkimDomains(evidence.dkim.map((entry) => entry.domain).join('\n'));
+    setSpfResult(evidence.spf?.result ?? 'none');
+    setSpfDomain(evidence.spf?.domain ?? '');
+    setTransferredEvidence(evidence);
+    setEvidenceInput('');
+    setEvidenceError('');
+    onEvidenceChange?.(evidence);
+  }
+
+  function importTransferredEvidence() {
+    const decoded = decodeMailAuthenticationEvidence(evidenceInput);
+    if (!decoded.ok) {
+      setEvidenceError(decoded.error);
+      return;
+    }
+    applyTransferredEvidence(decoded.value);
+  }
+
+  function clearTransferredEvidence() {
+    resetResults();
+    setDkimDomains('');
+    setSpfResult('none');
+    setSpfDomain('');
+    setTransferredEvidence(null);
+    setEvidenceInput('');
+    setEvidenceError('');
+    onEvidenceChange?.(null);
+  }
+
   function clear() {
     resetResults();
     setDomain('');
     setDkimDomains('');
     setSpfResult('none');
     setSpfDomain('');
+    setTransferredEvidence(null);
+    setEvidenceInput('');
+    setEvidenceError('');
+    onEvidenceChange?.(null);
   }
 
   function selectMode(next: Mode) {
@@ -714,6 +774,96 @@ export function DmarcPage() {
           Alignment check
         </button>
       </div>
+      {mode === 'alignment' ? (
+        <section className="result-panel" aria-labelledby="dmarc-prior-evidence-title">
+          <div className="result-heading">
+            <div>
+              <p className="eyebrow">Prior authentication</p>
+              <h2 id="dmarc-prior-evidence-title">Transfer bounded SPF and DKIM evidence</h2>
+            </div>
+            {transferredEvidence === null ? null : (
+              <div className="export-actions">
+                <CopyButton
+                  label="Copy prior authentication JSON"
+                  text={encodeMailAuthenticationEvidence(transferredEvidence)}
+                />
+                <button
+                  className="quiet-button"
+                  type="button"
+                  onClick={clearTransferredEvidence}
+                >
+                  Clear prior evidence
+                </button>
+              </div>
+            )}
+          </div>
+          {transferredEvidence === null ? (
+            <p>
+              Use an in-memory hand-off from the SPF or DKIM tool, or paste its bounded hand-off
+              JSON below. The transfer contains domain-level results only.
+            </p>
+          ) : (
+            <>
+              <p>
+                Loaded {transferredEvidence.dkim.length}{' '}
+                {transferredEvidence.dkim.length === 1
+                  ? 'passing DKIM domain'
+                  : 'passing DKIM domains'}
+                {transferredEvidence.spf === undefined
+                  ? ' and no SPF result.'
+                  : ` and an SPF ${transferredEvidence.spf.result} result for ${transferredEvidence.spf.domain}.`}
+              </p>
+              <p className="detail-note">
+                Created {new Date(transferredEvidence.createdAt).toLocaleString()}. The transfer
+                does not contain raw messages, mailbox local parts, client IP addresses,
+                selectors, policy text, or DNS traces. Resolver identifiers are inert provenance
+                and do not change the resolver selected below.
+              </p>
+              {transferredEvidence.dkim.some((entry) => entry.reconstructed) ? (
+                <p className="snapshot-warning">
+                  At least one DKIM result passed only after pasted line endings were
+                  reconstructed. Treat that signing domain as reconstructed-text evidence.
+                </p>
+              ) : null}
+            </>
+          )}
+          <details className="method-note">
+            <summary>Import prior authentication JSON</summary>
+            <div className="field-group field-wide">
+              <label htmlFor="dmarc-evidence-json">Prior authentication hand-off JSON</label>
+              <textarea
+                id="dmarc-evidence-json"
+                value={evidenceInput}
+                onChange={(event) => {
+                  setEvidenceInput(event.currentTarget.value);
+                  setEvidenceError('');
+                }}
+                rows={8}
+                maxLength={MAIL_AUTHENTICATION_EVIDENCE_LIMITS.jsonOctets}
+                spellCheck={false}
+              />
+              <small>
+                Maximum {MAIL_AUTHENTICATION_EVIDENCE_LIMITS.jsonOctets.toLocaleString()} UTF-8
+                octets. Unknown fields, duplicate keys, duplicate domains, malformed values, and
+                excessive nesting are rejected.
+              </small>
+            </div>
+            {evidenceError === '' ? null : (
+              <p className="form-error" role="alert">
+                {evidenceError}
+              </p>
+            )}
+            <button
+              className="quiet-button"
+              type="button"
+              disabled={evidenceInput.trim() === ''}
+              onClick={importTransferredEvidence}
+            >
+              Import prior evidence
+            </button>
+          </details>
+        </section>
+      ) : null}
       <form className="workbench-form" onSubmit={(event) => void inspect(event)}>
         <div className="field-group field-wide">
           <label htmlFor="dmarc-domain">
@@ -743,7 +893,10 @@ export function DmarcPage() {
                 id="dmarc-dkim-domains"
                 value={dkimDomains}
                 disabled={state === 'loading'}
-                onChange={(event) => setDkimDomains(event.currentTarget.value)}
+                onChange={(event) => {
+                  detachTransferredEvidence();
+                  setDkimDomains(event.currentTarget.value);
+                }}
                 placeholder={'signer.example.com\nsecond.example.com'}
                 rows={6}
                 maxLength={MAX_DKIM_INPUT_CHARACTERS}
@@ -766,7 +919,10 @@ export function DmarcPage() {
                 id="dmarc-spf-result"
                 value={spfResult}
                 disabled={state === 'loading'}
-                onChange={(event) => setSpfResult(event.currentTarget.value as SpfResult)}
+                onChange={(event) => {
+                  detachTransferredEvidence();
+                  setSpfResult(event.currentTarget.value as SpfResult);
+                }}
               >
                 {SPF_RESULTS.map((result) => (
                   <option key={result} value={result}>
@@ -781,7 +937,10 @@ export function DmarcPage() {
                 id="dmarc-spf-domain"
                 value={spfDomain}
                 disabled={state === 'loading'}
-                onChange={(event) => setSpfDomain(event.currentTarget.value)}
+                onChange={(event) => {
+                  detachTransferredEvidence();
+                  setSpfDomain(event.currentTarget.value);
+                }}
                 placeholder="bounce.example.com"
                 maxLength={253}
                 autoCapitalize="none"

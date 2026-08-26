@@ -4,6 +4,10 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { DmarcPage } from './DmarcPage';
+import {
+  decodeMailAuthenticationEvidence,
+  encodeMailAuthenticationEvidence,
+} from '../core/mail/evidence';
 
 vi.mock('../core/doh/rate-limit', () => ({
   BrowserRateLimiter: class {
@@ -80,6 +84,92 @@ function installDns(fixtures: Readonly<Record<string, DnsFixture>>) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('DmarcPage', () => {
+  const transferredEvidence = () => {
+    const decoded = decodeMailAuthenticationEvidence(
+      JSON.stringify({
+        createdAt: '2026-08-26T00:01:00.000Z',
+        dkim: [
+          {
+            capturedAt: '2026-08-26T00:00:00.000Z',
+            domain: 'signer.example',
+            reconstructed: false,
+            resolverId: 'google',
+            source: 'dkim-message',
+          },
+        ],
+        evidenceSchema: 'zoneskein-mail-authentication-transfer-v1',
+        spf: {
+          capturedAt: '2026-08-26T00:01:00.000Z',
+          domain: 'bounce.example',
+          resolverId: 'cloudflare',
+          result: 'pass',
+          source: 'spf-sender',
+        },
+      }),
+    );
+    if (!decoded.ok) throw new Error(decoded.error);
+    return decoded.value;
+  };
+
+  it('loads a minimal in-memory hand-off and detaches provenance after manual changes', async () => {
+    const user = userEvent.setup();
+    const onEvidenceChange = vi.fn();
+    render(
+      <DmarcPage initialEvidence={transferredEvidence()} onEvidenceChange={onEvidenceChange} />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Alignment check' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(screen.getByLabelText('Domains from passing DKIM signatures')).toHaveValue(
+      'signer.example',
+    );
+    expect(screen.getByLabelText('Previous SPF result')).toHaveValue('pass');
+    expect(screen.getByLabelText('Domain authenticated by SPF')).toHaveValue('bounce.example');
+    expect(
+      screen.getByText(/does not contain raw messages.*mailbox local parts/iu),
+    ).toBeVisible();
+    expect(
+      screen.getByRole('button', { name: 'Copy prior authentication JSON' }),
+    ).toBeVisible();
+
+    await user.type(
+      screen.getByLabelText('Domains from passing DKIM signatures'),
+      '\nother.example',
+    );
+    expect(onEvidenceChange).toHaveBeenLastCalledWith(null);
+    expect(
+      screen.queryByRole('button', { name: 'Copy prior authentication JSON' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('strictly imports a portable hand-off and rejects ambiguous JSON', async () => {
+    const user = userEvent.setup();
+    const onEvidenceChange = vi.fn();
+    render(<DmarcPage onEvidenceChange={onEvidenceChange} />);
+    await user.click(screen.getByRole('button', { name: 'Alignment check' }));
+    await user.click(screen.getByText('Import prior authentication JSON'));
+
+    const input = screen.getByLabelText('Prior authentication hand-off JSON');
+    fireEvent.change(input, {
+      target: {
+        value:
+          '{"createdAt":"2026-08-26T00:00:00.000Z","createdAt":"2026-08-27T00:00:00.000Z"}',
+      },
+    });
+    await user.click(screen.getByRole('button', { name: 'Import prior evidence' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/keys must be unique/iu);
+
+    const evidence = transferredEvidence();
+    fireEvent.change(input, { target: { value: encodeMailAuthenticationEvidence(evidence) } });
+    await user.click(screen.getByRole('button', { name: 'Import prior evidence' }));
+    expect(screen.getByLabelText('Domains from passing DKIM signatures')).toHaveValue(
+      'signer.example',
+    );
+    expect(onEvidenceChange).toHaveBeenLastCalledWith(evidence);
+  });
+
   it('discloses the Netlify intermediary when the Quad9 relay is selected', async () => {
     const user = userEvent.setup();
     render(<DmarcPage />);

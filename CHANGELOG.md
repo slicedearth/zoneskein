@@ -4,6 +4,7 @@ All notable changes to ZoneSkein are documented here.
 
 ## Unreleased
 
+- Added a bounded privacy-minimised SPF and DKIM evidence hand-off into DMARC alignment, with in-memory route transfer, strict versioned JSON import and export, inert resolver provenance, reconstruction caveats, exact schema validation, and automatic provenance detachment after edits.
 - Added bounded in-house complete-zone integrity verification and publication-record generation with SHA-384 and SHA-512, canonical DNS wire ordering, generic numeric RDATA, standard vectors, explicit completeness consent, checksum-only caveats, and live DNSSEC support for published ZONEMD RRsets.
 - Added Ed448 DNSSEC signature verification with a corrected published interoperability vector, explicit cryptographic dependency boundary, versioned evidence-expiry metadata, and visible trust-anchor and pinned-certificate maintenance state.
 - Added a deployed AGPL corresponding-source archive with a per-file manifest and checksum, public source, hosted-use and trade-mark links, explicit contribution licensing, authorised-data warnings, and build/release verification that binds the archive to the exact source tree.

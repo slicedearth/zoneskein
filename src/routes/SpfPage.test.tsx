@@ -4,10 +4,15 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SpfPage } from './SpfPage';
+import type { MailAuthenticationEvidence } from '../core/mail/evidence';
 
 afterEach(() => vi.unstubAllGlobals());
 
-function spfAnswer(input: RequestInfo | URL, init?: RequestInit): Response {
+function spfAnswer(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+  policy = 'v=spf1 -all',
+): Response {
   if (typeof input !== 'string') throw new Error('Expected a string DNS request URL.');
   const encoded = new URL(input, 'http://localhost').searchParams.get('dns');
   let request: Uint8Array;
@@ -24,9 +29,7 @@ function spfAnswer(input: RequestInfo | URL, init?: RequestInit): Response {
   const question = decode(request).questions?.[0];
   if (question === undefined) throw new Error('Expected one DNS question.');
   const bytes = encode({
-    answers: [
-      { class: 'IN', data: ['v=spf1 -all'], name: question.name, ttl: 300, type: 'TXT' },
-    ],
+    answers: [{ class: 'IN', data: [policy], name: question.name, ttl: 300, type: 'TXT' }],
     flags: 0x8180,
     id: 0,
     questions: [question],
@@ -41,6 +44,42 @@ function spfAnswer(input: RequestInfo | URL, init?: RequestInit): Response {
 }
 
 describe('SpfPage', () => {
+  it('hands only the domain-level sender result to DMARC', async () => {
+    const onUseForDmarc = vi.fn<(evidence: MailAuthenticationEvidence) => void>();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<typeof fetch>((input, init) =>
+        Promise.resolve(spfAnswer(input, init, 'v=spf1 ip4:192.0.2.1 -all')),
+      ),
+    );
+    render(<SpfPage onUseForDmarc={onUseForDmarc} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Sender evaluation' }));
+    fireEvent.change(screen.getByLabelText('SMTP client IP'), {
+      target: { value: '192.0.2.1' },
+    });
+    fireEvent.change(screen.getByLabelText('MAIL FROM address'), {
+      target: { value: 'private-user@bounce.example' },
+    });
+    fireEvent.change(screen.getByLabelText('HELO/EHLO domain'), {
+      target: { value: 'mail.example' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Evaluate sender' }));
+
+    expect(
+      await screen.findByRole('heading', { name: 'private-user@bounce.example' }),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Use SPF result in DMARC' }));
+    expect(onUseForDmarc).toHaveBeenCalledOnce();
+    const evidence = onUseForDmarc.mock.calls[0]?.[0];
+    expect(evidence).toMatchObject({
+      dkim: [],
+      spf: { domain: 'bounce.example', result: 'pass', source: 'spf-sender' },
+    });
+    expect(JSON.stringify(evidence)).not.toContain('private-user');
+    expect(JSON.stringify(evidence)).not.toContain('192.0.2.1');
+    expect(screen.getByText(/separate DMARC hand-off contains only/iu)).toBeVisible();
+  });
+
   it('discloses the Netlify intermediary when the Quad9 relay is selected', () => {
     render(<SpfPage />);
 

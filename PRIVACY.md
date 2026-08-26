@@ -1,6 +1,6 @@
 # Privacy
 
-Last reviewed: 16 August 2026
+Last reviewed: 26 August 2026
 
 ## Summary
 
@@ -30,11 +30,11 @@ Netlify receives ordinary requests for ZoneSkein pages and static assets. In opt
 
 ## Email and sender inputs
 
-SPF sender mode accepts a client IP address, complete MAIL FROM identity, HELO/EHLO domain, and optional receiver name. These values remain in page memory and are not saved or shared automatically. SPF macros can place the mailbox local part, supplied IP address, HELO/EHLO name, or receiver name into DNS question labels. The selected resolver can read and log those derived questions. Copying the evaluation explicitly places those inputs and results on the clipboard; use synthetic inputs unless the resolver and clipboard destination are authorised to receive the real values.
+SPF sender mode accepts a client IP address, complete MAIL FROM identity, HELO/EHLO domain, and optional receiver name. These values remain in page memory and are not saved or shared automatically. SPF macros can place the mailbox local part, supplied IP address, HELO/EHLO name, or receiver name into DNS question labels. The selected resolver can read and log those derived questions. Copying the full evaluation explicitly places those inputs and results on the clipboard; use synthetic inputs unless the resolver and clipboard destination are authorised to receive the real values. The separate DMARC hand-off contains only the SPF result, authenticated MAIL FROM domain, capture time, fixed resolver identifier, and schema metadata. It excludes the mailbox local part, client IP, HELO/EHLO and receiver inputs, policy text, and evaluation trace.
 
-DKIM message mode reads pasted message text or `.eml` bytes locally. Raw bytes, headers, addresses, and body content remain in page memory and are never sent to Netlify, a resolver, IndexedDB, or a share link. Only derived `selector._domainkey.signing-domain` TXT questions leave the browser. Copied verification JSON excludes the raw message, uploaded filename, message addresses, and body. It redacts any DKIM AUID local-part but can retain signing metadata and the AUID and signing domains.
+DKIM message mode reads pasted message text or `.eml` bytes locally. Raw bytes, headers, addresses, and body content remain in page memory and are never sent to Netlify, a resolver, IndexedDB, or a share link. Only derived `selector._domainkey.signing-domain` TXT questions leave the browser. Copied verification JSON excludes the raw message, uploaded filename, message addresses, and body. It redacts any DKIM AUID local-part but can retain signing metadata and the AUID and signing domains. The separate DMARC hand-off is narrower: it contains only unique passing production signing domains, capture times, reconstructed-line-ending caveats, fixed resolver identifiers, and schema metadata. It excludes selectors, identities, key records, signatures, headers, body hashes, filenames, diagnostics, and message content.
 
-DMARC alignment mode accepts domains and claimed prior authentication results, not a raw message. Those inputs remain in page memory and are not saved or shared automatically. The selected resolver receives the DNS boundary questions derived from the supplied domains.
+DMARC alignment mode accepts domains and claimed prior authentication results, not a raw message. Those inputs remain in page memory and are not saved or shared automatically. A hand-off from the SPF or DKIM route remains in current application memory until it is replaced, cleared, edited, or the page is reloaded. A visitor can explicitly copy or paste the same minimal JSON through the clipboard; the import is UTF-8, size, nesting, duplicate-key, exact-schema, timestamp, resolver, result, domain, uniqueness, and count checked before use. The selected resolver receives the DNS boundary questions derived from the supplied domains. Imported resolver identifiers are displayed as inert provenance and never select or create a network destination.
 
 ## Browser storage
 
@@ -67,6 +67,6 @@ Fragments are not secret storage. The contents may remain in browser history, cl
 
 ## Pasted data
 
-Zone snippets, proposed changes, Record Studio working sets, raw messages, and sender or alignment inputs stay in the browser. A Record Studio working set enters IndexedDB only after an explicit snapshot action. The DKIM message, SPF sender, and DMARC alignment pages provide no snapshot or share action for their sensitive inputs. Untrusted DNS and pasted text are rendered as text, never as HTML.
+Zone snippets, proposed changes, Record Studio working sets, raw messages, and sender or alignment inputs stay in the browser. A Record Studio working set enters IndexedDB only after an explicit snapshot action. The DKIM message, SPF sender, and DMARC alignment pages provide no snapshot or share action for their sensitive inputs. Their minimal mail-authentication hand-off remains memory-only unless the visitor explicitly copies it to the clipboard. Untrusted DNS and pasted text are rendered as text, never as HTML.
 
 Only enter, query, import, copy, save, or export personal, customer, employee, message, or internal infrastructure information when you are authorised to process it and disclose it to the selected resolver, intermediary, clipboard destination, storage location, or recipient. Prefer synthetic data for demonstrations. The separate [hosted service terms](TERMS.md) describe acceptable use; they do not restrict the AGPL rights in copies of the software.

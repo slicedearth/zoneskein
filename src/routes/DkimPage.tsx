@@ -22,6 +22,11 @@ import type { ResolverId } from '../core/dns/types';
 import { DnsQueryRun } from '../core/doh/query-run';
 import { RESOLVERS } from '../core/doh/resolvers';
 import { WireDnsResolver } from '../core/doh/wire-resolver';
+import {
+  encodeMailAuthenticationEvidence,
+  evidenceFromDkim,
+  type MailAuthenticationEvidence,
+} from '../core/mail/evidence';
 
 const RESOLVER_IDS = Object.keys(RESOLVERS) as ResolverId[];
 type DkimMode = 'key' | 'message';
@@ -92,8 +97,20 @@ function evidenceResult(result: DkimSignatureVerification): Record<string, unkno
   };
 }
 
-function MessageVerificationResults({ report }: { readonly report: DkimMessageReport }) {
+function MessageVerificationResults({
+  onUseForDmarc,
+  report,
+}: {
+  readonly onUseForDmarc?: (evidence: MailAuthenticationEvidence) => void;
+  readonly report: DkimMessageReport;
+}) {
   const overall = overallMessageStatus(report.results, report.lineEndingsNormalised);
+  const dmarcEvidence = evidenceFromDkim(
+    report.results,
+    report.capturedAt,
+    report.resolverId,
+    report.lineEndingsNormalised,
+  );
   const evidence = JSON.stringify(
     {
       capturedAt: report.capturedAt,
@@ -121,6 +138,23 @@ function MessageVerificationResults({ report }: { readonly report: DkimMessageRe
         <div className="export-actions">
           <StatusBadge tone={overall.tone}>{overall.label}</StatusBadge>
           <CopyButton label="Copy verification JSON" text={evidence} />
+          {dmarcEvidence === null ? null : (
+            <>
+              <CopyButton
+                label="Copy DMARC hand-off JSON"
+                text={encodeMailAuthenticationEvidence(dmarcEvidence)}
+              />
+              {onUseForDmarc === undefined ? null : (
+                <button
+                  className="quiet-button"
+                  type="button"
+                  onClick={() => onUseForDmarc(dmarcEvidence)}
+                >
+                  Use passing domains in DMARC
+                </button>
+              )}
+            </>
+          )}
         </div>
       </div>
       <article className="result-panel">
@@ -237,12 +271,19 @@ function MessageVerificationResults({ report }: { readonly report: DkimMessageRe
         {report.results.some((result) => result.keyTesting === true)
           ? ' A testing-mode key is reported as diagnostic evidence only and is not equivalent to deployed authentication.'
           : ''}
+        {dmarcEvidence === null
+          ? ''
+          : ' The DMARC hand-off contains only unique passing production signing domains, capture time, reconstruction status, and resolver identifier; it excludes the raw message, file name, selectors, identities, and content.'}
       </p>
     </section>
   );
 }
 
-export function DkimPage() {
+export interface DkimPageProps {
+  readonly onUseForDmarc?: (evidence: MailAuthenticationEvidence) => void;
+}
+
+export function DkimPage({ onUseForDmarc }: DkimPageProps = {}) {
   const [mode, setMode] = useState<DkimMode>('key');
   const [domain, setDomain] = useState('');
   const [selector, setSelector] = useState('');
@@ -642,7 +683,12 @@ export function DkimPage() {
           ? `DKIM key inspection complete: ${report.inspection?.status ?? 'no key observed'}.`
           : null}
       </div>
-      {messageReport === null ? null : <MessageVerificationResults report={messageReport} />}
+      {messageReport === null ? null : (
+        <MessageVerificationResults
+          {...(onUseForDmarc === undefined ? {} : { onUseForDmarc })}
+          report={messageReport}
+        />
+      )}
       {report === null ? null : (
         <section className="results" aria-labelledby="dkim-result-title">
           <div className="section-heading">

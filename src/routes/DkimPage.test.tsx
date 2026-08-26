@@ -5,8 +5,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { DkimPage } from './DkimPage';
 import { dkimBodyHash, MAX_DKIM_MESSAGE_BYTES } from '../core/dkim/message-verifier';
+import type { MailAuthenticationEvidence } from '../core/mail/evidence';
 
 const ED25519_KEY = 'v=DKIM1; k=ed25519; p=11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=';
+const FIXED_RSA_MESSAGE = `DKIM-Signature: v=1; a=rsa-sha256; d=example.test; s=fixed; h=from:subject; bh=CpQrkuJerbSLbJb+3wem7Ybf6UdzqoOp6epFKC3N3qY=; b=5DtLabjQDiCWJaEa8aIKqsBqtUznIzdMv1DToJn35vKlXiVELM5jATNqRGXyyVvEwIN52ZNQ3Z7k9iSsTbFHn9ZacEbgyM2uN57BFfbXjDr/gC1NJLWNxgc788qrFeD5wDwLrKM2Q2+UADJrwOfzfxw14Qw+oPfZ7kNgBaXWBa4=
+From: vector@example.test
+Subject: fixed RSA vector
+
+fixed vector body
+`;
+const FIXED_RSA_KEY =
+  'v=DKIM1; k=rsa; p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDmoQmuysYdunKx3ckNWLv8u8OJhpm9xkOFb9FV+FW9IqphwPZLts/+QXeCxiF27UylP8Bw3iwu07lVeKY9HmMlpCfn0hum80G0z30Y+QFyohnDJvSddfa2iVTjsox/tRcvt1opns5WGzfxRb8CxOANGPWCaVDNVuK2EayVaLggJQIDAQAB';
 
 function requestBytes(input: RequestInfo | URL, init?: RequestInit): Uint8Array {
   if (init?.body instanceof ArrayBuffer) return new Uint8Array(init.body);
@@ -113,6 +122,40 @@ describe('DkimPage', () => {
     );
     expect(screen.getByText(/never saved or placed in a share link/iu)).toBeVisible();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('hands only passing production signing domains to DMARC', async () => {
+    const onUseForDmarc = vi.fn<(evidence: MailAuthenticationEvidence) => void>();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<typeof fetch>((input, init) =>
+        Promise.resolve(txtResponse(input, init, FIXED_RSA_KEY)),
+      ),
+    );
+    render(<DkimPage onUseForDmarc={onUseForDmarc} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Message verifier' }));
+    fireEvent.change(screen.getByLabelText('Raw RFC 5322 message'), {
+      target: { value: FIXED_RSA_MESSAGE },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Verify message signatures' }));
+
+    expect(
+      await screen.findByRole('heading', { name: 'Pass after CRLF reconstruction' }),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Use passing domains in DMARC' }));
+    expect(onUseForDmarc).toHaveBeenCalledOnce();
+    const evidence = onUseForDmarc.mock.calls[0]?.[0];
+    expect(evidence).toMatchObject({
+      dkim: [
+        {
+          domain: 'example.test',
+          reconstructed: true,
+          source: 'dkim-message',
+        },
+      ],
+    });
+    expect(JSON.stringify(evidence)).not.toContain('vector@example.test');
+    expect(screen.getByText(/excludes the raw message.*selectors.*content/iu)).toBeVisible();
   });
 
   it('keeps uploaded filenames and message content out of copied evidence', async () => {

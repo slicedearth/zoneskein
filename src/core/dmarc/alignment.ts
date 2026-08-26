@@ -19,7 +19,7 @@ export type DmarcIdentifierStatus =
 export type DmarcBoundaryStatus = 'complete' | 'temperror' | 'permerror' | 'indeterminate';
 
 export interface DmarcSpfAuthentication {
-  /** The RFC5321.MailFrom domain. A HELO-only identity must not be supplied here. */
+  /** The RFC5321.MailFrom domain, including the synthetic postmaster@HELO identity for a null path. */
   readonly domain?: string;
   readonly result: DmarcSpfResult;
 }

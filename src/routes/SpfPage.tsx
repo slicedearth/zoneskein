@@ -19,6 +19,11 @@ import type { SpfAnalysis, SpfSnapshot } from '../core/spf/types';
 import { DnsQueryRun } from '../core/doh/query-run';
 import { RESOLVERS } from '../core/doh/resolvers';
 import { WireDnsResolver } from '../core/doh/wire-resolver';
+import {
+  encodeMailAuthenticationEvidence,
+  evidenceFromSpf,
+  type MailAuthenticationEvidence,
+} from '../core/mail/evidence';
 
 type Mode = 'analysis' | 'flatten' | 'sender';
 const RESOLVER_IDS = Object.keys(RESOLVERS) as ResolverId[];
@@ -439,9 +444,16 @@ function AnalysisPanel({ report }: { readonly report: SpfRunReport }) {
   );
 }
 
-function SenderPanel({ report }: { readonly report: SpfSenderReport }) {
+function SenderPanel({
+  onUseForDmarc,
+  report,
+}: {
+  readonly onUseForDmarc?: (evidence: MailAuthenticationEvidence) => void;
+  readonly report: SpfSenderReport;
+}) {
   const { evaluation, resolverId } = report;
   const markdown = senderMarkdown(evaluation, resolverId);
+  const dmarcEvidence = evidenceFromSpf(evaluation, resolverId);
   const json = JSON.stringify(
     {
       ...evaluation,
@@ -458,7 +470,26 @@ function SenderPanel({ report }: { readonly report: SpfSenderReport }) {
           <p className="eyebrow">Sender-context evaluation</p>
           <h2 id="spf-sender-results-title">{evaluation.identity}</h2>
         </div>
-        <StatusBadge tone={senderTone(evaluation.result)}>{evaluation.result}</StatusBadge>
+        <div className="export-actions">
+          <StatusBadge tone={senderTone(evaluation.result)}>{evaluation.result}</StatusBadge>
+          {dmarcEvidence === null ? null : (
+            <>
+              <CopyButton
+                label="Copy DMARC hand-off JSON"
+                text={encodeMailAuthenticationEvidence(dmarcEvidence)}
+              />
+              {onUseForDmarc === undefined ? null : (
+                <button
+                  className="quiet-button"
+                  type="button"
+                  onClick={() => onUseForDmarc(dmarcEvidence)}
+                >
+                  Use SPF result in DMARC
+                </button>
+              )}
+            </>
+          )}
+        </div>
       </div>
       <article className="conclusion-panel">
         <StatusBadge tone={senderTone(evaluation.result)}>{evaluation.result}</StatusBadge>
@@ -592,12 +623,19 @@ function SenderPanel({ report }: { readonly report: SpfSenderReport }) {
         that the SPF policy itself requires, and it does not save this evaluation automatically.
         Copying either export places the supplied mailbox, client IP, and derived evidence on
         your clipboard.
+        {dmarcEvidence === null
+          ? ''
+          : ' The separate DMARC hand-off contains only the SPF result, authenticated MAIL FROM domain, capture time, and resolver identifier; it excludes the mailbox local part, client IP, HELO input, receiver, policy text, and trace.'}
       </p>
     </section>
   );
 }
 
-export function SpfPage() {
+export interface SpfPageProps {
+  readonly onUseForDmarc?: (evidence: MailAuthenticationEvidence) => void;
+}
+
+export function SpfPage({ onUseForDmarc }: SpfPageProps = {}) {
   const [input, setInput] = useState('');
   const [clientIp, setClientIp] = useState('');
   const [mailFrom, setMailFrom] = useState('');
@@ -974,7 +1012,12 @@ export function SpfPage() {
           : null}
       </div>
       {report === null ? null : <AnalysisPanel report={report} />}
-      {senderReport === null ? null : <SenderPanel report={senderReport} />}
+      {senderReport === null ? null : (
+        <SenderPanel
+          {...(onUseForDmarc === undefined ? {} : { onUseForDmarc })}
+          report={senderReport}
+        />
+      )}
     </div>
   );
 }
