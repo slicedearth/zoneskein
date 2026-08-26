@@ -12,6 +12,12 @@ import {
   type ZoneDigestReport,
   type ZoneDigestState,
 } from '../core/zone/zonemd';
+import {
+  escapeTechnicalText,
+  hasUnpairedSurrogate,
+  stringifyTechnicalEvidence,
+  utf8Base64Evidence,
+} from '../core/technical-text';
 
 const MAX_ZONE_CHARACTERS = 262_144;
 
@@ -66,6 +72,12 @@ export function ZoneLintPage() {
 
   async function lint(event: React.SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (hasUnpairedSurrogate(source) || hasUnpairedSurrogate(origin)) {
+      setError('Zone input must not contain unpaired UTF-16 surrogates.');
+      setDocument(null);
+      setDigestReport(null);
+      return;
+    }
     const minimum = Number(minimumTtl);
     const maximum = Number(maximumTtl);
     if (
@@ -119,14 +131,15 @@ export function ZoneLintPage() {
   const snapshotContent =
     document === null
       ? ''
-      : JSON.stringify(
+      : stringifyTechnicalEvidence(
           {
             diagnostics,
             zoneDigest: digestReport,
             records: document.records,
             source: document.source,
+            sourceRaw: utf8Base64Evidence(document.source),
+            textProjection: 'visible-escapes-v1',
           },
-          null,
           2,
         );
   const snapshotOctets = new TextEncoder().encode(snapshotContent).length;
@@ -288,7 +301,11 @@ export function ZoneLintPage() {
               <dl className="metadata-grid">
                 <div>
                   <dt>Zone origin</dt>
-                  <dd>{digestReport.origin ?? 'Unavailable'}</dd>
+                  <dd>
+                    <bdi className="technical-value" dir="ltr">
+                      {escapeTechnicalText(digestReport.origin ?? 'Unavailable')}
+                    </bdi>
+                  </dd>
                 </div>
                 <div>
                   <dt>SOA serial</dt>
@@ -374,10 +391,12 @@ export function ZoneLintPage() {
                   <ul className="diagnostic-list">
                     {digestReport.suggestedRecords.map((record) => (
                       <li key={record.hashAlgorithm}>
-                        <code className="record-value">{record.text}</code>
+                        <code className="record-value technical-value" dir="ltr">
+                          {escapeTechnicalText(record.text)}
+                        </code>
                         <CopyButton
                           label={`Copy ${record.hashName} ZONEMD record`}
-                          text={record.text}
+                          text={escapeTechnicalText(record.text)}
                         />
                       </li>
                     ))}
@@ -392,7 +411,11 @@ export function ZoneLintPage() {
               {digestReport.issues.length === 0 ? null : (
                 <ul className="diagnostic-list">
                   {digestReport.issues.map((issue) => (
-                    <li key={issue}>{issue}</li>
+                    <li key={issue}>
+                      <bdi className="technical-value" dir="ltr">
+                        {escapeTechnicalText(issue)}
+                      </bdi>
+                    </li>
                   ))}
                 </ul>
               )}
@@ -434,14 +457,20 @@ export function ZoneLintPage() {
                         <td>
                           <code>{item.rule}</code>
                         </td>
-                        <td>{item.message}</td>
+                        <td>
+                          <bdi className="technical-value" dir="ltr">
+                            {escapeTechnicalText(item.message)}
+                          </bdi>
+                        </td>
                         <td>
                           {item.suggestion === undefined ? (
                             '—'
                           ) : (
                             <div className="suggestion">
-                              <code>{item.suggestion}</code>
-                              <CopyButton text={item.suggestion} />
+                              <code className="technical-value" dir="ltr">
+                                {escapeTechnicalText(item.suggestion)}
+                              </code>
+                              <CopyButton text={escapeTechnicalText(item.suggestion)} />
                             </div>
                           )}
                         </td>
@@ -479,13 +508,17 @@ export function ZoneLintPage() {
                       <tr key={`${record.owner}-${record.type}-${String(index)}`}>
                         <td>{record.line}</td>
                         <td>
-                          <code>{record.owner}</code>
+                          <code className="technical-value" dir="ltr">
+                            {escapeTechnicalText(record.owner)}
+                          </code>
                         </td>
                         <td>{record.ttl ?? 'Inherited / unspecified'}</td>
                         <td>{record.type}</td>
                         <td>
-                          <code className="record-value">
-                            {record.rdata.map((token) => token.raw).join(' ')}
+                          <code className="record-value technical-value" dir="ltr">
+                            {escapeTechnicalText(
+                              record.rdata.map((token) => token.raw).join(' '),
+                            )}
                           </code>
                         </td>
                       </tr>

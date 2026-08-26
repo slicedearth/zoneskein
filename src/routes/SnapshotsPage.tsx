@@ -21,6 +21,23 @@ import {
   type SnapshotRecord,
   type SnapshotTool,
 } from '../core/snapshots/types';
+import {
+  bytesBase64,
+  escapeTechnicalText,
+  hasUnsafeTechnicalText,
+} from '../core/technical-text';
+
+function snapshotDisplay(value: string): string {
+  return escapeTechnicalText(value);
+}
+
+function snapshotSafeCopy(value: string): string {
+  return hasUnsafeTechnicalText(value) ? escapeTechnicalText(value) : value;
+}
+
+function snapshotRawBase64(value: string): string {
+  return bytesBase64(new TextEncoder().encode(value));
+}
 
 export function SnapshotsPage() {
   const [enabled, setEnabled] = useState(snapshotsEnabled);
@@ -32,7 +49,7 @@ export function SnapshotsPage() {
   const [shareLink, setShareLink] = useState('');
   const [storageBusy, setStorageBusy] = useState(false);
   const [erasurePending, setErasurePending] = useState(snapshotsErasurePending);
-  const [imported] = useState<SnapshotInput | null>(() =>
+  const [imported, setImported] = useState<SnapshotInput | null>(() =>
     snapshotFromFragment(window.location.hash),
   );
 
@@ -69,6 +86,14 @@ export function SnapshotsPage() {
       }),
     [],
   );
+
+  useEffect(() => {
+    const updateImportedFragment = () => {
+      setImported(snapshotFromFragment(window.location.hash));
+    };
+    window.addEventListener('hashchange', updateImportedFragment);
+    return () => window.removeEventListener('hashchange', updateImportedFragment);
+  }, []);
 
   function enable() {
     try {
@@ -123,6 +148,17 @@ export function SnapshotsPage() {
     } catch (cause) {
       setMessage(cause instanceof Error ? cause.message : 'Snapshot could not be saved.');
     }
+  }
+
+  async function importCurrentFragment() {
+    const current = snapshotFromFragment(window.location.hash);
+    if (current === null) {
+      setImported(null);
+      setMessage('The current URL fragment does not contain a valid report to import.');
+      return;
+    }
+    setImported(current);
+    await save(current);
   }
 
   function createShare(input: SnapshotInput) {
@@ -181,7 +217,13 @@ export function SnapshotsPage() {
         <article className="result-panel fragment-import">
           <div className="result-heading">
             <h3>Report received in this URL fragment</h3>
-            <StatusBadge tone="warning">Visible in browser history</StatusBadge>
+            <div className="export-actions">
+              <StatusBadge tone="warning">Visible in browser history</StatusBadge>
+              {hasUnsafeTechnicalText(imported.title) ||
+              hasUnsafeTechnicalText(imported.content) ? (
+                <StatusBadge tone="warning">Controls visibly escaped</StatusBadge>
+              ) : null}
+            </div>
           </div>
           <p>
             The hosting server does not receive URL fragments, but anyone with this link can
@@ -190,7 +232,11 @@ export function SnapshotsPage() {
           <dl className="metadata-grid">
             <div>
               <dt>Title</dt>
-              <dd>{imported.title}</dd>
+              <dd>
+                <bdi className="technical-value" dir="ltr">
+                  {snapshotDisplay(imported.title)}
+                </bdi>
+              </dd>
             </div>
             <div>
               <dt>Tool</dt>
@@ -202,12 +248,35 @@ export function SnapshotsPage() {
             </div>
           </dl>
           <div className="form-actions">
-            <CopyButton label="Copy report" text={imported.content} />
+            <CopyButton
+              label="Copy safe report"
+              resolveText={() => {
+                const current = snapshotFromFragment(window.location.hash);
+                if (current === null)
+                  throw new Error('The report fragment is no longer valid.');
+                setImported(current);
+                return snapshotSafeCopy(current.content);
+              }}
+              text={snapshotSafeCopy(imported.content)}
+            />
+            {hasUnsafeTechnicalText(imported.content) ? (
+              <CopyButton
+                label="Copy exact report as Base64"
+                resolveText={() => {
+                  const current = snapshotFromFragment(window.location.hash);
+                  if (current === null)
+                    throw new Error('The report fragment is no longer valid.');
+                  setImported(current);
+                  return snapshotRawBase64(current.content);
+                }}
+                text={snapshotRawBase64(imported.content)}
+              />
+            ) : null}
             <button
               className="quiet-button"
               type="button"
               disabled={!enabled || storageBusy}
-              onClick={() => void save(imported)}
+              onClick={() => void importCurrentFragment()}
             >
               Import locally
             </button>
@@ -299,15 +368,36 @@ export function SnapshotsPage() {
                   <div className="result-heading">
                     <div>
                       <p className="step-label">{record.tool}</p>
-                      <h3>{record.title}</h3>
+                      <h3>
+                        <bdi className="technical-value" dir="ltr">
+                          {snapshotDisplay(record.title)}
+                        </bdi>
+                      </h3>
                     </div>
-                    <time dateTime={record.createdAt}>
-                      {new Date(record.createdAt).toLocaleString()}
-                    </time>
+                    <div>
+                      {hasUnsafeTechnicalText(record.title) ||
+                      hasUnsafeTechnicalText(record.content) ? (
+                        <StatusBadge tone="warning">Controls visibly escaped</StatusBadge>
+                      ) : null}
+                      <time dateTime={record.createdAt}>
+                        {new Date(record.createdAt).toLocaleString()}
+                      </time>
+                    </div>
                   </div>
-                  <pre className="snapshot-preview">{record.content}</pre>
+                  <pre className="snapshot-preview technical-value" dir="ltr">
+                    {snapshotDisplay(record.content)}
+                  </pre>
                   <div className="form-actions">
-                    <CopyButton text={record.content} />
+                    <CopyButton
+                      label="Copy safe report"
+                      text={snapshotSafeCopy(record.content)}
+                    />
+                    {hasUnsafeTechnicalText(record.content) ? (
+                      <CopyButton
+                        label="Copy exact report as Base64"
+                        text={snapshotRawBase64(record.content)}
+                      />
+                    ) : null}
                     <button
                       className="quiet-button"
                       type="button"

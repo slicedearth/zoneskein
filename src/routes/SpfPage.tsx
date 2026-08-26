@@ -20,6 +20,13 @@ import { DnsQueryRun } from '../core/doh/query-run';
 import { RESOLVERS } from '../core/doh/resolvers';
 import { WireDnsResolver } from '../core/doh/wire-resolver';
 import {
+  escapeTechnicalText,
+  markdownLiteral,
+  markdownTableLiteral,
+  stringifyTechnicalEvidence,
+  utf8Base64Evidence,
+} from '../core/technical-text';
+import {
   encodeMailAuthenticationEvidence,
   evidenceFromSpf,
   type MailAuthenticationEvidence,
@@ -77,14 +84,14 @@ function resolverMarkdown(resolverId: ResolverId): readonly string[] {
 }
 
 function senderMarkdown(evaluation: SpfSenderEvaluation, resolverId: ResolverId): string {
-  const escaped = (value: string) => value.replaceAll('|', '\\|').replaceAll('\n', ' ');
+  const escaped = markdownTableLiteral;
   return [
     '# ZoneSkein sender-context SPF evaluation',
     '',
     `- Result: ${evaluation.result}`,
-    `- Identity: ${evaluation.identity}`,
-    `- Client IP: ${evaluation.ip}`,
-    `- Policy domain: ${evaluation.domain}`,
+    `- Identity: ${markdownLiteral(evaluation.identity)}`,
+    `- Client IP: ${markdownLiteral(evaluation.ip)}`,
+    `- Policy domain: ${markdownLiteral(evaluation.domain)}`,
     ...resolverMarkdown(resolverId),
     ...(evaluation.capturedAt === undefined
       ? []
@@ -93,10 +100,10 @@ function senderMarkdown(evaluation: SpfSenderEvaluation, resolverId: ResolverId)
     `- Void lookups: ${String(evaluation.voidLookups)} of 2`,
     `- DNS questions: ${String(evaluation.dnsQueries)}`,
     `- DNS response bytes: ${String(evaluation.responseBytes)}`,
-    `- Reason: ${evaluation.reason}`,
+    `- Reason: ${markdownLiteral(evaluation.reason)}`,
     ...(evaluation.explanation === undefined
       ? []
-      : [`- Publisher explanation: ${evaluation.explanation}`]),
+      : [`- Publisher explanation: ${markdownLiteral(evaluation.explanation)}`]),
     '',
     '## Trace',
     '',
@@ -144,13 +151,13 @@ function SnapshotPanel({
         </p>
         <ul className="diagnostic-list">
           {snapshot.blockers.map((blocker) => (
-            <li key={blocker}>{blocker}</li>
+            <li key={blocker}>{escapeTechnicalText(blocker)}</li>
           ))}
         </ul>
       </article>
     );
   }
-  const json = JSON.stringify(
+  const json = stringifyTechnicalEvidence(
     {
       earliestSourceExpiry: snapshot.earliestSourceExpiry,
       evidenceSchema: 'zoneskein-spf-snapshot-v2',
@@ -159,10 +166,10 @@ function SnapshotPanel({
       provenance: snapshot.provenance,
       recommendedRecheck: snapshot.recommendedRecheck,
       resolver: resolverEvidence(resolverId),
+      textProjection: 'visible-escapes-v1',
       value: snapshot.value,
       warning: 'Point-in-time SPF snapshot — provider address ranges may change.',
     },
-    null,
     2,
   );
   const markdown = [
@@ -185,7 +192,7 @@ function SnapshotPanel({
         Point-in-time SPF snapshot — provider address ranges may change. This is a publication
         preview, never an automatic DNS change.
       </p>
-      <pre className="spf-output">{snapshot.value}</pre>
+      <pre className="spf-output">{escapeTechnicalText(snapshot.value ?? '')}</pre>
       <div className="export-actions">
         <CopyButton label="Copy SPF value" text={snapshot.value ?? ''} />
         <CopyButton label="Copy BIND TXT" text={snapshot.bindRecord ?? ''} />
@@ -225,13 +232,13 @@ function SnapshotPanel({
       <details>
         <summary>TXT character-strings ({snapshot.chunks.length})</summary>
         <pre className="spf-output">
-          {snapshot.chunks.map((chunk) => `"${chunk}"`).join(' ')}
+          {snapshot.chunks.map((chunk) => `"${escapeTechnicalText(chunk)}"`).join(' ')}
         </pre>
       </details>
       {snapshot.warnings.length > 0 ? (
         <ul className="diagnostic-list warning-list">
           {snapshot.warnings.map((warning) => (
-            <li key={warning}>{warning}</li>
+            <li key={warning}>{escapeTechnicalText(warning)}</li>
           ))}
         </ul>
       ) : null}
@@ -255,12 +262,12 @@ function SnapshotPanel({
             {snapshot.provenance.map((item, index) => (
               <tr key={`${item.network}-${item.mechanism}-${String(index)}`}>
                 <td>
-                  <code>{item.network}</code>
+                  <code>{escapeTechnicalText(item.network)}</code>
                 </td>
                 <td>
-                  <code>{item.mechanism}</code>
+                  <code>{escapeTechnicalText(item.mechanism)}</code>
                 </td>
-                <td>{item.path.join(' → ')}</td>
+                <td>{item.path.map(escapeTechnicalText).join(' → ')}</td>
                 <td>
                   {item.sourceExpiresAt === undefined
                     ? 'Unknown'
@@ -286,26 +293,35 @@ function SnapshotPanel({
 
 function AnalysisPanel({ report }: { readonly report: SpfRunReport }) {
   const { analysis } = report;
-  const analysisJson = JSON.stringify(
-    {
-      ...analysis,
-      dnsQuestions: report.dnsQuestions,
-      evidenceSchema: 'zoneskein-spf-analysis-v2',
-      resolver: resolverEvidence(report.resolverId),
-    },
-    null,
-    2,
-  );
+  const analysisEvidence = {
+    ...analysis,
+    dnsQuestions: report.dnsQuestions,
+    evidenceSchema: 'zoneskein-spf-analysis-v2',
+    nodes: analysis.nodes.map((node) => ({
+      ...node,
+      ...(node.policy === undefined
+        ? {}
+        : {
+            policy: {
+              ...node.policy,
+              recordRaw: utf8Base64Evidence(node.policy.record),
+            },
+          }),
+    })),
+    resolver: resolverEvidence(report.resolverId),
+    textProjection: 'visible-escapes-v1',
+  };
+  const analysisJson = stringifyTechnicalEvidence(analysisEvidence, 2);
   const snapshotContent =
     report.snapshot === undefined
       ? analysisJson
-      : JSON.stringify(
+      : stringifyTechnicalEvidence(
           {
             evidenceSchema: 'zoneskein-spf-snapshot-v2',
             resolver: resolverEvidence(report.resolverId),
             snapshot: report.snapshot,
+            textProjection: 'visible-escapes-v1',
           },
-          null,
           2,
         );
   return (
@@ -369,8 +385,9 @@ function AnalysisPanel({ report }: { readonly report: SpfRunReport }) {
               <li key={`${item.code}-${item.sourceDomain ?? ''}-${String(index)}`}>
                 <StatusBadge tone={diagnosticTone(item.severity)}>{item.severity}</StatusBadge>
                 <span>
-                  <strong>{item.code}</strong> · {item.sourceDomain ?? analysis.rootDomain} ·{' '}
-                  {item.message}
+                  <strong>{escapeTechnicalText(item.code)}</strong> ·{' '}
+                  {escapeTechnicalText(item.sourceDomain ?? analysis.rootDomain)} ·{' '}
+                  {escapeTechnicalText(item.message)}
                 </span>
               </li>
             ))}
@@ -390,9 +407,9 @@ function AnalysisPanel({ report }: { readonly report: SpfRunReport }) {
           <div className="dependency-flow">
             {analysis.edges.map((edge, index) => (
               <div key={`${edge.from}-${edge.to}-${edge.kind}-${String(index)}`}>
-                <code>{edge.from}</code>
+                <code>{escapeTechnicalText(edge.from)}</code>
                 <span>{edge.kind} →</span>
-                <code>{edge.to}</code>
+                <code>{escapeTechnicalText(edge.to)}</code>
               </div>
             ))}
           </div>
@@ -411,7 +428,7 @@ function AnalysisPanel({ report }: { readonly report: SpfRunReport }) {
               <p className="empty-note">A single SPF policy was not available.</p>
             ) : (
               <>
-                <pre className="spf-output">{node.policy.record}</pre>
+                <pre className="spf-output">{escapeTechnicalText(node.policy.record)}</pre>
                 <div
                   className="term-sequence"
                   aria-label={`Ordered SPF terms for ${node.domain}`}
@@ -422,7 +439,7 @@ function AnalysisPanel({ report }: { readonly report: SpfRunReport }) {
                       key={`${term.original}-${String(index)}`}
                     >
                       <small>{String(index + 1).padStart(2, '0')}</small>
-                      {term.original}
+                      {escapeTechnicalText(term.original)}
                     </span>
                   ))}
                 </div>
@@ -482,13 +499,13 @@ function SenderPanel({
         : dmarcEvidence.spf.identitySource === 'helo'
           ? ' The separate DMARC hand-off contains the SPF pass, its authenticated HELO-derived identity domain, identity source, capture time, and resolver identifier. A null reverse path makes HELO the protocol-relevant SPF identity; the hand-off still excludes the mailbox local part, client IP, receiver, policy text, and trace.'
           : ' The separate DMARC hand-off contains the SPF pass, its authenticated MAIL FROM domain, identity source, capture time, and resolver identifier; it excludes the mailbox local part, client IP, HELO input, receiver, policy text, and trace.';
-  const json = JSON.stringify(
+  const json = stringifyTechnicalEvidence(
     {
       ...evaluation,
       evidenceSchema: 'zoneskein-spf-sender-v1',
       resolver: resolverEvidence(resolverId),
+      textProjection: 'visible-escapes-v1',
     },
-    null,
     2,
   );
   return (
@@ -496,7 +513,11 @@ function SenderPanel({
       <div className="section-heading">
         <div>
           <p className="eyebrow">Sender-context evaluation</p>
-          <h2 id="spf-sender-results-title">{evaluation.identity}</h2>
+          <h2 id="spf-sender-results-title">
+            <bdi className="technical-value" dir="ltr">
+              {escapeTechnicalText(evaluation.identity)}
+            </bdi>
+          </h2>
         </div>
         <div className="export-actions">
           <StatusBadge tone={senderTone(evaluation.result)}>{evaluation.result}</StatusBadge>
@@ -521,9 +542,18 @@ function SenderPanel({
       </div>
       <article className="conclusion-panel">
         <StatusBadge tone={senderTone(evaluation.result)}>{evaluation.result}</StatusBadge>
-        <p>{evaluation.reason}</p>
+        <p>
+          <bdi className="technical-value" dir="ltr">
+            {escapeTechnicalText(evaluation.reason)}
+          </bdi>
+        </p>
         {evaluation.explanation === undefined ? null : (
-          <p>Publisher explanation: {evaluation.explanation}</p>
+          <p>
+            Publisher explanation:{' '}
+            <bdi className="technical-value" dir="ltr">
+              {escapeTechnicalText(evaluation.explanation)}
+            </bdi>
+          </p>
         )}
       </article>
       <div className="metric-strip">
@@ -559,7 +589,11 @@ function SenderPanel({
         <dl className="metadata-grid">
           <div>
             <dt>MAIL FROM identity</dt>
-            <dd>{evaluation.identity}</dd>
+            <dd>
+              <bdi className="technical-value" dir="ltr">
+                {escapeTechnicalText(evaluation.identity)}
+              </bdi>
+            </dd>
           </div>
           <div>
             <dt>Client IP</dt>
@@ -567,7 +601,11 @@ function SenderPanel({
           </div>
           <div>
             <dt>Policy domain</dt>
-            <dd>{evaluation.domain}</dd>
+            <dd>
+              <bdi className="technical-value" dir="ltr">
+                {escapeTechnicalText(evaluation.domain)}
+              </bdi>
+            </dd>
           </div>
           <div>
             <dt>Resolver</dt>
@@ -575,7 +613,7 @@ function SenderPanel({
           </div>
           <div>
             <dt>Matched mechanism</dt>
-            <dd>{evaluation.match?.term ?? 'None'}</dd>
+            <dd>{escapeTechnicalText(evaluation.match?.term ?? 'None')}</dd>
           </div>
           <div>
             <dt>Evaluated at</dt>
@@ -616,25 +654,43 @@ function SenderPanel({
                     <small>depth {entry.depth}</small>
                   </td>
                   <td>
-                    {entry.domain ?? '—'}
+                    <bdi className="technical-value" dir="ltr">
+                      {escapeTechnicalText(entry.domain ?? '—')}
+                    </bdi>
                     <br />
-                    <code>{entry.term ?? '—'}</code>
+                    <code className="technical-value" dir="ltr">
+                      {escapeTechnicalText(entry.term ?? '—')}
+                    </code>
                   </td>
                   <td>{entry.outcome ?? '—'}</td>
                   <td>
-                    {entry.message}
+                    <bdi className="technical-value" dir="ltr">
+                      {escapeTechnicalText(entry.message)}
+                    </bdi>
                     {entry.query === undefined ? null : (
                       <details className="inline-details">
                         <summary>
-                          {entry.query.type} {entry.query.name} · {entry.query.status}
+                          <bdi className="technical-value" dir="ltr">
+                            {entry.query.type} {escapeTechnicalText(entry.query.name)} ·{' '}
+                            {entry.query.status}
+                          </bdi>
                         </summary>
                         <p>
                           {String(entry.query.valueCount)} values ·{' '}
                           {String(entry.query.messageBytes)} bytes
-                          {entry.query.error === undefined ? '' : ` · ${entry.query.error}`}
+                          {entry.query.error === undefined ? null : (
+                            <>
+                              {' · '}
+                              <bdi className="technical-value" dir="ltr">
+                                {escapeTechnicalText(entry.query.error)}
+                              </bdi>
+                            </>
+                          )}
                         </p>
                         {entry.query.values.length === 0 ? null : (
-                          <pre className="spf-output">{entry.query.values.join('\n')}</pre>
+                          <pre className="spf-output technical-value" dir="ltr">
+                            {entry.query.values.map(escapeTechnicalText).join('\n')}
+                          </pre>
                         )}
                       </details>
                     )}

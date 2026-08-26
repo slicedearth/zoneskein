@@ -177,6 +177,22 @@ describe('explicit local snapshots', () => {
     expect(snapshotFromFragment('#report=not!base64')).toBeNull();
   });
 
+  it('rejects unpaired surrogates before storage or fragment import', async () => {
+    const unpaired = String.fromCharCode(0xd800);
+    enableSnapshots();
+    await expect(
+      saveSnapshot({ content: unpaired, title: 'Invalid scalar', tool: 'other' }),
+    ).rejects.toThrow(/unpaired UTF-16 surrogates/iu);
+
+    const encoded = btoa(
+      JSON.stringify({ content: unpaired, title: 'Invalid scalar', tool: 'other' }),
+    )
+      .replaceAll('+', '-')
+      .replaceAll('/', '_')
+      .replace(/=+$/u, '');
+    expect(snapshotFromFragment(`#report=${encoded}`)).toBeNull();
+  });
+
   it('accepts the maximum share payload and rejects one octet more', () => {
     const template = { content: '', title: 'Boundary', tool: 'other' } as const;
     const overhead = new TextEncoder().encode(JSON.stringify(template)).length;

@@ -10,13 +10,16 @@ import {
   editChangeWorkspace,
   encodeChangeWorkspace,
   parseChangeWorkspace,
+  type ActiveChangeWorkspace,
   type ChangeWorkspace,
   type ChangeWorkspaceCodecError,
   type ChangeWorkspaceEditPatch,
+  type ChangeWorkspaceIntegrityProvenance,
   type ChangeWorkspaceZoneInput,
   type ChangeWorkspaceZoneState,
   type DecodedChangeWorkspace,
 } from '../core/project';
+import { escapeTechnicalText } from '../core/technical-text';
 
 export interface ChangeWorkspaceChangeLabInput {
   readonly current: string;
@@ -25,8 +28,10 @@ export interface ChangeWorkspaceChangeLabInput {
 }
 
 export interface ChangeWorkspacePageProps {
+  readonly initialActiveWorkspace?: ActiveChangeWorkspace | undefined;
   readonly initialWorkspace?: ChangeWorkspace | undefined;
   readonly onOpenChangeLab?: (input: ChangeWorkspaceChangeLabInput) => void;
+  readonly onActiveWorkspaceChange?: (active: ActiveChangeWorkspace) => void;
   readonly onWorkspaceChange?: (workspace: ChangeWorkspace) => void;
 }
 
@@ -163,6 +168,25 @@ function zoneTone(status: ZoneStateStatus): StatusTone {
   return 'unknown';
 }
 
+function integrityLabel(value: ChangeWorkspaceIntegrityProvenance): string {
+  if (value.state === 'digest-match') {
+    return `SHA-256 internally consistent: ${value.digest}`;
+  }
+  if (value.state === 'mismatch-accepted') return 'SHA-256 mismatch explicitly accepted';
+  return 'Not checked for this session';
+}
+
+function integrityWarning(value: ChangeWorkspaceIntegrityProvenance): string {
+  if (value.state !== 'mismatch-accepted') return '';
+  return `This workspace descends from data explicitly accepted after a SHA-256 mismatch. Claimed ${value.claimedDigest}; calculated ${value.calculatedDigest}. Local edits and reanalysis do not erase that import provenance.`;
+}
+
+function afterLocalMutation(
+  value: ChangeWorkspaceIntegrityProvenance,
+): ChangeWorkspaceIntegrityProvenance {
+  return value.state === 'mismatch-accepted' ? value : { state: 'not-checked' };
+}
+
 function dateLabel(value: string | null): string {
   if (value === null) return 'Not established';
   return new Intl.DateTimeFormat(undefined, {
@@ -172,12 +196,14 @@ function dateLabel(value: string | null): string {
 }
 
 export function ChangeWorkspacePage({
+  initialActiveWorkspace,
   initialWorkspace,
+  onActiveWorkspaceChange,
   onOpenChangeLab,
   onWorkspaceChange,
 }: ChangeWorkspacePageProps) {
   const [initial] = useState<InitialWorkspaceState>(() =>
-    initialiseWorkspace(initialWorkspace),
+    initialiseWorkspace(initialActiveWorkspace?.workspace ?? initialWorkspace),
   );
   const [workspace, setWorkspace] = useState<ChangeWorkspace | null>(initial.workspace);
   const [draft, setDraft] = useState<WorkspaceDraft | null>(() =>
@@ -188,8 +214,11 @@ export function ChangeWorkspacePage({
   const [importBusy, setImportBusy] = useState(false);
   const [quarantined, setQuarantined] = useState<DecodedChangeWorkspace | null>(null);
   const [mismatchAcknowledged, setMismatchAcknowledged] = useState(false);
-  const [integrityWarning, setIntegrityWarning] = useState('');
-  const [integrityStatus, setIntegrityStatus] = useState('Not checked for this session');
+  const [integrity, setIntegrity] = useState<ChangeWorkspaceIntegrityProvenance>(() =>
+    initial.error === '' && initialActiveWorkspace !== undefined
+      ? initialActiveWorkspace.integrity
+      : { state: 'not-checked' },
+  );
   const importSequence = useRef(0);
   const objectUrls = useRef(new Set<string>());
 
@@ -204,7 +233,7 @@ export function ChangeWorkspacePage({
   function activateWorkspace(
     next: ChangeWorkspace,
     announcement: string,
-    options: { readonly integrity?: string; readonly warning?: string } = {},
+    nextIntegrity: ChangeWorkspaceIntegrityProvenance = integrity,
   ) {
     importSequence.current += 1;
     setImportBusy(false);
@@ -214,8 +243,8 @@ export function ChangeWorkspacePage({
     setStatus(announcement);
     setQuarantined(null);
     setMismatchAcknowledged(false);
-    if (options.integrity !== undefined) setIntegrityStatus(options.integrity);
-    if (options.warning !== undefined) setIntegrityWarning(options.warning);
+    setIntegrity(nextIntegrity);
+    onActiveWorkspaceChange?.({ integrity: nextIntegrity, workspace: next });
     onWorkspaceChange?.(next);
   }
 
@@ -225,10 +254,7 @@ export function ChangeWorkspacePage({
       setError(codecMessage(created.error));
       return;
     }
-    activateWorkspace(created.value, announcement, {
-      integrity: 'Not checked for this new workspace',
-      warning: '',
-    });
+    activateWorkspace(created.value, announcement, { state: 'not-checked' });
   }
 
   function updateDraft<Key extends keyof WorkspaceDraft>(key: Key, value: WorkspaceDraft[Key]) {
@@ -279,9 +305,7 @@ export function ChangeWorkspacePage({
       zoneChanged
         ? 'Workspace edits applied. Stored analysis was invalidated and must be run again.'
         : 'Workspace title updated without changing the stored analysis.',
-      {
-        integrity: 'Not checked after local edits',
-      },
+      afterLocalMutation(integrity),
     );
   }
 
@@ -307,7 +331,7 @@ export function ChangeWorkspacePage({
       analysed.value.analysis.status === 'complete'
         ? `Analysis complete with ${String(analysed.value.analysis.changes.length)} classified changes.`
         : 'Analysis remains partial. Review the stated incomplete reasons.',
-      { integrity: 'Not checked after local reanalysis' },
+      afterLocalMutation(integrity),
     );
   }
 
@@ -344,10 +368,7 @@ export function ChangeWorkspacePage({
       activateWorkspace(
         decoded.value.workspace,
         'Workspace imported after strict schema and digest validation. Stored analysis is supplied historical data until local reanalysis.',
-        {
-          integrity: `SHA-256 internally consistent: ${decoded.value.integrity.digest}`,
-          warning: '',
-        },
+        { digest: decoded.value.integrity.digest, state: 'digest-match' },
       );
     } catch (cause) {
       if (sequence === importSequence.current) {
@@ -362,13 +383,13 @@ export function ChangeWorkspacePage({
 
   function acceptMismatch() {
     if (quarantined?.integrity.status !== 'mismatch' || !mismatchAcknowledged) return;
-    const warning = `This workspace was explicitly accepted after a SHA-256 mismatch. Claimed ${quarantined.integrity.claimedDigest}; calculated ${quarantined.integrity.calculatedDigest}.`;
     activateWorkspace(
       quarantined.workspace,
       'Altered workspace accepted with a persistent warning.',
       {
-        integrity: 'SHA-256 mismatch explicitly accepted',
-        warning,
+        calculatedDigest: quarantined.integrity.calculatedDigest,
+        claimedDigest: quarantined.integrity.claimedDigest,
+        state: 'mismatch-accepted',
       },
     );
   }
@@ -395,8 +416,13 @@ export function ChangeWorkspacePage({
       document.body.append(link);
       link.click();
       link.remove();
-      setIntegrityStatus('A fresh SHA-256 digest was included in the exported file');
-      setStatus(`Workspace exported as ${link.download}.`);
+      setStatus(
+        `Workspace exported as ${link.download} with a fresh internally consistent digest.${
+          integrity.state === 'mismatch-accepted'
+            ? ' The active session still retains its accepted-mismatch provenance.'
+            : ''
+        }`,
+      );
     } finally {
       URL.revokeObjectURL(url);
       objectUrls.current.delete(url);
@@ -410,6 +436,7 @@ export function ChangeWorkspacePage({
       workspace.intended.status === 'unavailable'
     )
       return;
+    onActiveWorkspaceChange?.({ integrity, workspace });
     onWorkspaceChange?.(workspace);
     const origin = workspace.intended.origin ?? workspace.current.origin;
     onOpenChangeLab?.({
@@ -470,13 +497,16 @@ export function ChangeWorkspacePage({
         </details>
       </article>
 
-      {integrityWarning === '' ? null : (
+      {integrityWarning(integrity) === '' ? null : (
         <p className="snapshot-warning" role="status">
-          {integrityWarning}
+          {integrityWarning(integrity)}
         </p>
       )}
 
-      <form className="workbench-form" onSubmit={(event) => event.preventDefault()}>
+      <form
+        className="workbench-form workspace-form"
+        onSubmit={(event) => event.preventDefault()}
+      >
         <div className="field-group">
           <label htmlFor="workspace-title">Workspace title</label>
           <input
@@ -722,7 +752,11 @@ export function ChangeWorkspacePage({
         <div className="section-heading">
           <div>
             <p className="eyebrow">Active in-memory workspace</p>
-            <h2 id="workspace-summary-title">{workspace.title}</h2>
+            <h2 id="workspace-summary-title">
+              <bdi className="technical-value" dir="ltr">
+                {escapeTechnicalText(workspace.title)}
+              </bdi>
+            </h2>
           </div>
           <StatusBadge tone={riskTone(workspace.analysis.risk)}>
             {workspace.analysis.status === 'not-run'
@@ -752,7 +786,7 @@ export function ChangeWorkspacePage({
             </div>
             <div>
               <dt>Integrity</dt>
-              <dd>{integrityStatus}</dd>
+              <dd>{integrityLabel(integrity)}</dd>
             </div>
             <div>
               <dt>Evidence runs</dt>
@@ -789,7 +823,11 @@ export function ChangeWorkspacePage({
               {workspace.analysis.incompleteReasons.length === 0 ? null : (
                 <ul className="warning-list">
                   {workspace.analysis.incompleteReasons.map((item) => (
-                    <li key={item}>{item}</li>
+                    <li key={item}>
+                      <bdi className="technical-value" dir="ltr">
+                        {escapeTechnicalText(item)}
+                      </bdi>
+                    </li>
                   ))}
                 </ul>
               )}
@@ -804,9 +842,10 @@ export function ChangeWorkspacePage({
               {workspace.analysis.findings.map((finding) => (
                 <li key={`${finding.code}-${finding.message}`}>
                   <StatusBadge tone={riskTone(finding.risk)}>{finding.risk}</StatusBadge>
-                  <span>
-                    <strong>{finding.code}</strong> — {finding.message}
-                  </span>
+                  <bdi className="technical-value" dir="ltr">
+                    <strong>{escapeTechnicalText(finding.code)}</strong> —{' '}
+                    {escapeTechnicalText(finding.message)}
+                  </bdi>
                 </li>
               ))}
             </ul>
@@ -873,7 +912,9 @@ export function ChangeWorkspacePage({
                         <StatusBadge tone={riskTone(change.risk)}>{change.risk}</StatusBadge>
                       </td>
                       <td>
-                        <code>{change.owner}</code>
+                        <code className="technical-value" dir="ltr">
+                          {escapeTechnicalText(change.owner)}
+                        </code>
                         <br />
                         {change.type}
                       </td>
@@ -887,15 +928,25 @@ export function ChangeWorkspacePage({
                         ) : null}
                       </td>
                       <td>
-                        {change.explanation}
+                        <bdi className="technical-value" dir="ltr">
+                          {escapeTechnicalText(change.explanation)}
+                        </bdi>
                         <details>
                           <summary>Impact reasons and rollback</summary>
                           <ul>
                             {change.reasons.map((item) => (
-                              <li key={item}>{item}</li>
+                              <li key={item}>
+                                <bdi className="technical-value" dir="ltr">
+                                  {escapeTechnicalText(item)}
+                                </bdi>
+                              </li>
                             ))}
                           </ul>
-                          <p>{change.rollback}</p>
+                          <p>
+                            <bdi className="technical-value" dir="ltr">
+                              {escapeTechnicalText(change.rollback)}
+                            </bdi>
+                          </p>
                         </details>
                       </td>
                     </tr>
@@ -912,10 +963,18 @@ export function ChangeWorkspacePage({
             <ol className="rollout-phases">
               {workspace.analysis.phases.map((phase) => (
                 <li key={phase.id}>
-                  <h4>{phase.title}</h4>
+                  <h4>
+                    <bdi className="technical-value" dir="ltr">
+                      {escapeTechnicalText(phase.title)}
+                    </bdi>
+                  </h4>
                   <ul>
                     {phase.actions.map((action) => (
-                      <li key={action}>{action}</li>
+                      <li key={action}>
+                        <bdi className="technical-value" dir="ltr">
+                          {escapeTechnicalText(action)}
+                        </bdi>
+                      </li>
                     ))}
                   </ul>
                 </li>
@@ -929,7 +988,11 @@ export function ChangeWorkspacePage({
             <h3>Change guidance</h3>
             <ul className="guidance-list">
               {workspace.analysis.guidance.map((item) => (
-                <li key={item}>{item}</li>
+                <li key={item}>
+                  <bdi className="technical-value" dir="ltr">
+                    {escapeTechnicalText(item)}
+                  </bdi>
+                </li>
               ))}
             </ul>
           </article>
@@ -952,8 +1015,9 @@ export function ChangeWorkspacePage({
                     <StatusBadge tone={resolver.status === 'complete' ? 'pass' : 'warning'}>
                       {resolver.status}
                     </StatusBadge>
-                    <span>
-                      <strong>{resolver.label}</strong> — <code>{resolver.endpoint}</code> —{' '}
+                    <span className="technical-value" dir="ltr">
+                      <strong>{escapeTechnicalText(resolver.label)}</strong> —{' '}
+                      <code>{escapeTechnicalText(resolver.endpoint)}</code> —{' '}
                       {String(resolver.questions.length)} retained questions
                     </span>
                   </li>

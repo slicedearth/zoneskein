@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -7,6 +8,7 @@ import {
   editChangeWorkspace,
   encodeChangeWorkspace,
   parseChangeWorkspace,
+  type ActiveChangeWorkspace,
   type ChangeWorkspace,
 } from '../core/project';
 import { ChangeWorkspacePage } from './ChangeWorkspacePage';
@@ -216,6 +218,61 @@ describe('local Change Workspace', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Apply edits' }));
     expect(screen.getByText(/explicitly accepted after a SHA-256 mismatch/iu)).toBeVisible();
+  });
+
+  it('retains accepted-mismatch provenance across a Change Lab route remount', async () => {
+    const object = JSON.parse(await serialised(workspace('Original title'))) as {
+      workspace: { title: string };
+    };
+    object.workspace.title = 'Altered route title';
+
+    function Harness() {
+      const [active, setActive] = useState<ActiveChangeWorkspace>({
+        integrity: { state: 'not-checked' },
+        workspace: workspace('Active route title'),
+      });
+      const [visible, setVisible] = useState(true);
+      return visible ? (
+        <ChangeWorkspacePage
+          initialActiveWorkspace={active}
+          onActiveWorkspaceChange={setActive}
+          onOpenChangeLab={() => setVisible(false)}
+        />
+      ) : (
+        <button type="button" onClick={() => setVisible(true)}>
+          Return to workspace
+        </button>
+      );
+    }
+
+    render(<Harness />);
+    chooseFile(localFile(JSON.stringify(object)));
+    expect(
+      await screen.findByRole('heading', { name: 'Digest mismatch quarantine' }),
+    ).toBeVisible();
+    fireEvent.click(
+      screen.getByRole('checkbox', {
+        name: /I understand that this file was altered/iu,
+      }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Accept altered workspace' }));
+
+    const warning = screen.getByText(/descends from data explicitly accepted/iu);
+    expect(warning).toHaveTextContent(/Claimed [0-9a-f]{64}; calculated [0-9a-f]{64}/iu);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open in Change Lab' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Return to workspace' }));
+
+    expect(screen.getByRole('heading', { name: 'Altered route title' })).toBeVisible();
+    expect(screen.getByText(/descends from data explicitly accepted/iu)).toHaveTextContent(
+      /Claimed [0-9a-f]{64}; calculated [0-9a-f]{64}/iu,
+    );
+    expect(screen.getByText('SHA-256 mismatch explicitly accepted')).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'New workspace' }));
+    expect(
+      screen.queryByText(/descends from data explicitly accepted/iu),
+    ).not.toBeInTheDocument();
   });
 
   it('renders imported resolver endpoints as inert text and never contacts them', async () => {

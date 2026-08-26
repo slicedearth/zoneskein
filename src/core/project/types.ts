@@ -126,6 +126,26 @@ export interface ChangeWorkspace {
   readonly updatedAt: string;
 }
 
+export type ChangeWorkspaceIntegrityProvenance =
+  | {
+      readonly state: 'not-checked';
+    }
+  | {
+      readonly digest: string;
+      readonly state: 'digest-match';
+    }
+  | {
+      readonly calculatedDigest: string;
+      readonly claimedDigest: string;
+      readonly state: 'mismatch-accepted';
+    };
+
+/** Browser-session provenance that must travel with an active workspace across routes. */
+export interface ActiveChangeWorkspace {
+  readonly integrity: ChangeWorkspaceIntegrityProvenance;
+  readonly workspace: ChangeWorkspace;
+}
+
 export interface ChangeWorkspaceIntegrity {
   readonly algorithm: 'SHA-256';
   readonly authenticity: 'none';

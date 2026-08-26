@@ -66,7 +66,13 @@ export interface DnsRecord {
 export interface DnsExtendedError {
   readonly code: number;
   readonly name: string;
+  readonly rawText?: {
+    readonly encoding: 'base64';
+    readonly octets: number;
+    readonly value: string;
+  };
   readonly text?: string;
+  readonly textEncoding?: 'binary' | 'utf-8';
 }
 
 export interface DnsEdns {

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 interface CopyButtonProps {
   readonly disabled?: boolean;
   readonly label?: string;
+  readonly resolveText?: () => string;
   readonly text: string;
 }
 
@@ -11,7 +12,12 @@ interface CopyFeedback {
   readonly text: string;
 }
 
-export function CopyButton({ disabled = false, label = 'Copy', text }: CopyButtonProps) {
+export function CopyButton({
+  disabled = false,
+  label = 'Copy',
+  resolveText,
+  text,
+}: CopyButtonProps) {
   const [feedback, setFeedback] = useState<CopyFeedback | null>(null);
   const timeout = useRef<number | undefined>(undefined);
 
@@ -24,8 +30,9 @@ export function CopyButton({ disabled = false, label = 'Copy', text }: CopyButto
 
   async function copy() {
     if (disabled) return;
-    const copiedText = text;
+    let copiedText = text;
     try {
+      copiedText = resolveText?.() ?? text;
       await navigator.clipboard.writeText(copiedText);
       setFeedback({ state: 'copied', text: copiedText });
     } catch {

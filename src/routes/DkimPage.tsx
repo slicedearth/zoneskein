@@ -27,6 +27,12 @@ import {
   evidenceFromDkim,
   type MailAuthenticationEvidence,
 } from '../core/mail/evidence';
+import {
+  escapeTechnicalText,
+  hasUnsafeTechnicalText,
+  stringifyTechnicalEvidence,
+  utf8Base64Evidence,
+} from '../core/technical-text';
 
 const RESOLVER_IDS = Object.keys(RESOLVERS) as ResolverId[];
 type DkimMode = 'key' | 'message';
@@ -111,7 +117,7 @@ function MessageVerificationResults({
     report.resolverId,
     report.lineEndingsNormalised,
   );
-  const evidence = JSON.stringify(
+  const evidence = stringifyTechnicalEvidence(
     {
       capturedAt: report.capturedAt,
       dnsQuestions: report.dnsQuestions,
@@ -124,8 +130,8 @@ function MessageVerificationResults({
       },
       results: report.results.map(evidenceResult),
       sourceOctets: report.sourceOctets,
+      textProjection: 'visible-escapes-v1',
     },
-    null,
     2,
   );
   return (
@@ -161,7 +167,7 @@ function MessageVerificationResults({
         <dl className="metadata-grid">
           <div>
             <dt>Input</dt>
-            <dd>{report.inputLabel}</dd>
+            <dd>{escapeTechnicalText(report.inputLabel)}</dd>
           </div>
           <div>
             <dt>Original size</dt>
@@ -200,11 +206,11 @@ function MessageVerificationResults({
               <div className="result-heading">
                 <div>
                   <p className="eyebrow">Signature {String(index + 1)}</p>
-                  <h3>{result.domain}</h3>
+                  <h3>{escapeTechnicalText(result.domain)}</h3>
                 </div>
                 <StatusBadge tone={verificationTone(result)}>{resultLabel(result)}</StatusBadge>
               </div>
-              <p>{result.reason}</p>
+              <p>{escapeTechnicalText(result.reason)}</p>
               {result.length === undefined ? null : (
                 <p className="snapshot-warning">
                   This signature uses l={result.length}, so content after the signed body prefix
@@ -214,11 +220,11 @@ function MessageVerificationResults({
               <dl className="metadata-grid">
                 <div>
                   <dt>Selector</dt>
-                  <dd>{result.selector}</dd>
+                  <dd>{escapeTechnicalText(result.selector)}</dd>
                 </div>
                 <div>
                   <dt>Algorithm</dt>
-                  <dd>{result.algorithm}</dd>
+                  <dd>{escapeTechnicalText(result.algorithm)}</dd>
                 </div>
                 <div>
                   <dt>Canonicalisation</dt>
@@ -724,14 +730,27 @@ export function DkimPage({ onUseForDmarc }: DkimPageProps = {}) {
               <article className="result-panel">
                 <div className="result-heading">
                   <h3>Published key record</h3>
-                  <CopyButton text={report.key.record} />
+                  <div className="export-actions">
+                    <CopyButton
+                      label="Copy safe DKIM record"
+                      text={escapeTechnicalText(report.key.record)}
+                    />
+                    {hasUnsafeTechnicalText(report.key.record) ? (
+                      <CopyButton
+                        label="Copy exact DKIM record as Base64"
+                        text={utf8Base64Evidence(report.key.record).value}
+                      />
+                    ) : null}
+                  </div>
                 </div>
-                <pre className="spf-output">{report.key.record}</pre>
-                <p>{report.inspection.message}</p>
+                <pre className="spf-output technical-value" dir="ltr">
+                  {escapeTechnicalText(report.key.record)}
+                </pre>
+                <p>{escapeTechnicalText(report.inspection.message)}</p>
                 <dl className="metadata-grid">
                   <div>
                     <dt>Key type</dt>
-                    <dd>{report.key.keyType}</dd>
+                    <dd>{escapeTechnicalText(report.key.keyType)}</dd>
                   </div>
                   <div>
                     <dt>Key size</dt>
@@ -761,16 +780,19 @@ export function DkimPage({ onUseForDmarc }: DkimPageProps = {}) {
                 <article className="result-panel">
                   <h3>Tags</h3>
                   <dl className="tag-list">
-                    {Object.entries(report.key.tags).map(([name, value]) => (
-                      <div key={name}>
-                        <dt>{name}</dt>
-                        <dd>
-                          {name === 'p'
-                            ? `${value.slice(0, 30)}${value.length > 30 ? '…' : ''}`
-                            : value}
-                        </dd>
-                      </div>
-                    ))}
+                    {Object.entries(report.key.tags).map(([name, value]) => {
+                      const visibleValue = escapeTechnicalText(value);
+                      return (
+                        <div key={name}>
+                          <dt>{escapeTechnicalText(name)}</dt>
+                          <dd>
+                            {name === 'p'
+                              ? `${visibleValue.slice(0, 30)}${visibleValue.length > 30 ? '…' : ''}`
+                              : visibleValue}
+                          </dd>
+                        </div>
+                      );
+                    })}
                   </dl>
                 </article>
                 <article className="result-panel">
@@ -792,7 +814,7 @@ export function DkimPage({ onUseForDmarc }: DkimPageProps = {}) {
                           >
                             {item.severity}
                           </StatusBadge>
-                          <span>{item.message}</span>
+                          <span>{escapeTechnicalText(item.message)}</span>
                         </li>
                       ))}
                     </ul>

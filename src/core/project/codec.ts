@@ -1,4 +1,5 @@
 import { failure, success, type Result } from '../result';
+import { hasUnpairedSurrogate, hasUnsafeTechnicalText } from '../technical-text';
 import { canonicalJson } from './canonical-json';
 import { CHANGE_WORKSPACE_LIMITS } from './limits';
 import {
@@ -68,18 +69,6 @@ const PHASE_IDS = ['prepare', 'wait', 'publish', 'verify', 'observe', 'restore']
 function isRecordType(value: string): boolean {
   if (!RECORD_TYPE_PATTERN.test(value)) return false;
   return !value.startsWith('TYPE') || Number(value.slice(4)) <= 65_535;
-}
-
-function hasUnpairedSurrogate(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code >= 0xd800 && code <= 0xdbff) {
-      const following = value.charCodeAt(index + 1);
-      if (!(following >= 0xdc00 && following <= 0xdfff)) return true;
-      index += 1;
-    } else if (code >= 0xdc00 && code <= 0xdfff) return true;
-  }
-  return false;
 }
 
 interface EvidenceBudget {
@@ -194,11 +183,23 @@ function asString(
   value: unknown,
   maximumOctets: number,
   path: string,
-  options: { readonly allowEmpty?: boolean; readonly trim?: boolean } = {},
+  options: {
+    readonly allowEmpty?: boolean;
+    readonly allowLineStructure?: boolean;
+    readonly trim?: boolean;
+  } = {},
 ): Result<string, ChangeWorkspaceCodecError> {
   if (typeof value !== 'string') return schemaFailure('Expected a string.', path);
   if (hasUnpairedSurrogate(value)) {
     return schemaFailure('String must not contain unpaired UTF-16 surrogates.', path);
+  }
+  const visualControlCandidate =
+    options.allowLineStructure === true ? value.replaceAll(/[\t\n\r]/gu, '') : value;
+  if (hasUnsafeTechnicalText(visualControlCandidate)) {
+    return schemaFailure(
+      'String must use visible escape notation instead of control or default-ignorable characters.',
+      path,
+    );
   }
   if (options.allowEmpty !== true && value.length === 0) {
     return schemaFailure('String must not be empty.', path);
@@ -350,6 +351,7 @@ function parseZoneState(
   }
   const source = asString(sourceValue, CHANGE_WORKSPACE_LIMITS.zoneOctets, `${path}.source`, {
     allowEmpty: true,
+    allowLineStructure: true,
   });
   if (!source.ok) return source;
   const status = asEnum(object.value['status'], ZONE_STATUSES, `${path}.status`);

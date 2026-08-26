@@ -1,5 +1,6 @@
 import { parseRecordView } from '../core/dns/records';
 import type { DnsRecord } from '../core/dns/types';
+import { bytesBase64, escapeTechnicalText } from '../core/technical-text';
 
 interface RecordTableProps {
   readonly compact?: boolean;
@@ -31,11 +32,17 @@ export function RecordTable({
             const view = parseRecordView(record);
             return (
               <tr key={`${record.section}-${record.owner}-${record.type}-${String(index)}`}>
-                <td className="record-data">{record.owner}</td>
+                <td className="record-data">
+                  <bdi className="technical-value" dir="ltr">
+                    {escapeTechnicalText(record.owner)}
+                  </bdi>
+                </td>
                 <td>{record.ttl}</td>
                 <td>{record.type}</td>
                 <td>
-                  <code className="record-value">{view.text}</code>
+                  <code className="record-value technical-value" dir="ltr">
+                    {view.text}
+                  </code>
                   {view.fields.length > 1 ? (
                     compact ? (
                       <details className="record-fields-details">
@@ -44,7 +51,11 @@ export function RecordTable({
                           {view.fields.map((item) => (
                             <div key={item.label}>
                               <dt>{item.label}</dt>
-                              <dd>{item.value}</dd>
+                              <dd>
+                                <bdi className="technical-value" dir="ltr">
+                                  {item.value}
+                                </bdi>
+                              </dd>
                             </div>
                           ))}
                         </dl>
@@ -54,12 +65,24 @@ export function RecordTable({
                         {view.fields.map((item) => (
                           <div key={item.label}>
                             <dt>{item.label}</dt>
-                            <dd>{item.value}</dd>
+                            <dd>
+                              <bdi className="technical-value" dir="ltr">
+                                {item.value}
+                              </bdi>
+                            </dd>
                           </div>
                         ))}
                       </dl>
                     )
                   ) : null}
+                  {record.rawRdata.length === 0 ? null : (
+                    <details className="raw-evidence-details">
+                      <summary>Raw RDATA · {record.rawRdata.length} octets</summary>
+                      <code className="record-value technical-value" dir="ltr">
+                        Base64: {bytesBase64(record.rawRdata)}
+                      </code>
+                    </details>
+                  )}
                 </td>
               </tr>
             );

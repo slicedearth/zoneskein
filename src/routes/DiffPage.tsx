@@ -31,6 +31,11 @@ import {
 import { DnsQueryRun } from '../core/doh/query-run';
 import { RESOLVERS } from '../core/doh/resolvers';
 import { WireDnsResolver } from '../core/doh/wire-resolver';
+import {
+  escapeTechnicalText,
+  markdownLiteral,
+  markdownTableLiteral,
+} from '../core/technical-text';
 import { parseZoneSnippet, ZONE_ANALYSIS_LIMITS } from '../core/zone/parser';
 import type { ZoneDocument, ZoneRecord } from '../core/zone/types';
 
@@ -265,6 +270,10 @@ function recordText(record: ZoneRecord | undefined): string {
   return `${record.owner} ${record.ttl === undefined ? '' : `${String(record.ttl)} `}${record.className} ${record.type} ${record.rdata.map((token) => token.raw).join(' ')}`;
 }
 
+function recordDisplayText(record: ZoneRecord | undefined): string {
+  return escapeTechnicalText(recordText(record));
+}
+
 function categoryTone(change: DnsChange) {
   if (change.disruptive) return 'error';
   if (change.category === 'added') return 'pass';
@@ -297,7 +306,7 @@ function markdown(report: DisplayReport): string {
     '| --- | --- | --- | --- | --- | --- | --- |',
     ...report.report.changes.map((change, index) => {
       const impact = report.plan.impacts[index];
-      return `| ${change.category} | ${impact?.risk ?? 'unknown'} | ${change.owner} | ${change.type} | ${recordText(change.before).replaceAll('|', '\\|')} | ${recordText(change.after).replaceAll('|', '\\|')} | ${(impact?.rollback ?? '').replaceAll('|', '\\|')} |`;
+      return `| ${change.category} | ${impact?.risk ?? 'unknown'} | ${markdownTableLiteral(change.owner)} | ${markdownTableLiteral(change.type)} | ${markdownTableLiteral(recordText(change.before))} | ${markdownTableLiteral(recordText(change.after))} | ${markdownTableLiteral(impact?.rollback ?? '')} |`;
     }),
     '',
     '## Preflight findings',
@@ -305,7 +314,8 @@ function markdown(report: DisplayReport): string {
     ...(report.plan.findings.length === 0
       ? ['- No warning or error findings in the supplied snapshots.']
       : report.plan.findings.map(
-          (item) => `- **${item.risk} / ${item.code}:** ${item.message}`,
+          (item) =>
+            `- **${item.risk} / ${markdownLiteral(item.code)}:** ${markdownLiteral(item.message)}`,
         )),
     '',
     '## Timing evidence',
@@ -319,9 +329,9 @@ function markdown(report: DisplayReport): string {
     '## Staged rollout',
     '',
     ...report.plan.phases.flatMap((phase, index) => [
-      `### ${String(index + 1)}. ${phase.title}`,
+      `### ${String(index + 1)}. ${markdownLiteral(phase.title)}`,
       '',
-      ...phase.actions.map((item) => `- ${item}`),
+      ...phase.actions.map((item) => `- ${markdownLiteral(item)}`),
       '',
     ]),
   ].join('\n');
@@ -965,7 +975,9 @@ export function DiffPage({ initialInput, onCreateWorkspace }: DiffPageProps = {}
         </div>
         {error !== '' ? (
           <p className="form-error" role="alert">
-            {error}
+            <bdi className="technical-value" dir="ltr">
+              {escapeTechnicalText(error)}
+            </bdi>
           </p>
         ) : null}
         <div className="form-actions">
@@ -1024,26 +1036,36 @@ export function DiffPage({ initialInput, onCreateWorkspace }: DiffPageProps = {}
           {display.currentIncompleteReasons !== undefined ? (
             <article className="conclusion-panel partial-panel">
               <StatusBadge tone="warning">Partial current view</StatusBadge>
-              <p>{display.currentIncompleteReasons.join(' ')}</p>
+              <p>
+                <bdi className="technical-value" dir="ltr">
+                  {escapeTechnicalText(display.currentIncompleteReasons.join(' '))}
+                </bdi>
+              </p>
             </article>
           ) : null}
           {parserDiagnostics.length > 0 ? (
             <article className="conclusion-panel">
               <StatusBadge tone="warning">Parser diagnostics</StatusBadge>
               <p>
-                {parserDiagnostics
-                  .map((item) => `${String(item.line)}:${String(item.column)} ${item.message}`)
-                  .join(' ')}
+                <bdi className="technical-value" dir="ltr">
+                  {escapeTechnicalText(
+                    parserDiagnostics
+                      .map(
+                        (item) => `${String(item.line)}:${String(item.column)} ${item.message}`,
+                      )
+                      .join(' '),
+                  )}
+                </bdi>
               </p>
             </article>
           ) : null}
           {display.currentSnapshot === undefined ? null : (
             <details className="method-note">
               <summary>Observed controlled-owner snapshot</summary>
-              <pre className="spf-output">
+              <pre className="spf-output technical-value" dir="ltr">
                 {display.currentSnapshot === ''
                   ? 'No selected records were returned.'
-                  : display.currentSnapshot}
+                  : escapeTechnicalText(display.currentSnapshot)}
               </pre>
             </details>
           )}
@@ -1051,7 +1073,9 @@ export function DiffPage({ initialInput, onCreateWorkspace }: DiffPageProps = {}
           display.dependencySnapshot === '' ? null : (
             <details className="method-note">
               <summary>Observed alias dependency evidence</summary>
-              <pre className="spf-output">{display.dependencySnapshot}</pre>
+              <pre className="spf-output technical-value" dir="ltr">
+                {escapeTechnicalText(display.dependencySnapshot)}
+              </pre>
               <p>
                 These reachable alias-target records are retained as resolver evidence. They
                 were not treated as current change-state values because this live comparison
@@ -1102,9 +1126,10 @@ export function DiffPage({ initialInput, onCreateWorkspace }: DiffPageProps = {}
                 {display.plan.findings.map((finding) => (
                   <li key={`${finding.code}-${finding.message}`}>
                     <StatusBadge tone={riskTone(finding.risk)}>{finding.risk}</StatusBadge>
-                    <span>
-                      <strong>{finding.code}</strong> — {finding.message}
-                    </span>
+                    <bdi className="technical-value" dir="ltr">
+                      <strong>{escapeTechnicalText(finding.code)}</strong> —{' '}
+                      {escapeTechnicalText(finding.message)}
+                    </bdi>
                   </li>
                 ))}
               </ul>
@@ -1142,15 +1167,21 @@ export function DiffPage({ initialInput, onCreateWorkspace }: DiffPageProps = {}
                           </StatusBadge>
                         </td>
                         <td>
-                          <code>{change.owner}</code>
+                          <code className="technical-value" dir="ltr">
+                            {escapeTechnicalText(change.owner)}
+                          </code>
                           <br />
                           {change.type}
                         </td>
                         <td>
-                          <code className="record-value">{recordText(change.before)}</code>
+                          <code className="record-value technical-value" dir="ltr">
+                            {recordDisplayText(change.before)}
+                          </code>
                         </td>
                         <td>
-                          <code className="record-value">{recordText(change.after)}</code>
+                          <code className="record-value technical-value" dir="ltr">
+                            {recordDisplayText(change.after)}
+                          </code>
                         </td>
                         <td>
                           <StatusBadge
@@ -1158,17 +1189,27 @@ export function DiffPage({ initialInput, onCreateWorkspace }: DiffPageProps = {}
                           >
                             {display.plan.impacts[index]?.risk ?? 'moderate'} risk
                           </StatusBadge>{' '}
-                          {change.explanation}
+                          <bdi className="technical-value" dir="ltr">
+                            {escapeTechnicalText(change.explanation)}
+                          </bdi>
                           {change.disruptive ? ' Potentially disruptive.' : ''}
                           {display.plan.impacts[index] === undefined ? null : (
                             <details className="inline-details">
                               <summary>Impact and rollback</summary>
                               <ul>
                                 {display.plan.impacts[index].reasons.map((reason) => (
-                                  <li key={reason}>{reason}</li>
+                                  <li key={reason}>
+                                    <bdi className="technical-value" dir="ltr">
+                                      {escapeTechnicalText(reason)}
+                                    </bdi>
+                                  </li>
                                 ))}
                               </ul>
-                              <p>{display.plan.impacts[index].rollback}</p>
+                              <p>
+                                <bdi className="technical-value" dir="ltr">
+                                  {escapeTechnicalText(display.plan.impacts[index].rollback)}
+                                </bdi>
+                              </p>
                             </details>
                           )}
                         </td>
@@ -1184,7 +1225,11 @@ export function DiffPage({ initialInput, onCreateWorkspace }: DiffPageProps = {}
               <h3>Rollout guidance</h3>
               <ul className="guidance-list">
                 {display.report.guidance.map((item) => (
-                  <li key={item}>{item}</li>
+                  <li key={item}>
+                    <bdi className="technical-value" dir="ltr">
+                      {escapeTechnicalText(item)}
+                    </bdi>
+                  </li>
                 ))}
               </ul>
             </article>
@@ -1194,10 +1239,18 @@ export function DiffPage({ initialInput, onCreateWorkspace }: DiffPageProps = {}
             <ol className="rollout-phases">
               {display.plan.phases.map((phase) => (
                 <li key={phase.id}>
-                  <h4>{phase.title}</h4>
+                  <h4>
+                    <bdi className="technical-value" dir="ltr">
+                      {escapeTechnicalText(phase.title)}
+                    </bdi>
+                  </h4>
                   <ul>
                     {phase.actions.map((action) => (
-                      <li key={action}>{action}</li>
+                      <li key={action}>
+                        <bdi className="technical-value" dir="ltr">
+                          {escapeTechnicalText(action)}
+                        </bdi>
+                      </li>
                     ))}
                   </ul>
                 </li>

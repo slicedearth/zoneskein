@@ -1,6 +1,12 @@
 import type { DnsRecord } from './types';
+import {
+  bytesBase64,
+  bytesHex,
+  escapeTechnicalText,
+  projectTechnicalBytes,
+} from '../technical-text';
 
-const decoder = new TextDecoder('utf-8', { fatal: false });
+const strictDecoder = new TextDecoder('utf-8', { fatal: true });
 
 export interface RecordField {
   readonly label: string;
@@ -10,24 +16,25 @@ export interface RecordField {
 export interface ParsedRecordView {
   readonly fields: readonly RecordField[];
   readonly text: string;
-  readonly txtChunks?: readonly { readonly octets: number; readonly text: string }[];
+  readonly txtChunks?: readonly {
+    readonly display: string;
+    readonly encoding: 'binary' | 'utf-8';
+    readonly octets: number;
+    readonly rawBase64: string;
+    readonly text?: string;
+  }[];
 }
 
 function hex(bytes: Uint8Array): string {
-  return [...bytes]
-    .map((value) => value.toString(16).padStart(2, '0'))
-    .join('')
-    .toUpperCase();
-}
-
-function base64(bytes: Uint8Array): string {
-  let binary = '';
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary);
+  return bytesHex(bytes);
 }
 
 function field(label: string, value: unknown): RecordField {
   if (value instanceof Uint8Array) return { label, value: hex(value) };
+  return { label, value: escapeTechnicalText(String(value)) };
+}
+
+function projectedField(label: string, value: string | number): RecordField {
   return { label, value: String(value) };
 }
 
@@ -42,15 +49,36 @@ function textFromFields(fields: readonly RecordField[]): string {
 function txtView(data: unknown, raw: Uint8Array): ParsedRecordView {
   const chunks = Array.isArray(data)
     ? data.flatMap((part) =>
-        part instanceof Uint8Array ? [{ octets: part.length, text: decoder.decode(part) }] : [],
+        part instanceof Uint8Array
+          ? [
+              (() => {
+                const projection = projectTechnicalBytes(part);
+                let text: string | undefined;
+                if (projection.encoding === 'utf-8') text = strictDecoder.decode(part);
+                return {
+                  display: projection.display,
+                  encoding: projection.encoding,
+                  octets: part.length,
+                  rawBase64: projection.rawBase64,
+                  ...(text === undefined ? {} : { text }),
+                };
+              })(),
+            ]
+          : [],
       )
     : [];
   if (chunks.length === 0) return { fields: [], text: `\\# ${String(raw.length)} ${hex(raw)}` };
   const text = chunks
-    .map(({ text: value }) => `"${value.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`)
+    .map(({ display }) => '"' + display.replaceAll('"', '\\"') + '"')
     .join(' ');
   return {
-    fields: [{ label: 'Combined value', value: chunks.map((chunk) => chunk.text).join('') }],
+    fields: [
+      { label: 'Combined value', value: chunks.map((chunk) => chunk.display).join('') },
+      {
+        label: 'Raw character-strings (Base64)',
+        value: chunks.map((chunk) => chunk.rawBase64).join(' '),
+      },
+    ],
     text,
     txtChunks: chunks,
   };
@@ -75,6 +103,21 @@ function readUint32(bytes: Uint8Array, offset: number): number | null {
     : ((first << 24) | (second << 16) | (third << 8) | fourth) >>> 0;
 }
 
+function dnsLabel(bytes: Uint8Array): string {
+  return [...bytes]
+    .map((byte) =>
+      (byte >= 0x30 && byte <= 0x39) ||
+      (byte >= 0x41 && byte <= 0x5a) ||
+      (byte >= 0x61 && byte <= 0x7a) ||
+      byte === 0x2a ||
+      byte === 0x2d ||
+      byte === 0x5f
+        ? String.fromCharCode(byte)
+        : '\\' + String(byte).padStart(3, '0'),
+    )
+    .join('');
+}
+
 function parseUncompressedName(bytes: Uint8Array, initialOffset: number) {
   const labels: string[] = [];
   let offset = initialOffset;
@@ -85,7 +128,7 @@ function parseUncompressedName(bytes: Uint8Array, initialOffset: number) {
     if (length === 0)
       return { name: labels.length === 0 ? '.' : `${labels.join('.')}.`, offset };
     if (offset + length > bytes.length) return null;
-    labels.push(decoder.decode(bytes.slice(offset, offset + length)));
+    labels.push(dnsLabel(bytes.slice(offset, offset + length)));
     offset += length;
   }
   return null;
@@ -128,7 +171,7 @@ function svcbParameter(key: number, value: Uint8Array): string {
     for (let offset = 0; offset < value.length;) {
       const length = value[offset];
       if (length === undefined || offset + 1 + length > value.length) return hex(value);
-      values.push(decoder.decode(value.slice(offset + 1, offset + 1 + length)));
+      values.push(projectTechnicalBytes(value.slice(offset + 1, offset + 1 + length)).display);
       offset += 1 + length;
     }
     return values.join(',');
@@ -143,8 +186,8 @@ function svcbParameter(key: number, value: Uint8Array): string {
     }
     return values.join(',');
   }
-  if (key === 5) return base64(value);
-  if (key === 7) return decoder.decode(value);
+  if (key === 5) return bytesBase64(value);
+  if (key === 7) return projectTechnicalBytes(value).display;
   return hex(value);
 }
 
@@ -152,14 +195,19 @@ function svcbView(raw: Uint8Array): ParsedRecordView | null {
   const priority = readUint16(raw, 0);
   const target = parseUncompressedName(raw, 2);
   if (priority === null || target === null) return null;
-  const fields: RecordField[] = [field('Priority', priority), field('Target', target.name)];
+  const fields: RecordField[] = [
+    projectedField('Priority', priority),
+    projectedField('Target', target.name),
+  ];
   let offset = target.offset;
   while (offset < raw.length) {
     const key = readUint16(raw, offset);
     const length = readUint16(raw, offset + 2);
     if (key === null || length === null || offset + 4 + length > raw.length) return null;
     const value = raw.slice(offset + 4, offset + 4 + length);
-    fields.push(field(SVCB_KEYS[key] ?? `key${String(key)}`, svcbParameter(key, value)));
+    fields.push(
+      projectedField(SVCB_KEYS[key] ?? `key${String(key)}`, svcbParameter(key, value)),
+    );
     offset += 4 + length;
   }
   return { fields, text: textFromFields(fields) };
@@ -220,7 +268,8 @@ export function parseRecordView(record: DnsRecord): ParsedRecordView {
     );
   }
   if (typeof record.data === 'string') {
-    return { fields: [field('Value', record.data)], text: record.data };
+    const value = field('Value', record.data);
+    return { fields: [value], text: value.value };
   }
   if (record.data !== null && typeof record.data === 'object') {
     const fields =
@@ -235,6 +284,13 @@ export function parseRecordView(record: DnsRecord): ParsedRecordView {
   };
 }
 
+/** Return exact semantic TXT text only when every character-string is valid UTF-8. */
+export function txtRecordValue(record: DnsRecord): string | null {
+  const chunks = parseRecordView(record).txtChunks;
+  if (chunks === undefined || chunks.some((chunk) => chunk.text === undefined)) return null;
+  return chunks.map((chunk) => chunk.text ?? '').join('');
+}
+
 export function recordJson(record: DnsRecord): Record<string, unknown> {
   const view = parseRecordView(record);
   return {
@@ -242,6 +298,11 @@ export function recordJson(record: DnsRecord): Record<string, unknown> {
     data: view.text,
     fields: Object.fromEntries(view.fields.map(({ label, value }) => [label, value])),
     owner: record.owner,
+    rawRdata: {
+      encoding: 'base64',
+      octets: record.rawRdata.length,
+      value: bytesBase64(record.rawRdata),
+    },
     section: record.section,
     ttl: record.ttl,
     type: record.type,

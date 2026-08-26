@@ -1,5 +1,5 @@
 import { validateDnsName } from '../dns/names';
-import { parseRecordView } from '../dns/records';
+import { txtRecordValue } from '../dns/records';
 import { reverseNameFromAddress } from '../dns/reverse';
 import { DnsQueryError, type DnsRecord, type DnsResolver } from '../dns/types';
 import { DnsQueryRun } from '../doh/query-run';
@@ -194,22 +194,28 @@ export class WireSpfDnsClient implements SpfSenderDnsClient {
         };
       }
       const mxRecords = type === 'MX' ? distinctMxRecords(matching) : undefined;
-      const values = matching.flatMap((record) => {
-        if (type === 'TXT') {
-          const view = parseRecordView(record);
-          return view.txtChunks === undefined
+      const txtValues = type === 'TXT' ? matching.map(txtRecordValue) : [];
+      const malformedText = txtValues.some((value) => value === null);
+      const values =
+        type === 'TXT'
+          ? txtValues.filter((value): value is string => value !== null)
+          : type === 'MX'
             ? []
-            : [view.txtChunks.map((chunk) => chunk.text).join('')];
-        }
-        if (type === 'MX') {
-          return [];
-        }
-        return typeof record.data === 'string' ? [record.data] : [];
-      });
+            : matching.flatMap((record) =>
+                typeof record.data === 'string' ? [record.data] : [],
+              );
       const uniqueValues =
         mxRecords === undefined
           ? [...new Set(values)]
           : [...new Set(mxRecords.map((record) => record.exchange))];
+      if (malformedText) {
+        return {
+          error: 'The DNS answer contains TXT data that is not valid UTF-8.',
+          messageBytes: response.message.messageBytes,
+          status: 'error',
+          values: [],
+        };
+      }
       const ttlValues = bound.ttlRecords.map((record) => record.ttl).filter((ttl) => ttl >= 0);
       const ttl =
         uniqueValues.length === 0 || ttlValues.length === 0

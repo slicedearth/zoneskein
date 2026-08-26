@@ -27,6 +27,11 @@ import { DnsQueryRun } from '../core/doh/query-run';
 import { RESOLVERS } from '../core/doh/resolvers';
 import { WireDnsResolver } from '../core/doh/wire-resolver';
 import { MAX_SNAPSHOT_CONTENT_OCTETS } from '../core/snapshots/store';
+import {
+  escapeTechnicalText,
+  projectedTechnicalText,
+  stringifyTechnicalEvidence,
+} from '../core/technical-text';
 
 const RESOLVER_IDS = Object.keys(RESOLVERS) as ResolverId[];
 
@@ -80,7 +85,7 @@ function maintenanceLabel(state: RootTrustAnchorMaintenanceState): string {
 }
 
 function reportJson(report: DnssecChainReport): string {
-  return JSON.stringify(
+  return stringifyTechnicalEvidence(
     {
       application:
         report.application === undefined
@@ -90,8 +95,8 @@ function reportJson(report: DnssecChainReport): string {
               owner: report.application.owner,
               records: report.application.records.map((record) => ({
                 class: record.class,
-                data: parseRecordView(record).text,
-                owner: record.owner,
+                data: projectedTechnicalText(parseRecordView(record).text),
+                owner: projectedTechnicalText(escapeTechnicalText(record.owner)),
                 rawRdataBase64: bytesBase64(record.rawRdata),
                 section: record.section,
                 ttl: record.ttl,
@@ -102,7 +107,19 @@ function reportJson(report: DnssecChainReport): string {
               verifications: report.application.verifications,
               wildcardExpanded: report.application.wildcardExpanded,
             },
-      evidence: report.evidence,
+      evidence: report.evidence.map((item) => ({
+        ...item,
+        ...(item.extendedErrors === undefined
+          ? {}
+          : {
+              extendedErrors: item.extendedErrors.map((error) => ({
+                ...error,
+                ...(error.text === undefined
+                  ? {}
+                  : { text: projectedTechnicalText(error.text) }),
+              })),
+            }),
+      })),
       evidenceValidUntil: report.evidenceValidUntil,
       explanation: report.explanation,
       state: report.state,
@@ -156,8 +173,8 @@ function reportJson(report: DnssecChainReport): string {
       trustAnchorSource: report.trustAnchorSource,
       validatedAt: report.validatedAt,
       validatorVersion: report.validatorVersion,
+      textProjection: 'visible-escapes-v1',
     },
-    null,
     2,
   );
 }
@@ -214,11 +231,17 @@ function ApplicationDetails({ value }: { readonly value: DnssecApplicationResult
             <tbody>
               {value.records.map((record, index) => (
                 <tr key={`${record.owner}-${record.type}-${String(index)}`}>
-                  <td>{record.owner}</td>
+                  <td>
+                    <bdi className="technical-value" dir="ltr">
+                      {escapeTechnicalText(record.owner)}
+                    </bdi>
+                  </td>
                   <td>{record.ttl}</td>
                   <td>{record.type}</td>
                   <td>
-                    <code className="record-value">{parseRecordView(record).text}</code>
+                    <code className="record-value technical-value" dir="ltr">
+                      {parseRecordView(record).text}
+                    </code>
                   </td>
                 </tr>
               ))}

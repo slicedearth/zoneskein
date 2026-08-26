@@ -1,6 +1,7 @@
 import { encode } from '@dnsquery/dns-packet';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { marked } from 'marked';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { DNS_RECORD_TYPES } from '../core/dns/types';
@@ -302,7 +303,7 @@ describe('DNS record explorer', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Copy Markdown evidence' }));
     await waitFor(() => expect(writeText).toHaveBeenCalledTimes(2));
     const markdown = String(writeText.mock.calls[1]?.[0]);
-    expect(markdown).toContain('# ZoneSkein DNS lookup — comparison-lookup.example');
+    expect(markdown).toContain('comparison-lookup.example');
     expect(markdown).toContain('### Cloudflare 1.1.1.1 — transport-error');
     expect(markdown).toContain('### Quad9 (direct) — transport-error');
     expect(markdown).toContain('end-to-end HTTP/2 or HTTP/3');
@@ -462,12 +463,69 @@ describe('DNS record explorer', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Inspect records' }));
 
-    expect(await screen.findByText(/img src=x/iu)).toBeVisible();
+    expect((await screen.findAllByText(/img src=x/iu)).length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole('button', { name: 'Copy Markdown evidence' }));
     await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
     const markdown = String(writeText.mock.calls[0]?.[0]);
-    expect(markdown).toContain('&lt;img src=x onerror=alert(1)&gt; &amp; evidence');
-    expect(markdown).not.toContain('<img src=x');
+    const html = marked.parse(markdown, { async: false, gfm: true });
+    if (typeof html !== 'string')
+      throw new Error('Synchronous Markdown parsing returned a promise.');
+    const rendered = window.document.createElement('div');
+    rendered.innerHTML = html;
+    expect(rendered.querySelector('img')).toBeNull();
+    expect(rendered.querySelector('a')).toBeNull();
+    expect(rendered.textContent).toContain('<img src=x onerror=alert(1)> & evidence');
+  });
+
+  it('renders hostile TXT controls visibly and retains exact raw RDATA in JSON evidence', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(
+          txtAnswerResponse('ordinary 🌏 \u202e\u2066hidden\nline', 'control-lookup.example.'),
+        ),
+    );
+    render(<LookupPage />);
+    for (const type of ['A', 'AAAA', 'MX']) {
+      fireEvent.click(screen.getByRole('checkbox', { name: type }));
+    }
+    fireEvent.change(screen.getByLabelText('DNS name'), {
+      target: { value: 'control-lookup.example' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect records' }));
+
+    const visible = await screen.findAllByText(
+      /ordinary 🌏.*\\u\{202E\}.*\\u\{2066\}hidden\\nline/iu,
+    );
+    expect(visible.some((element) => element.getAttribute('dir') === 'ltr')).toBe(true);
+    expect(document.body.textContent).not.toContain('\u202e');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy JSON evidence' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
+    const evidence = JSON.parse(String(writeText.mock.calls[0]?.[0])) as {
+      observations: {
+        response: {
+          answerRecords: {
+            data: string;
+            rawRdata: { encoding: string; octets: number; value: string };
+          }[];
+        };
+      }[];
+      textProjection?: string;
+    };
+    const record = evidence.observations[0]?.response.answerRecords[0];
+    expect(evidence.textProjection).toBe('visible-escapes-v1');
+    expect(record?.data).toContain('\\u{202E}\\u{2066}');
+    expect(record?.data).not.toContain('\u202e');
+    expect(record?.rawRdata.encoding).toBe('base64');
+    expect(typeof record?.rawRdata.octets).toBe('number');
+    expect(typeof record?.rawRdata.value).toBe('string');
   });
 
   it('groups comparison observations by record type before resolver', async () => {

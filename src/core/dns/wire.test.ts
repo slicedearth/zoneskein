@@ -188,11 +188,62 @@ describe('DNS wire messages', () => {
     bytes.set(data, optionOffset + 4);
     const result = decodeDnsMessage(bytes);
     expect(result.edns?.extendedErrors).toEqual([
-      { code: 6, name: 'DNSSEC Bogus', text: 'validation failed' },
+      {
+        code: 6,
+        name: 'DNSSEC Bogus',
+        rawText: {
+          encoding: 'base64',
+          octets: 17,
+          value: 'dmFsaWRhdGlvbiBmYWlsZWQ=',
+        },
+        text: 'validation failed',
+        textEncoding: 'utf-8',
+      },
     ]);
     expect(result.additionals[0]?.data).toEqual(
       expect.objectContaining({ udpPayloadSize: 1232 }),
     );
+  });
+
+  it('preserves and visibly escapes hostile or malformed extended-error text bytes', () => {
+    const assertText = (text: Uint8Array, display: string, encoding: 'binary' | 'utf-8') => {
+      const data = new Uint8Array(2 + text.length);
+      data[1] = 6;
+      data.set(text, 2);
+      const bytes = encode({
+        additionals: [
+          {
+            class: 'IN',
+            name: '.',
+            options: [{ code: 'PADDING', length: data.length }],
+            type: 'OPT',
+            udpPayloadSize: 1232,
+          } as never,
+        ],
+        flags: 0x8182,
+        id: 0,
+        questions: [{ class: 'IN', name: 'broken.example.', type: 'A' }],
+        type: 'response',
+      });
+      const optionOffset = bytes.length - data.length - 4;
+      bytes[optionOffset] = 0;
+      bytes[optionOffset + 1] = 15;
+      bytes.set(data, optionOffset + 4);
+      const error = decodeDnsMessage(bytes).edns?.extendedErrors[0];
+      expect(error).toMatchObject({
+        rawText: { encoding: 'base64', octets: text.length },
+        text: display,
+        textEncoding: encoding,
+      });
+    };
+
+    assertText(
+      new TextEncoder().encode('bad\u0000\u202e\u2066\u2028text'),
+      'bad\\u{0000}\\u{202E}\\u{2066}\\u{2028}text',
+      'utf-8',
+    );
+    assertText(Uint8Array.from([0x66, 0x80]), '\\x66\\x80', 'binary');
+    assertText(Uint8Array.from([0x66, 0x81]), '\\x66\\x81', 'binary');
   });
 
   it('derives the negative cache TTL from the SOA TTL and minimum', () => {

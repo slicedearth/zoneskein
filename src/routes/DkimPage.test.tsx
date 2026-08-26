@@ -1,5 +1,5 @@
 import { decode, encode } from '@dnsquery/dns-packet';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -278,6 +278,47 @@ describe('DkimPage', () => {
     await user.click(screen.getByRole('button', { name: 'Verify message signatures' }));
     expect(await screen.findByRole('alert')).toHaveTextContent(/paste a complete message/iu);
     expect(screen.queryByText('Unsigned')).not.toBeInTheDocument();
+  });
+
+  it('makes hostile key text visible while preserving exact record evidence', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const control = String.fromCodePoint(0x202e);
+    const record = `${ED25519_KEY}; n=literal \\u{202E}; x=${control}hidden`;
+    const visible = `${ED25519_KEY}; n=literal \\\\u{202E}; x=\\u{202E}hidden`;
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<typeof fetch>((input, init) => Promise.resolve(txtResponse(input, init, record))),
+    );
+    render(<DkimPage />);
+
+    fireEvent.change(screen.getByLabelText('Signing domain'), {
+      target: { value: 'control-key.test' },
+    });
+    fireEvent.change(screen.getByLabelText('Selector'), { target: { value: 'key' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect DKIM key' }));
+
+    const result = (await screen.findByText('Published key record')).closest('article');
+    if (result === null) throw new Error('Expected a DKIM key result panel.');
+    expect(within(result).getByText(visible, { selector: 'pre' })).toBeVisible();
+    expect(result.textContent).not.toContain(control);
+    expect(document.body.textContent).not.toContain(control);
+
+    fireEvent.click(within(result).getByRole('button', { name: 'Copy safe DKIM record' }));
+    fireEvent.click(
+      within(result).getByRole('button', { name: 'Copy exact DKIM record as Base64' }),
+    );
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(2));
+
+    expect(writeText.mock.calls[0]?.[0]).toBe(visible);
+    const exactBase64 = String(writeText.mock.calls[1]?.[0]);
+    const exactBytes = Uint8Array.from(atob(exactBase64), (character) =>
+      character.charCodeAt(0),
+    );
+    expect(new TextDecoder().decode(exactBytes)).toBe(record);
   });
 
   it('does not resurrect a key report after switching modes during Web Crypto inspection', async () => {

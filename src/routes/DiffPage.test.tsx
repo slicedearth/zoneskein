@@ -1,5 +1,6 @@
 import { encode } from '@dnsquery/dns-packet';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { marked } from 'marked';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ChangeWorkspace } from '../core/project';
@@ -664,5 +665,47 @@ describe('DNS Change Lab', () => {
     expect(
       screen.queryByRole('button', { name: 'Open in Change Workspace' }),
     ).not.toBeInTheDocument();
+  });
+
+  it('exports hostile zone values only as literal Markdown evidence', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const tick = String.fromCharCode(96);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    render(<DiffPage />);
+    fireEvent.change(screen.getByLabelText('Current or earlier snapshot'), {
+      target: { value: 'example.test. 300 IN TXT "safe"' },
+    });
+    fireEvent.change(screen.getByLabelText('Proposed or later snapshot'), {
+      target: {
+        value:
+          'example.test. 300 IN TXT "![pixel](https://attacker.invalid/p) <img src=x> **bold** ' +
+          tick +
+          'code' +
+          tick +
+          ' | \u202e"',
+      },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Compare snapshots' }));
+    expect(screen.getByText('Change set')).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy Markdown report' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
+    const markdown = String(writeText.mock.calls[0]?.[0]);
+    const html = marked.parse(markdown, { async: false, gfm: true });
+    if (typeof html !== 'string')
+      throw new Error('Synchronous Markdown parsing returned a promise.');
+    const rendered = window.document.createElement('div');
+    rendered.innerHTML = html;
+
+    expect(rendered.querySelector('img')).toBeNull();
+    expect(rendered.querySelector('a')).toBeNull();
+    expect(rendered.querySelector('blockquote')).toBeNull();
+    expect(rendered.textContent).toContain('![pixel](https://attacker.invalid/p)');
+    expect(rendered.textContent).toContain('<img src=x>');
+    expect(rendered.textContent).toContain('\\u{202E}');
+    expect(markdown).not.toContain('\u202e');
   });
 });

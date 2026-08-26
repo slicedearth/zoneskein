@@ -935,6 +935,17 @@ th {
   word-break: break-word;
 }
 
+.technical-value {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+.workspace-form input,
+.workspace-form textarea {
+  direction: ltr;
+  unicode-bidi: plaintext;
+}
+
 .record-fields {
   display: grid;
   margin: 0.7rem 0 0;
@@ -959,6 +970,18 @@ th {
   min-height: 44px;
   color: var(--muted);
   font-size: 0.72rem;
+}
+
+.raw-evidence-details {
+  margin-top: 0.35rem;
+  padding: 0;
+  border-top: 1px dashed var(--line);
+}
+
+.raw-evidence-details > summary {
+  min-height: 36px;
+  color: var(--muted);
+  font-size: 0.7rem;
 }
 
 .lookup-result .table-scroll table {

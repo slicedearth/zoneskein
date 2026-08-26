@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { canonicalJson } from './canonical-json';
 import { decodeChangeWorkspace, encodeChangeWorkspace, parseChangeWorkspace } from './codec';
 import { CHANGE_WORKSPACE_LIMITS } from './limits';
 import {
@@ -400,6 +401,53 @@ describe('portable Change Workspace codec', () => {
     current['source'] = '\udc00';
     const decoded = await decodeChangeWorkspace(textEncoder.encode(JSON.stringify(object)));
     expect(decoded).toMatchObject({ ok: false, error: { code: 'unsupported-value' } });
+  });
+
+  it('rejects visually unsafe controls even when the imported digest matches', async () => {
+    const object = await encodedObject();
+    const importedWorkspace = object['workspace'] as Record<string, unknown>;
+    const analysis = importedWorkspace['analysis'] as Record<string, unknown>;
+    const findings = analysis['findings'] as Record<string, unknown>[];
+    if (findings[0] === undefined) throw new Error('Expected a fixture finding.');
+    findings[0]['message'] =
+      'Misleading \u061c\u200e\u200f\u202e\u202c\u2066\u2069\u200b\u2060\ufffd evidence';
+
+    const material = canonicalJson({
+      format: object['format'],
+      workspace: importedWorkspace,
+    });
+    if (!material.ok) throw new Error(material.error.message);
+    const digest = new Uint8Array(
+      await crypto.subtle.digest('SHA-256', textEncoder.encode(material.value)),
+    );
+    const integrity = object['integrity'] as Record<string, unknown>;
+    integrity['digest'] = [...digest]
+      .map((octet) => octet.toString(16).padStart(2, '0'))
+      .join('');
+
+    const decoded = await decodeChangeWorkspace(textEncoder.encode(JSON.stringify(object)));
+    expect(decoded).toMatchObject({
+      error: {
+        code: 'invalid-schema',
+        path: '$.workspace.analysis.findings[0].message',
+      },
+      ok: false,
+    });
+  });
+
+  it('allows zone line structure but rejects invisible controls in zone source', () => {
+    expect(parseChangeWorkspace(workspace()).ok).toBe(true);
+    expectFailure(
+      parseChangeWorkspace({
+        ...workspace(),
+        current: {
+          ...workspace().current,
+          source: '$ORIGIN example.test.\n@ IN TXT "unsafe \u202e text"\n',
+        },
+      }),
+      'invalid-schema',
+      '$.workspace.current.source',
+    );
   });
 
   it.each([

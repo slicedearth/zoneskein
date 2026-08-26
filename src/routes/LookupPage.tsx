@@ -12,7 +12,9 @@ import { reverseNameFromAddress } from '../core/dns/reverse';
 import {
   DNS_RECORD_TYPES,
   DnsQueryError,
+  type DnsEdns,
   type DnsQuestion,
+  type DnsRecord,
   type DnsRecordType,
   type DnsResponse,
   type ResolverDefinition,
@@ -21,6 +23,13 @@ import {
 import { DnsQueryRun } from '../core/doh/query-run';
 import { RESOLVERS } from '../core/doh/resolvers';
 import { WireDnsResolver } from '../core/doh/wire-resolver';
+import {
+  escapeTechnicalText,
+  markdownLiteral,
+  markdownTableLiteral,
+  projectedTechnicalText,
+  stringifyTechnicalEvidence,
+} from '../core/technical-text';
 
 const DEFAULT_RECORD_TYPES = [
   'A',
@@ -119,24 +128,55 @@ function markdownResolverProvenance(resolver: ResolverDefinition): string | null
   return `- ${resolver.label}: ${resolver.relay.operator} compatibility relay → ${resolver.relay.upstreamLabel} (${resolver.relay.upstreamEndpoint})`;
 }
 
-function markdownCell(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('\\', '\\\\')
-    .replaceAll('|', '\\|')
-    .replaceAll('\n', '<br>');
-}
-
 function answerRecords(results: readonly QueryResult[]) {
   return results.flatMap((result) =>
     result.outcome === 'response' ? result.response.message.answers : [],
   );
 }
 
+function recordEvidence(record: DnsRecord): Record<string, unknown> {
+  const evidence = recordJson(record);
+  const data = evidence['data'];
+  const owner = evidence['owner'];
+  const rawFields = evidence['fields'];
+  if (
+    typeof data !== 'string' ||
+    typeof owner !== 'string' ||
+    rawFields === null ||
+    typeof rawFields !== 'object' ||
+    Array.isArray(rawFields)
+  ) {
+    throw new Error('DNS record evidence has an invalid internal shape.');
+  }
+  const fields = Object.fromEntries(
+    Object.entries(rawFields).map(([label, value]) => {
+      if (typeof value !== 'string') {
+        throw new Error('DNS record evidence contains a non-text display field.');
+      }
+      return [label, projectedTechnicalText(value)];
+    }),
+  );
+  return {
+    ...evidence,
+    data: projectedTechnicalText(data),
+    fields,
+    owner: projectedTechnicalText(owner),
+  };
+}
+
+function ednsEvidence(edns: DnsEdns | undefined): Record<string, unknown> | undefined {
+  if (edns === undefined) return undefined;
+  return {
+    ...edns,
+    extendedErrors: edns.extendedErrors.map((error) => ({
+      ...error,
+      ...(error.text === undefined ? {} : { text: projectedTechnicalText(error.text) }),
+    })),
+  };
+}
+
 function jsonExport(run: CompletedLookupRun): string {
-  return JSON.stringify(
+  return stringifyTechnicalEvidence(
     {
       observations: run.results.map((result) => {
         const resolver = RESOLVERS[result.resolverId];
@@ -165,11 +205,11 @@ function jsonExport(run: CompletedLookupRun): string {
           ...context,
           outcome: result.outcome,
           response: {
-            additionalRecords: message.additionals.map(recordJson),
-            answerRecords: message.answers.map(recordJson),
-            authorityRecords: message.authorities.map(recordJson),
+            additionalRecords: message.additionals.map(recordEvidence),
+            answerRecords: message.answers.map(recordEvidence),
+            authorityRecords: message.authorities.map(recordEvidence),
             cache,
-            edns: message.edns,
+            edns: ednsEvidence(message.edns),
             flags: message.flags,
             messageBytes: message.messageBytes,
             negativeCacheTtl: message.negativeCacheTtl,
@@ -188,9 +228,9 @@ function jsonExport(run: CompletedLookupRun): string {
         submittedInput: run.descriptor.submittedInput,
       },
       schemaVersion: 1,
+      textProjection: 'visible-escapes-v1',
       tool: 'lookup',
     },
-    null,
     2,
   );
 }
@@ -200,7 +240,7 @@ function markdownExport(run: CompletedLookupRun): string {
     .map((id) => markdownResolverProvenance(RESOLVERS[id]))
     .filter((line): line is string => line !== null);
   const lines = [
-    `# ZoneSkein DNS lookup — ${run.descriptor.submittedInput}`,
+    `# ZoneSkein DNS lookup — ${markdownLiteral(run.descriptor.submittedInput)}`,
     '',
     `- Started: ${run.descriptor.startedAt}`,
     `- Completed: ${run.completedAt}`,
@@ -217,7 +257,7 @@ function markdownExport(run: CompletedLookupRun): string {
         lines.push(
           `### ${resolver.label} — ${result.error.code}`,
           '',
-          `> ${result.error.message.replaceAll('\n', ' ')}`,
+          `> ${markdownLiteral(result.error.message)}`,
           '',
         );
         continue;
@@ -237,7 +277,7 @@ function markdownExport(run: CompletedLookupRun): string {
       lines.push('| Owner | TTL | Type | Data |', '| --- | ---: | --- | --- |');
       for (const record of message.answers) {
         lines.push(
-          `| ${markdownCell(record.owner)} | ${String(record.ttl)} | ${markdownCell(record.type)} | ${markdownCell(recordDataText(record))} |`,
+          `| ${markdownTableLiteral(record.owner)} | ${String(record.ttl)} | ${markdownTableLiteral(record.type)} | ${markdownTableLiteral(recordDataText(record))} |`,
         );
       }
       lines.push('');
@@ -285,7 +325,11 @@ function ResultPanel({
           <h4>{resolver.label}</h4>
           <StatusBadge tone="error">{result.error.code}</StatusBadge>
         </div>
-        <p>{result.error.message}</p>
+        <p>
+          <bdi className="technical-value" dir="ltr">
+            {escapeTechnicalText(result.error.message)}
+          </bdi>
+        </p>
       </article>
     );
   }
@@ -325,7 +369,25 @@ function ResultPanel({
                       <strong>
                         EDE {error.code}: {error.name}
                       </strong>
-                      {error.text === undefined ? '' : ` · ${error.text}`}
+                      {error.text === undefined ? null : (
+                        <>
+                          {' · '}
+                          <bdi className="technical-value" dir="ltr">
+                            {error.text}
+                          </bdi>
+                        </>
+                      )}
+                      {error.rawText === undefined ? null : (
+                        <details className="raw-evidence-details">
+                          <summary>
+                            Raw EDE text · {error.rawText.octets} octets ·{' '}
+                            {error.textEncoding ?? 'binary'}
+                          </summary>
+                          <code className="record-value technical-value" dir="ltr">
+                            Base64: {error.rawText.value}
+                          </code>
+                        </details>
+                      )}
                     </span>
                   </li>
                 ))}

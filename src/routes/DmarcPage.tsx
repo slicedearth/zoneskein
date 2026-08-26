@@ -31,6 +31,12 @@ import {
   MAIL_AUTHENTICATION_EVIDENCE_LIMITS,
   type MailAuthenticationEvidence,
 } from '../core/mail/evidence';
+import {
+  escapeTechnicalText,
+  hasUnsafeTechnicalText,
+  stringifyTechnicalEvidence,
+  utf8Base64Evidence,
+} from '../core/technical-text';
 
 const RESOLVER_IDS = Object.keys(RESOLVERS) as ResolverId[];
 const SPF_RESULTS = [
@@ -77,15 +83,14 @@ function boundedEvidenceJson(
   evidence: unknown,
   fallback: Readonly<Record<string, unknown>>,
 ): string {
-  const serialised = JSON.stringify(evidence, null, 2);
+  const serialised = stringifyTechnicalEvidence(evidence, 2);
   if (serialised.length <= MAX_EVIDENCE_JSON_CHARACTERS) return serialised;
-  return JSON.stringify(
+  return stringifyTechnicalEvidence(
     {
       ...fallback,
       evidenceTruncated: true,
       reason: `Evidence exceeded the ${String(MAX_EVIDENCE_JSON_CHARACTERS)}-character export limit.`,
     },
-    null,
     2,
   );
 }
@@ -107,6 +112,7 @@ function policyEvidence(report: PolicyReport): string {
                 domain: report.discovery.rejected.domain,
                 queryName: report.discovery.rejected.queryName,
                 record: report.discovery.rejected.record,
+                recordRaw: utf8Base64Evidence(report.discovery.rejected.record),
                 ttl: report.discovery.rejected.ttl,
               },
         selected:
@@ -116,6 +122,7 @@ function policyEvidence(report: PolicyReport): string {
                 domain: report.discovery.selected.domain,
                 queryName: report.discovery.selected.queryName,
                 record: report.discovery.selected.record,
+                recordRaw: utf8Base64Evidence(report.discovery.selected.record),
                 ttl: report.discovery.selected.ttl,
                 assessment: report.discovery.selected.assessment,
               },
@@ -146,6 +153,7 @@ function policyEvidence(report: PolicyReport): string {
         status: check.status,
       })),
       resolver: { id: report.resolverId, label: RESOLVERS[report.resolverId].label },
+      textProjection: 'visible-escapes-v1',
     },
     {
       capturedAt: report.capturedAt,
@@ -153,6 +161,7 @@ function policyEvidence(report: PolicyReport): string {
       evidenceSchema: 'zoneskein-dmarc-policy-v1',
       resolver: { id: report.resolverId, label: RESOLVERS[report.resolverId].label },
       status: report.discovery.status,
+      textProjection: 'visible-escapes-v1',
     },
   );
 }
@@ -184,6 +193,7 @@ function alignmentEvidence(report: DmarcAlignmentReport): string {
       reason: report.reason,
       resolver: { id: report.resolverId, label: RESOLVERS[report.resolverId].label },
       result: report.result,
+      textProjection: 'visible-escapes-v1',
     },
     {
       capturedAt: report.capturedAt,
@@ -192,6 +202,7 @@ function alignmentEvidence(report: DmarcAlignmentReport): string {
       policyDomain: report.policyDomain,
       resolver: { id: report.resolverId, label: RESOLVERS[report.resolverId].label },
       result: report.result,
+      textProjection: 'visible-escapes-v1',
     },
   );
 }
@@ -304,9 +315,22 @@ function DmarcPolicyResults({ report }: { readonly report: PolicyReport }) {
           <article className="result-panel">
             <div className="result-heading">
               <h3>{discovery.selected.queryName}</h3>
-              <CopyButton text={policy.record} />
+              <div className="export-actions">
+                <CopyButton
+                  label="Copy safe DMARC record"
+                  text={escapeTechnicalText(policy.record)}
+                />
+                {hasUnsafeTechnicalText(policy.record) ? (
+                  <CopyButton
+                    label="Copy exact DMARC record as Base64"
+                    text={utf8Base64Evidence(policy.record).value}
+                  />
+                ) : null}
+              </div>
             </div>
-            <pre className="spf-output">{policy.record}</pre>
+            <pre className="spf-output technical-value" dir="ltr">
+              {escapeTechnicalText(policy.record)}
+            </pre>
             <dl className="metadata-grid">
               <div>
                 <dt>Policy domain</dt>
@@ -355,8 +379,8 @@ function DmarcPolicyResults({ report }: { readonly report: PolicyReport }) {
               <dl className="tag-list">
                 {policy.tags.map((tag, index) => (
                   <div key={`${tag.name}-${String(index)}`}>
-                    <dt>{tag.name}</dt>
-                    <dd>{tag.value}</dd>
+                    <dt>{escapeTechnicalText(tag.name)}</dt>
+                    <dd>{escapeTechnicalText(tag.value)}</dd>
                   </div>
                 ))}
               </dl>
@@ -381,7 +405,8 @@ function DmarcPolicyResults({ report }: { readonly report: PolicyReport }) {
                         {item.severity}
                       </StatusBadge>
                       <span>
-                        <strong>{item.code}</strong> · {item.message}
+                        <strong>{escapeTechnicalText(item.code)}</strong> ·{' '}
+                        {escapeTechnicalText(item.message)}
                       </span>
                     </li>
                   ))}
@@ -416,7 +441,7 @@ function DmarcPolicyResults({ report }: { readonly report: PolicyReport }) {
                         <tr key={`${destination.uri}-${String(index)}`}>
                           <td>{destination.kind}</td>
                           <td>
-                            <code>{destination.uri}</code>
+                            <code>{escapeTechnicalText(destination.uri)}</code>
                           </td>
                           <td>
                             {result === undefined ? (
@@ -426,7 +451,7 @@ function DmarcPolicyResults({ report }: { readonly report: PolicyReport }) {
                                 <StatusBadge tone={evidenceTone(result.check.status)}>
                                   {evidenceStatusLabel(result.check.status)}
                                 </StatusBadge>{' '}
-                                {result.check.reason}
+                                {escapeTechnicalText(result.check.reason)}
                               </>
                             )}
                           </td>
@@ -435,7 +460,7 @@ function DmarcPolicyResults({ report }: { readonly report: PolicyReport }) {
                               ? 'Not checked'
                               : result.check.selectedUris.length === 0
                                 ? 'No authorised destination'
-                                : result.check.selectedUris.join(', ')}
+                                : result.check.selectedUris.map(escapeTechnicalText).join(', ')}
                           </td>
                         </tr>
                       );

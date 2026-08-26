@@ -499,6 +499,67 @@ describe('DmarcPage', () => {
     expect(parsedEvidence.resolver?.id).toBe('google');
   });
 
+  it('makes hostile policy text visible while preserving exact record evidence', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    const control = String.fromCodePoint(0x202e);
+    const record = `v=DMARC1; p=none; x=literal \\u{202E}; y=${control}hidden`;
+    const visible = String.raw`v=DMARC1; p=none; x=literal \\u{202E}; y=\u{202E}hidden`;
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    installDns({
+      '_dmarc.control-text.test': { values: [record] },
+    });
+    render(<DmarcPage />);
+
+    await user.type(screen.getByLabelText('Domain'), 'control-text.test');
+    await user.click(screen.getByRole('button', { name: 'Inspect DMARC' }));
+
+    const result = (
+      await screen.findByRole('heading', { name: '_dmarc.control-text.test' })
+    ).closest('article');
+    if (result === null) throw new Error('Expected a DMARC policy result panel.');
+    expect(within(result).getByText(visible, { selector: 'pre' })).toBeVisible();
+    expect(result.textContent).not.toContain(control);
+    expect(document.body.textContent).not.toContain(control);
+
+    await user.click(within(result).getByRole('button', { name: 'Copy safe DMARC record' }));
+    await user.click(
+      within(result).getByRole('button', { name: 'Copy exact DMARC record as Base64' }),
+    );
+    await user.click(screen.getByRole('button', { name: 'Copy DMARC evidence JSON' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(3));
+
+    expect(writeText.mock.calls[0]?.[0]).toBe(visible);
+    const exactBase64 = String(writeText.mock.calls[1]?.[0]);
+    const exactBytes = Uint8Array.from(atob(exactBase64), (character) =>
+      character.charCodeAt(0),
+    );
+    expect(new TextDecoder().decode(exactBytes)).toBe(record);
+    const evidenceText = String(writeText.mock.calls[2]?.[0]);
+    expect(evidenceText).not.toContain(control);
+    const evidence = JSON.parse(evidenceText) as {
+      discovery?: {
+        selected?: {
+          record?: string;
+          recordRaw?: { encoding?: string; value?: string };
+        };
+      };
+      textProjection?: string;
+    };
+    expect(evidence).toMatchObject({
+      discovery: {
+        selected: {
+          record: visible,
+          recordRaw: { encoding: 'base64', value: exactBase64 },
+        },
+      },
+      textProjection: 'visible-escapes-v1',
+    });
+  });
+
   it.each([
     ['Visible From address domain', 'text'],
     ['Domains from passing DKIM signatures', 'text'],

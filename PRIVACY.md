@@ -50,6 +50,7 @@ Local snapshots are a separate, explicit opt-in feature:
 - only reports saved by a separate user action enter IndexedDB;
 - at most 100 reports are retained;
 - each report is limited to 256 KiB of UTF-8 content;
+- imported or stored control characters are displayed and copied with visible escape notation; when controls are present, the exact report bytes are offered separately as Base64 rather than copied as visually ambiguous text;
 - snapshots remain until explicitly deleted, the feature is disabled and erased, browser storage is cleared, or the oldest snapshot is evicted at the 100-report limit;
 - disabling local snapshots first records an origin-wide erasure marker, invalidates the active storage generation, and blocks every new save, import, or deletion before clearing and deleting IndexedDB; the interface reports blocked or failed deletion, keeps storage disabled until a failed erasure is retried, and claims erasure only after the browser confirms it.
 

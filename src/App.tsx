@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 
 import type { MailAuthenticationEvidence } from './core/mail/evidence';
-import type { ChangeWorkspace } from './core/project';
+import type { ActiveChangeWorkspace, ChangeWorkspace } from './core/project';
 import type { ChangeLabInput } from './routes/DiffPage';
 
 const AboutPage = lazy(() =>
@@ -149,11 +149,11 @@ export function App() {
   );
   const [route, setRoute] = useState(() => applicationPath());
   const [openNavGroups, setOpenNavGroups] = useState({ inspect: false, prepare: false });
-  const [workspace, setWorkspace] = useState<ChangeWorkspace | null>(null);
+  const [activeWorkspace, setActiveWorkspace] = useState<ActiveChangeWorkspace | null>(null);
   const [changeLabInput, setChangeLabInput] = useState<ChangeLabInput | undefined>();
   const [mailAuthenticationEvidence, setMailAuthenticationEvidence] =
     useState<MailAuthenticationEvidence | null>(null);
-  const workspaceRef = useRef<ChangeWorkspace | null>(null);
+  const workspaceRef = useRef<ActiveChangeWorkspace | null>(null);
   const navigationRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -197,34 +197,48 @@ export function App() {
   }
 
   function openWorkspace(value: ChangeWorkspace): void {
-    workspaceRef.current = value;
-    setWorkspace(value);
+    const retained = workspaceRef.current;
+    const inheritedIntegrity =
+      retained?.integrity.state === 'mismatch-accepted' &&
+      route === 'diff' &&
+      changeLabInput?.workspace === retained.workspace
+        ? retained.integrity
+        : { state: 'not-checked' as const };
+    const active: ActiveChangeWorkspace =
+      retained?.workspace === value
+        ? retained
+        : {
+            integrity: inheritedIntegrity,
+            workspace: value,
+          };
+    workspaceRef.current = active;
+    setActiveWorkspace(active);
     openRoute('workspace/');
   }
 
   function openWorkspaceInChangeLab(input: ChangeLabInput): void {
-    const activeWorkspace = workspaceRef.current;
+    const active = workspaceRef.current;
     setChangeLabInput(
-      activeWorkspace === null
+      active === null
         ? input
         : {
-            current: activeWorkspace.current.source,
-            currentIncompleteReasons: activeWorkspace.current.incompleteReasons,
-            currentOrigin: activeWorkspace.current.origin,
-            currentStatus: activeWorkspace.current.status,
-            intended: activeWorkspace.intended.source,
-            intendedIncompleteReasons: activeWorkspace.intended.incompleteReasons,
-            intendedOrigin: activeWorkspace.intended.origin,
-            intendedStatus: activeWorkspace.intended.status,
-            workspace: activeWorkspace,
+            current: active.workspace.current.source,
+            currentIncompleteReasons: active.workspace.current.incompleteReasons,
+            currentOrigin: active.workspace.current.origin,
+            currentStatus: active.workspace.current.status,
+            intended: active.workspace.intended.source,
+            intendedIncompleteReasons: active.workspace.intended.incompleteReasons,
+            intendedOrigin: active.workspace.intended.origin,
+            intendedStatus: active.workspace.intended.status,
+            workspace: active.workspace,
           },
     );
     openRoute('diff/');
   }
 
-  function retainWorkspace(value: ChangeWorkspace): void {
+  function retainActiveWorkspace(value: ActiveChangeWorkspace): void {
     workspaceRef.current = value;
-    setWorkspace(value);
+    setActiveWorkspace(value);
   }
 
   function openDmarcWithEvidence(value: MailAuthenticationEvidence): void {
@@ -378,9 +392,9 @@ export function App() {
             <RecordStudioPage onCreateWorkspace={openWorkspace} />
           ) : route === 'workspace' ? (
             <ChangeWorkspacePage
-              initialWorkspace={workspace ?? undefined}
+              initialActiveWorkspace={activeWorkspace ?? undefined}
+              onActiveWorkspaceChange={retainActiveWorkspace}
               onOpenChangeLab={openWorkspaceInChangeLab}
-              onWorkspaceChange={retainWorkspace}
             />
           ) : route === 'zone-lint' ? (
             <ZoneLintPage />

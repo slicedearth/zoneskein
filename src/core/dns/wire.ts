@@ -25,6 +25,7 @@ import type {
 } from './types';
 import { parseCaaWireData } from './caa-wire';
 import { displayRecordType, wireRecordType } from './record-types';
+import { projectTechnicalBytes } from '../technical-text';
 
 export const MAX_DNS_MESSAGE_BYTES = 65_535;
 export const DNS_QUERY_PADDING_BLOCK_BYTES = 128;
@@ -601,11 +602,22 @@ function extendedError(option: DecodedOption): DnsExtendedError | undefined {
   if (optionCode(option) !== 15 || option.data === undefined || option.data.length < 2)
     return undefined;
   const code = readUint16(option.data, 0);
-  const decoded = new TextDecoder().decode(option.data.slice(2));
+  const bytes = option.data.slice(2);
+  const projection = projectTechnicalBytes(bytes);
   return {
     code,
     name: EXTENDED_ERROR_NAMES[code] ?? 'Unassigned extended DNS error',
-    ...(decoded === '' ? {} : { text: decoded }),
+    ...(bytes.length === 0
+      ? {}
+      : {
+          rawText: {
+            encoding: 'base64' as const,
+            octets: bytes.length,
+            value: projection.rawBase64,
+          },
+          text: projection.display,
+          textEncoding: projection.encoding,
+        }),
   };
 }
 

@@ -180,6 +180,8 @@
   "src/core/spf/sender-input.test.ts",
   "src/core/spf/sender-input.ts",
   "src/core/spf/types.ts",
+  "src/core/technical-text.test.ts",
+  "src/core/technical-text.ts",
   "src/core/zone/authoring.test.ts",
   "src/core/zone/authoring.ts",
   "src/core/zone/lint.test.ts",

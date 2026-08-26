@@ -1,6 +1,6 @@
 import { validateDnsName } from './names';
 import { reachableAnswerRecords } from './answer-chain';
-import { parseRecordView } from './records';
+import { txtRecordValue } from './records';
 import { DnsQueryError, type DnsRecord, type DnsRecordType, type DnsResolver } from './types';
 import { DnsQueryRun } from '../doh/query-run';
 
@@ -43,18 +43,16 @@ export async function queryPolicyRecords(
         : { aliases: [], ignoredRecords: 0, records: [] };
     const records = bound.records;
     const ttlValues = [...bound.aliases, ...records].map((record) => record.ttl);
-    const values =
-      type === 'TXT'
-        ? records.flatMap((record) => {
-            const view = parseRecordView(record);
-            return view.txtChunks === undefined
-              ? []
-              : [view.txtChunks.map((chunk) => chunk.text).join('')];
-          })
-        : [];
+    const txtValues = type === 'TXT' ? records.map(txtRecordValue) : [];
+    const malformedText = txtValues.some((value) => value === null);
+    const values = txtValues.filter((value): value is string => value !== null);
     return {
       answers: response.message.answers,
-      ...(bound.error === undefined ? {} : { error: bound.error }),
+      ...(bound.error !== undefined
+        ? { error: bound.error }
+        : malformedText
+          ? { error: 'The policy answer contains TXT data that is not valid UTF-8.' }
+          : {}),
       messageBytes: response.message.messageBytes,
       records,
       responseCode: response.message.responseCode,

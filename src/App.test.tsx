@@ -1,8 +1,19 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { createChangeLabWorkspace, encodeChangeWorkspace } from './core/project';
 import { App } from './App';
+
+function localFile(text: string): File {
+  const bytes = new TextEncoder().encode(text);
+  const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  return {
+    arrayBuffer: vi.fn(() => Promise.resolve(buffer)),
+    name: 'workspace.zoneskein.json',
+    size: bytes.byteLength,
+  } as unknown as File;
+}
 
 describe('application shell', () => {
   afterEach(() => {
@@ -219,5 +230,97 @@ describe('application shell', () => {
       'Only selected address records were observed.',
     );
     expect(screen.getByLabelText('Intended origin (optional)')).toHaveValue('planned.example.');
+  });
+
+  it('preserves an accepted digest mismatch through the real Change Lab return path', async () => {
+    const created = createChangeLabWorkspace({
+      currentIncompleteReasons: ['Only selected address records were observed.'],
+      currentOrigin: 'example.test.',
+      currentSource: 'www 300 IN A 192.0.2.1',
+      currentStatus: 'partial',
+      intendedOrigin: 'example.test.',
+      intendedSource: 'www 300 IN A 192.0.2.2',
+      intendedStatus: 'complete',
+      title: 'Original import title',
+    });
+    if (!created.ok) throw new Error(created.error.message);
+    const encoded = await encodeChangeWorkspace(created.value);
+    if (!encoded.ok) throw new Error(encoded.error.message);
+    const altered = JSON.parse(encoded.value) as { workspace: { title: string } };
+    altered.workspace.title = 'Altered import title';
+
+    window.history.replaceState(null, '', '/workspace/');
+    render(<App />);
+    fireEvent.change(await screen.findByLabelText('Import workspace file'), {
+      target: { files: [localFile(JSON.stringify(altered))] },
+    });
+    expect(
+      await screen.findByRole('heading', { name: 'Digest mismatch quarantine' }),
+    ).toBeVisible();
+    fireEvent.click(
+      screen.getByRole('checkbox', {
+        name: /I understand that this file was altered/iu,
+      }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Accept altered workspace' }));
+    expect(screen.getByText(/descends from data explicitly accepted/iu)).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open in Change Lab' }));
+    expect(
+      await screen.findByRole('heading', {
+        name: 'Compare records and plan a bounded rollout.',
+      }),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Return to Change Workspace' }));
+
+    expect(await screen.findByRole('heading', { name: 'Altered import title' })).toBeVisible();
+    expect(screen.getByText(/descends from data explicitly accepted/iu)).toHaveTextContent(
+      /Claimed [0-9a-f]{64}; calculated [0-9a-f]{64}/iu,
+    );
+    expect(screen.getByText('SHA-256 mismatch explicitly accepted')).toBeVisible();
+  });
+
+  it('retains accepted-mismatch lineage when Change Lab derives a new workspace', async () => {
+    const created = createChangeLabWorkspace({
+      currentOrigin: 'example.test.',
+      currentSource: 'www 300 IN A 192.0.2.1',
+      intendedOrigin: 'example.test.',
+      intendedSource: 'www 300 IN A 192.0.2.2',
+      title: 'Original derived title',
+    });
+    if (!created.ok) throw new Error(created.error.message);
+    const encoded = await encodeChangeWorkspace(created.value);
+    if (!encoded.ok) throw new Error(encoded.error.message);
+    const altered = JSON.parse(encoded.value) as { workspace: { title: string } };
+    altered.workspace.title = 'Altered derived title';
+
+    window.history.replaceState(null, '', '/workspace/');
+    render(<App />);
+    fireEvent.change(await screen.findByLabelText('Import workspace file'), {
+      target: { files: [localFile(JSON.stringify(altered))] },
+    });
+    expect(
+      await screen.findByRole('heading', { name: 'Digest mismatch quarantine' }),
+    ).toBeVisible();
+    fireEvent.click(
+      screen.getByRole('checkbox', {
+        name: /I understand that this file was altered/iu,
+      }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Accept altered workspace' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open in Change Lab' }));
+
+    fireEvent.change(await screen.findByLabelText('Proposed or later snapshot'), {
+      target: { value: 'www 300 IN A 192.0.2.3' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Compare snapshots' }));
+    expect(await screen.findByRole('heading', { name: 'Change set' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Open in Change Workspace' }));
+
+    expect(await screen.findByRole('heading', { name: 'Pasted DNS change' })).toBeVisible();
+    expect(screen.getByText(/descends from data explicitly accepted/iu)).toHaveTextContent(
+      /Claimed [0-9a-f]{64}; calculated [0-9a-f]{64}/iu,
+    );
+    expect(screen.getByText('SHA-256 mismatch explicitly accepted')).toBeVisible();
   });
 });

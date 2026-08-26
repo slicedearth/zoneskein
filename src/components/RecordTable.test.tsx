@@ -31,4 +31,51 @@ describe('RecordTable', () => {
     expect(summary.closest('details')).not.toHaveAttribute('open');
     expect(screen.getByText('mail.example.com 10')).toBeInTheDocument();
   });
+
+  it('isolates visible TXT escapes and exposes exact raw RDATA without expanding the row', () => {
+    const chunk = Uint8Array.from(new TextEncoder().encode('safe\u202e\n'));
+    render(
+      <RecordTable
+        compact
+        records={[
+          {
+            class: 'IN',
+            data: [chunk],
+            owner: 'example.test.',
+            rawRdata: Uint8Array.from([chunk.length, ...chunk]),
+            section: 'answer',
+            ttl: 300,
+            type: 'TXT',
+            typeCode: 16,
+          },
+        ]}
+      />,
+    );
+
+    const value = screen.getByText('"safe\\u{202E}\\n"');
+    expect(value).toHaveAttribute('dir', 'ltr');
+    expect(value).toHaveClass('technical-value');
+    const raw = screen.getByText(/Raw RDATA/iu).closest('details');
+    expect(raw).not.toHaveAttribute('open');
+    expect(raw).toHaveTextContent(/Base64:/u);
+    expect(document.body.textContent).not.toContain('\u202e');
+  });
+
+  it('keeps literal owner escape notation distinct from an actual direction control', () => {
+    const control = String.fromCodePoint(0x202e);
+    render(
+      <RecordTable
+        records={[
+          {
+            ...mxRecord,
+            owner: String.raw`literal\u{202E}.actual` + control + '.example.',
+          },
+        ]}
+      />,
+    );
+
+    const owner = screen.getByText(String.raw`literal\\u{202E}.actual\u{202E}.example.`);
+    expect(owner).toHaveAttribute('dir', 'ltr');
+    expect(owner).not.toHaveTextContent(control);
+  });
 });

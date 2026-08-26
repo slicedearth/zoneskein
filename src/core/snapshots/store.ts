@@ -6,6 +6,7 @@ import {
   type SnapshotRecord,
   type SnapshotTool,
 } from './types';
+import { hasUnpairedSurrogate } from '../technical-text';
 
 const DATABASE_NAME = 'zoneskein-snapshots-v1';
 const ENABLED_KEY = 'zoneskein-snapshots-enabled';
@@ -166,6 +167,9 @@ function validateInput(value: unknown): SnapshotInput {
     throw new Error('Snapshot fields do not match the supported schema.');
   }
   const input = value;
+  if (hasUnpairedSurrogate(input.title) || hasUnpairedSurrogate(input.content)) {
+    throw new Error('Snapshot text must not contain unpaired UTF-16 surrogates.');
+  }
   if (input.title.length > MAX_TITLE_CHARACTERS) {
     throw new Error(
       `Snapshot titles must contain 1–${String(MAX_TITLE_CHARACTERS)} characters.`,

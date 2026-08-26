@@ -1,5 +1,5 @@
 import { validateDnsName } from '../dns/names';
-import { parseRecordView } from '../dns/records';
+import { txtRecordValue } from '../dns/records';
 import type { DnsRecord } from '../dns/types';
 
 export interface BoundDkimKeyAnswer {
@@ -64,10 +64,10 @@ export function bindDkimKeyAnswer(
     if (aliases.length === 0) {
       const values: string[] = [];
       for (const record of records) {
-        const view = parseRecordView(record);
-        if (view.txtChunks === undefined)
+        const value = txtRecordValue(record);
+        if (value === null)
           return { error: 'The selector answer contains malformed TXT data.', values: [] };
-        values.push(view.txtChunks.map((chunk) => chunk.text).join(''));
+        values.push(value);
       }
       const ttls = [...ttlRecords, ...records]
         .map((record) => record.ttl)

@@ -1,6 +1,7 @@
 import { decode, encode } from '@dnsquery/dns-packet';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { marked } from 'marked';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SpfPage } from './SpfPage';
@@ -11,7 +12,7 @@ afterEach(() => vi.unstubAllGlobals());
 function spfAnswer(
   input: RequestInfo | URL,
   init?: RequestInit,
-  policy = 'v=spf1 -all',
+  policy: string | ((name: string) => string) = 'v=spf1 -all',
 ): Response {
   if (typeof input !== 'string') throw new Error('Expected a string DNS request URL.');
   const encoded = new URL(input, 'http://localhost').searchParams.get('dns');
@@ -28,8 +29,9 @@ function spfAnswer(
   } else throw new Error('Expected a DNS wire query.');
   const question = decode(request).questions?.[0];
   if (question === undefined) throw new Error('Expected one DNS question.');
+  const value = typeof policy === 'string' ? policy : policy(question.name);
   const bytes = encode({
-    answers: [{ class: 'IN', data: [policy], name: question.name, ttl: 300, type: 'TXT' }],
+    answers: [{ class: 'IN', data: [value], name: question.name, ttl: 300, type: 'TXT' }],
     flags: 0x8180,
     id: 0,
     questions: [question],
@@ -231,6 +233,119 @@ describe('SpfPage', () => {
     };
     expect(evidence.capturedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/iu);
     expect(evidence.resolver?.id).toBe('quad9');
+  });
+
+  it('keeps publisher-controlled explanation syntax literal in Markdown and exact in JSON', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const tick = String.fromCharCode(96);
+    const explanation =
+      '![pixel](https://attacker.invalid/p) <img src=x> **bold** ' +
+      tick +
+      'code' +
+      tick +
+      ' | <https://attacker.invalid>';
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<typeof fetch>((input, init) =>
+        Promise.resolve(
+          spfAnswer(input, init, (name) =>
+            name.startsWith('why.') ? explanation : 'v=spf1 -all exp=why.%{d}',
+          ),
+        ),
+      ),
+    );
+    render(<SpfPage />);
+    fireEvent.click(screen.getByRole('button', { name: 'Sender evaluation' }));
+    fireEvent.change(screen.getByLabelText('SMTP client IP'), {
+      target: { value: '192.0.2.1' },
+    });
+    fireEvent.change(screen.getByLabelText('MAIL FROM address'), {
+      target: { value: 'sender@spf-markdown.test' },
+    });
+    fireEvent.change(screen.getByLabelText('HELO/EHLO domain'), {
+      target: { value: 'mail.spf-markdown.test' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Evaluate sender' }));
+    expect(await screen.findByRole('status', { name: 'SPF run status' })).toHaveTextContent(
+      'SPF sender evaluation complete: fail.',
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy evaluation JSON' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Copy evaluation Markdown' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(2));
+    const json = JSON.parse(String(writeText.mock.calls[0]?.[0])) as {
+      explanation?: string;
+      textProjection?: string;
+    };
+    expect(json).toMatchObject({
+      explanation,
+      textProjection: 'visible-escapes-v1',
+    });
+
+    const markdown = String(writeText.mock.calls[1]?.[0]);
+    const html = marked.parse(markdown, { async: false, gfm: true });
+    if (typeof html !== 'string')
+      throw new Error('Synchronous Markdown parsing returned a promise.');
+    const rendered = window.document.createElement('div');
+    rendered.innerHTML = html;
+    expect(rendered.querySelector('img')).toBeNull();
+    expect(rendered.querySelector('a[href*="attacker.invalid"]')).toBeNull();
+    expect(rendered.textContent).toContain('![pixel](https://attacker.invalid/p)');
+    expect(rendered.textContent).toContain('<img src=x>');
+  });
+
+  it('makes hostile policy text visible while retaining exact UTF-8 evidence', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const control = String.fromCodePoint(0x202e);
+    const policy = `v=spf1 -all note=literal \\u{202E}${control}hidden`;
+    const visible = String.raw`v=spf1 -all note=literal \\u{202E}\u{202E}hidden`;
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<typeof fetch>((input, init) => Promise.resolve(spfAnswer(input, init, policy))),
+    );
+    render(<SpfPage />);
+
+    fireEvent.change(screen.getByLabelText('Domain'), {
+      target: { value: 'control-policy.test' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Analyse SPF' }));
+    expect(
+      await screen.findByRole('heading', { level: 2, name: 'control-policy.test' }),
+    ).toBeVisible();
+
+    expect(screen.getByText(visible, { selector: 'pre' })).toBeVisible();
+    expect(document.body.textContent).not.toContain(control);
+    fireEvent.click(screen.getByRole('button', { name: 'Copy analysis JSON' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
+
+    const evidenceText = String(writeText.mock.calls[0]?.[0]);
+    expect(evidenceText).not.toContain(control);
+    const evidence = JSON.parse(evidenceText) as {
+      nodes?: readonly {
+        policy?: {
+          record?: string;
+          recordRaw?: { encoding?: string; octets?: number; value?: string };
+        };
+      }[];
+      textProjection?: string;
+    };
+    const raw = evidence.nodes?.[0]?.policy?.recordRaw;
+    expect(evidence.nodes?.[0]?.policy?.record).toBe(visible);
+    expect(raw).toMatchObject({ encoding: 'base64' });
+    const exactBytes = Uint8Array.from(atob(raw?.value ?? ''), (character) =>
+      character.charCodeAt(0),
+    );
+    expect(new TextDecoder().decode(exactBytes)).toBe(policy);
+    expect(raw?.octets).toBe(exactBytes.length);
+    expect(evidence.textProjection).toBe('visible-escapes-v1');
   });
 
   it('retains relay and fixed-upstream provenance in analysis and snapshot exports', async () => {

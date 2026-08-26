@@ -17,11 +17,11 @@ ZoneSkein is a static-first browser application with one bounded Netlify Functio
 - relay responses declare `Cache-Control: no-store` and relay bodies are not written to application logs; the normal bounded browser memory cache still applies after validation, and Netlify can observe the relayed question and ordinary connection metadata under its platform policies;
 - names, policies, SMTP sender inputs, raw messages, zone snippets, fragments, and resolver data are validated, bounded, or narrowed before use;
 - complete-zone integrity input retains escaped label boundaries and the active origin for every record, applies known-type canonicalisation to numeric aliases, and becomes unavailable before hashing when exact canonical wire encoding is not possible;
-- untrusted content is rendered through React text nodes and is never injected as HTML;
+- untrusted content is rendered through React text nodes and is never injected as HTML; technical evidence uses isolated left-to-right display, visible control/default-ignorable escapes, literal-safe Markdown code spans, and raw Base64 wire evidence where exact octets matter;
 - the Netlify configuration sets a restrictive Content Security Policy, frame protections, a conservative referrer policy, `nosniff`, and a minimal Permissions Policy;
 - raw-message canonicalisation and signature verification run locally within a 1,048,576-byte input limit, a 65,536-character header-block limit, 1,000 headers, and 20 signatures; only derived DKIM selector TXT questions cross the network;
 - local snapshots require explicit opt-in and have count and size limits, while the anonymous bounded rate-limit ledger contains no questions, answers, names, or pasted content.
-- portable Change Workspace imports are byte-bounded, strictly decoded and schema-validated, and quarantined on a SHA-256 mismatch; imported resolver endpoints remain inert data rather than fetch targets.
+- portable Change Workspace imports are byte-bounded, strictly decoded and schema-validated, reject invisible control text, and are quarantined on a SHA-256 mismatch; explicit mismatch acceptance remains attached to the active workspace across local edits and route hand-offs, while imported resolver endpoints remain inert data rather than fetch targets.
 
 ## Abuse resistance
 
