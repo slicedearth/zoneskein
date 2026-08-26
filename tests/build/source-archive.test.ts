@@ -81,6 +81,20 @@ describe('corresponding-source archive', () => {
     );
   });
 
+  it('round-trips package paths that require the ustar prefix field', () => {
+    const longPath =
+      'vendor/npm/@fontsource-variable/atkinson-hyperlegible-next/files/atkinson-hyperlegible-next-latin-ext-wght-italic.woff2';
+    expect(Buffer.byteLength(longPath)).toBeGreaterThan(100);
+
+    const archive = createCorrespondingSourceArchive([
+      ...entries,
+      { content: new TextEncoder().encode('font source\n'), path: longPath },
+    ]);
+    const parsed = parseCorrespondingSourceArchive(archive);
+
+    expect(new TextDecoder().decode(parsed.get(longPath))).toBe('font source\n');
+  });
+
   it('rejects unsafe paths, duplicates, and content that no longer matches the manifest', () => {
     expect(() =>
       createCorrespondingSourceArchive([{ content: new Uint8Array(), path: '../secret' }]),
@@ -88,6 +102,11 @@ describe('corresponding-source archive', () => {
     expect(() => createCorrespondingSourceArchive([...entries, entries[0]])).toThrow(
       /duplicate source path/iu,
     );
+    expect(() =>
+      createCorrespondingSourceArchive([
+        { content: new Uint8Array(), path: `vendor/${'a'.repeat(250)}` },
+      ]),
+    ).toThrow(/unsafe source path/iu);
 
     const archive = createCorrespondingSourceArchive(entries);
     const tar = gunzipSync(archive);

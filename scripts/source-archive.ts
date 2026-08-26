@@ -11,8 +11,11 @@ export const SOURCE_MANIFEST_NAME = 'SOURCE_MANIFEST.sha256';
 
 const MAX_SOURCE_FILES = 768;
 const MAX_SOURCE_FILE_OCTETS = 2 * 1024 * 1024;
-const MAX_SOURCE_TOTAL_OCTETS = 16 * 1024 * 1024;
+const MAX_SOURCE_TOTAL_OCTETS = 20 * 1024 * 1024;
 const TAR_BLOCK_OCTETS = 512;
+const TAR_NAME_OCTETS = 100;
+const TAR_PREFIX_OCTETS = 155;
+const MAX_SOURCE_PATH_OCTETS = TAR_PREFIX_OCTETS + 1 + TAR_NAME_OCTETS;
 
 export const SOURCE_REPOSITORY_DIRECTORIES = [
   '.github',
@@ -94,7 +97,7 @@ function safePath(value: string): string {
     normalised.includes('\\') ||
     normalised.split('/').some((part) => part === '' || part === '.' || part === '..') ||
     containsControlCharacter ||
-    Buffer.byteLength(normalised) > 100
+    Buffer.byteLength(normalised) > MAX_SOURCE_PATH_OCTETS
   ) {
     fail(`unsafe source path ${JSON.stringify(value)}.`);
   }
@@ -352,9 +355,44 @@ function writeOctal(target: Buffer, offset: number, length: number, value: numbe
   writeText(target, offset, length, encoded);
 }
 
+function splitTarPath(value: string): { readonly name: string; readonly prefix: string } {
+  const path = safePath(value);
+  if (Buffer.byteLength(path) <= TAR_NAME_OCTETS) return { name: path, prefix: '' };
+
+  const parts = path.split('/');
+  for (let index = parts.length - 1; index > 0; index -= 1) {
+    const prefix = parts.slice(0, index).join('/');
+    const name = parts.slice(index).join('/');
+    if (
+      Buffer.byteLength(prefix) <= TAR_PREFIX_OCTETS &&
+      Buffer.byteLength(name) <= TAR_NAME_OCTETS
+    )
+      return { name, prefix };
+  }
+  fail(`tar entry path ${JSON.stringify(value)} cannot fit a ustar header.`);
+}
+
+function readTarText(
+  header: Uint8Array,
+  offset: number,
+  length: number,
+  label: string,
+): string {
+  const field = header.subarray(offset, offset + length);
+  const nul = field.indexOf(0);
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(
+      field.subarray(0, nul === -1 ? length : nul),
+    );
+  } catch {
+    fail(`tar ${label} is not valid UTF-8.`);
+  }
+}
+
 function tarHeader(entry: SourceArchiveEntry): Buffer {
   const header = Buffer.alloc(TAR_BLOCK_OCTETS);
-  writeText(header, 0, 100, safePath(entry.path));
+  const path = splitTarPath(entry.path);
+  writeText(header, 0, TAR_NAME_OCTETS, path.name);
   writeOctal(header, 100, 8, 0o644);
   writeOctal(header, 108, 8, 0);
   writeOctal(header, 116, 8, 0);
@@ -364,6 +402,7 @@ function tarHeader(entry: SourceArchiveEntry): Buffer {
   header[156] = '0'.charCodeAt(0);
   writeText(header, 257, 6, 'ustar\0');
   writeText(header, 263, 2, '00');
+  writeText(header, 345, TAR_PREFIX_OCTETS, path.prefix);
   const checksum = header.reduce((sum, byte) => sum + byte, 0);
   writeText(header, 148, 8, `${checksum.toString(8).padStart(6, '0')}\0 `);
   return header;
@@ -465,15 +504,9 @@ export function parseCorrespondingSourceArchive(
     checksumHeader.fill(0x20, 148, 156);
     if (checksumHeader.reduce((sum, byte) => sum + byte, 0) !== storedChecksum)
       fail('tar header checksum does not match.');
-    const nul = header.subarray(0, 100).indexOf(0);
-    let decodedPath: string;
-    try {
-      decodedPath = new TextDecoder('utf-8', { fatal: true }).decode(
-        header.subarray(0, nul === -1 ? 100 : nul),
-      );
-    } catch {
-      fail('tar entry path is not valid UTF-8.');
-    }
+    const name = readTarText(header, 0, TAR_NAME_OCTETS, 'entry name');
+    const prefix = readTarText(header, 345, TAR_PREFIX_OCTETS, 'entry prefix');
+    const decodedPath = prefix === '' ? name : `${prefix}/${name}`;
     const path = safePath(decodedPath);
     if (header[156] !== 0 && header[156] !== '0'.charCodeAt(0))
       fail(`tar entry ${path} is not a regular file.`);

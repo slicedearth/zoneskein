@@ -15,11 +15,11 @@ const root = resolve(import.meta.dirname, '..');
 const output = join(root, 'dist');
 const functionsDirectory = join(root, 'netlify', 'functions');
 const MAX_FILES = 160;
-const MAX_TOTAL_OCTETS = 5 * 1024 * 1024;
+const MAX_TOTAL_OCTETS = 6 * 1024 * 1024;
 const MAX_SINGLE_ASSET_OCTETS = 512 * 1024;
 const MAX_FUNCTION_SOURCE_OCTETS = 64 * 1024;
-const MAX_SOURCE_ARCHIVE_OCTETS = 4 * 1024 * 1024;
-const HASHED_ASSET_NAME = /^assets\/[A-Za-z0-9_-]+-[A-Za-z0-9_-]{8}\.(?:css|js)$/u;
+const MAX_SOURCE_ARCHIVE_OCTETS = 5 * 1024 * 1024;
+const HASHED_ASSET_NAME = /^assets\/[A-Za-z0-9_-]+-[A-Za-z0-9_-]{8}\.(?:css|js|woff2)$/u;
 const REQUIRED_ROOT_FILES = new Set([
   'LICENSE',
   'PRIVACY.md',
@@ -37,7 +37,7 @@ const REQUIRED_ROOT_FILES = new Set([
   'logo.svg',
   'robots.txt',
 ]);
-const ALLOWED_ASSET_EXTENSIONS = new Set(['.css', '.js']);
+const ALLOWED_ASSET_EXTENSIONS = new Set(['.css', '.js', '.woff2']);
 
 function fail(message: string): never {
   throw new Error(`Build verification failed: ${message}`);

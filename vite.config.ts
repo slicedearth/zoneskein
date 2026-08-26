@@ -69,11 +69,26 @@ function publicDocuments(): Plugin {
   };
 }
 
+function developmentStyleCompatibility(): Plugin {
+  const metaPolicy = /\s*<meta\s+http-equiv="Content-Security-Policy"\s+content="[^"]+"\s*\/>/u;
+  return {
+    apply: 'serve',
+    name: 'zoneskein-development-style-compatibility',
+    transformIndexHtml(html) {
+      const matches = html.match(new RegExp(metaPolicy.source, 'gu'));
+      if (matches?.length !== 1) {
+        throw new Error('Expected exactly one HTML Content Security Policy meta element.');
+      }
+      return html.replace(metaPolicy, '');
+    },
+  };
+}
+
 export default defineConfig({
   root: repositoryRoot,
   build: {
     outDir: 'dist',
     sourcemap: false,
   },
-  plugins: [react(), publicDocuments()],
+  plugins: [react(), developmentStyleCompatibility(), publicDocuments()],
 });

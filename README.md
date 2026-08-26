@@ -96,6 +96,8 @@ npm run test:live
 
 The Vite development and preview servers exercise the static client but do not execute Netlify Functions. Direct resolver modes work there; an end-to-end Quad9 relay check requires a Netlify local runtime or a deployed preview. The deterministic function tests still cover its request validation and HTTP/2 transport without contacting Quad9.
 
+The development server omits the HTML meta Content Security Policy because Vite injects local hot-reload styles into the page. Production builds retain and verify both the restrictive meta policy and the matching Netlify response header; `npm run preview` serves that production form.
+
 Version tags produce a browser-only static archive, a bounded complete Netlify deployment archive, and the exact corresponding-source archive also served by the built site. Release files are checksummed; deployment artefacts receive provenance and SBOM attestations, and the source archive receives its own provenance attestation. The workflow does not deploy the site.
 
 ## Netlify deployment
