@@ -75,14 +75,22 @@ describe('DNS change planning', () => {
     }
   });
 
-  it('preserves an explicit incomplete-observation finding', () => {
+  it('preserves explicit incomplete-type and owner-scope findings', () => {
     const before = parseZoneSnippet('@ 300 IN A 192.0.2.1', { origin: 'example.com' });
     const after = parseZoneSnippet('@ 300 IN A 192.0.2.2', { origin: 'example.com' });
     const report = compareZoneDocuments(before, after);
-    const planned = planDnsChanges(before, after, report, { incompleteTypes: ['MX'] });
+    const planned = planDnsChanges(before, after, report, {
+      incompleteTypes: ['MX'],
+      observationLimitations: ['Only one owner was observed.'],
+    });
     expect(planned.findings).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ code: 'current-observation-incomplete', risk: 'high' }),
+        expect.objectContaining({
+          code: 'current-observation-scope',
+          message: 'Only one owner was observed.',
+          risk: 'high',
+        }),
       ]),
     );
   });

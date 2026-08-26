@@ -14,6 +14,7 @@ import type {
 export interface ChangePlanOptions {
   readonly incompleteTypes?: readonly string[];
   readonly now?: Date;
+  readonly observationLimitations?: readonly string[];
   readonly plannedAt?: Date;
 }
 
@@ -353,6 +354,17 @@ export function planDnsChanges(
       !findings.add({
         code: 'current-observation-incomplete',
         message: `Current ${[...new Set(options.incompleteTypes)].join(', ')} data could not be observed. Changes for those record types were omitted instead of being guessed.`,
+        risk: 'high',
+      })
+    )
+      return incompletePlan([
+        findings.incompleteReason ?? 'Change planning exceeded its finding safety limit.',
+      ]);
+  for (const limitation of new Set(options.observationLimitations ?? []))
+    if (
+      !findings.add({
+        code: 'current-observation-scope',
+        message: limitation,
         risk: 'high',
       })
     )

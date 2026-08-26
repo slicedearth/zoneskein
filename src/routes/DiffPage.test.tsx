@@ -49,6 +49,10 @@ function selectOnlyA(domain = 'change.example'): void {
   fireEvent.change(screen.getByLabelText('Current DNS name'), {
     target: { value: domain },
   });
+  const labels = domain.replace(/\.$/u, '').split('.');
+  fireEvent.change(screen.getByLabelText('Authoritative zone origin'), {
+    target: { value: labels.length > 1 ? labels.slice(1).join('.') : domain },
+  });
 }
 
 describe('DNS Change Lab', () => {
@@ -57,13 +61,13 @@ describe('DNS Change Lab', () => {
     vi.unstubAllGlobals();
   });
 
-  it('includes only requested-owner and reachable-alias records', async () => {
+  it('separates requested-owner state from reachable alias dependencies', async () => {
     const onCreateWorkspace = vi.fn<(workspace: ChangeWorkspace) => void>();
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       dnsResponse([
         {
           class: 'IN',
-          data: 'edge.example.',
+          data: 'edge.cdn.example.net.',
           name: 'change.example.',
           ttl: 60,
           type: 'CNAME',
@@ -71,7 +75,7 @@ describe('DNS Change Lab', () => {
         {
           class: 'IN',
           data: '192.0.2.25',
-          name: 'edge.example.',
+          name: 'edge.cdn.example.net.',
           ttl: 300,
           type: 'A',
         },
@@ -89,7 +93,7 @@ describe('DNS Change Lab', () => {
     selectOnlyA();
     fireEvent.change(screen.getByLabelText('Proposed snapshot'), {
       target: {
-        value: 'change.example. 60 IN CNAME edge.example.\nedge.example. 300 IN A 192.0.2.25',
+        value: 'change.example. 60 IN CNAME edge.cdn.example.net.',
       },
     });
 
@@ -98,16 +102,20 @@ describe('DNS Change Lab', () => {
     expect(
       await screen.findByText('Comparison found 0 classified changes.', {}, { timeout: 3000 }),
     ).toBeVisible();
-    const snapshot = screen.getByText(
-      (_, element) =>
-        element !== null &&
-        element.tagName === 'PRE' &&
-        element.textContent.includes('192.0.2.25'),
-    );
-    expect(snapshot).toHaveTextContent('change.example. 60 IN CNAME edge.example.');
-    expect(snapshot).toHaveTextContent('edge.example. 300 IN A 192.0.2.25');
-    expect(snapshot).not.toHaveTextContent('sibling.example');
-    expect(snapshot).not.toHaveTextContent('203.0.113.99');
+    const controlled = screen
+      .getByText('Observed controlled-owner snapshot')
+      .closest('details');
+    expect(controlled).not.toBeNull();
+    expect(controlled).toHaveTextContent('change.example. 60 IN CNAME edge.cdn.example.net.');
+    expect(controlled).not.toHaveTextContent('192.0.2.25');
+    const dependencies = screen
+      .getByText('Observed alias dependency evidence')
+      .closest('details');
+    expect(dependencies).not.toBeNull();
+    expect(dependencies).toHaveTextContent('edge.cdn.example.net. 300 IN A 192.0.2.25');
+    expect(dependencies).not.toHaveTextContent('sibling.example');
+    expect(dependencies).not.toHaveTextContent('203.0.113.99');
+    expect(screen.queryByText('zone-apex-cname')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Open in Change Workspace' }));
     const workspace = onCreateWorkspace.mock.calls[0]?.[0];
@@ -115,16 +123,18 @@ describe('DNS Change Lab', () => {
       analysis: { status: 'partial' },
       current: {
         incompleteReasons: [
-          'Current DNS was observed only for the selected A record types; all unselected record types and authoritative-zone data remain unknown.',
+          'Live comparison covers only change.example. for the selected A record types within the declared example. authoritative zone; other owners, unselected types and delegation boundaries remain unknown.',
         ],
+        origin: 'example.',
+        source: 'change.example. 60 IN CNAME edge.cdn.example.net.',
         status: 'partial',
       },
       evidence: { status: 'complete' },
     });
     const evidenceRecords = workspace?.evidence.runs[0]?.resolvers[0]?.questions[0]?.records;
     expect(evidenceRecords).toEqual([
-      'change.example. 60 IN CNAME edge.example.',
-      'edge.example. 300 IN A 192.0.2.25',
+      'change.example. 60 IN CNAME edge.cdn.example.net.',
+      'edge.cdn.example.net. 300 IN A 192.0.2.25',
     ]);
   });
 
@@ -171,6 +181,61 @@ describe('DNS Change Lab', () => {
       label: 'Quad9 (compatibility mode)',
       resolverId: 'quad9-relay',
     });
+  });
+
+  it('requires the current name to be inside an explicitly declared zone boundary', () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal('fetch', fetchMock);
+    render(<DiffPage />);
+    fireEvent.click(screen.getByRole('button', { name: 'Current DNS + proposed' }));
+    fireEvent.change(screen.getByLabelText('Current DNS name'), {
+      target: { value: 'www.example.com' },
+    });
+    fireEvent.change(screen.getByLabelText('Authoritative zone origin'), {
+      target: { value: 'unrelated.example' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Compare snapshots' }));
+
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'The current DNS name must be the zone origin or a name beneath it.',
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('excludes proposed records at unobserved owners from a live comparison', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<typeof fetch>().mockResolvedValue(
+        dnsResponse(
+          [
+            {
+              class: 'IN',
+              data: '192.0.2.1',
+              name: 'scoped.example.',
+              ttl: 300,
+              type: 'A',
+            },
+          ],
+          'scoped.example.',
+        ),
+      ),
+    );
+    render(<DiffPage />);
+    selectOnlyA('scoped.example');
+    fireEvent.change(screen.getByLabelText('Proposed snapshot'), {
+      target: {
+        value: 'scoped.example. 300 IN A 192.0.2.1\nother.example. 300 IN A 192.0.2.2',
+      },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Compare snapshots' }));
+
+    expect(await screen.findByText('Comparison found 0 classified changes.')).toBeVisible();
+    expect(
+      screen.getAllByText(/1 proposed record at another owner was excluded/iu).length,
+    ).toBeGreaterThan(0);
+    expect(screen.queryByText(/192\.0\.2\.2.*added/iu)).not.toBeInTheDocument();
   });
 
   it('surfaces an ambiguous reachable alias RRset as an incomplete type', async () => {
@@ -226,7 +291,7 @@ describe('DNS Change Lab', () => {
       },
       current: {
         incompleteReasons: [
-          'Current DNS was observed only for the selected A record types; all unselected record types and authoritative-zone data remain unknown.',
+          'Live comparison covers only ambiguous.example. for the selected A record types within the declared example. authoritative zone; other owners, unselected types and delegation boundaries remain unknown.',
           'A: The DNS answer contains an invalid or ambiguous CNAME RRset.',
         ],
         status: 'partial',
@@ -278,14 +343,17 @@ describe('DNS Change Lab', () => {
     expect(screen.getByText('current-observation-incomplete')).toBeVisible();
     expect(screen.getByText(/Current MX data could not be observed/iu)).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Open in Change Workspace' }));
-    expect(onCreateWorkspace.mock.calls[0]?.[0]).toMatchObject({
+    const workspace = onCreateWorkspace.mock.calls[0]?.[0];
+    expect(workspace).toMatchObject({
       analysis: {
         changes: [],
-        findings: [{ code: 'current-observation-incomplete' }],
         status: 'partial',
       },
       current: { status: 'partial' },
     });
+    expect(workspace?.analysis.findings.map((finding) => finding.code)).toEqual(
+      expect.arrayContaining(['current-observation-incomplete', 'current-observation-scope']),
+    );
   });
 
   it('uses the run cancellation state instead of matching an error message', async () => {

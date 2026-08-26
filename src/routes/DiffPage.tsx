@@ -55,6 +55,7 @@ interface DisplayReport {
   readonly currentIncompleteReasons?: readonly string[];
   readonly currentOrigin: string | null;
   readonly currentSnapshot?: string;
+  readonly dependencySnapshot?: string;
   readonly evidence?: ChangeWorkspaceEvidence;
   readonly intendedOrigin: string | null;
   readonly partialErrors: readonly string[];
@@ -64,6 +65,8 @@ interface DisplayReport {
 
 interface CurrentObservationOutcome {
   readonly bindingError?: string;
+  readonly controlledRecords: readonly DnsRecord[];
+  readonly dependencyRecords: readonly DnsRecord[];
   readonly error?: string;
   readonly errorCode?: DnsQueryError['code'];
   readonly observedAt: string;
@@ -212,6 +215,24 @@ function suppliedOrigin(
   return specific === null ? '' : (specific ?? shared ?? '');
 }
 
+function canonicalOwner(value: string): string {
+  return value.toLowerCase().replace(/\.$/u, '');
+}
+
+function isWithinZone(name: string, zone: string): boolean {
+  const owner = canonicalOwner(name);
+  const origin = canonicalOwner(zone);
+  return origin === '' || owner === origin || owner.endsWith(`.${origin}`);
+}
+
+function scopedDocument(document: ZoneDocument, records: readonly ZoneRecord[]): ZoneDocument {
+  return {
+    ...document,
+    records,
+    source: records.map((record) => recordText(record)).join('\n'),
+  };
+}
+
 function blockingParserReasons(label: string, document: ZoneDocument): readonly string[] {
   const blocking = document.diagnostics.filter(
     (diagnostic) =>
@@ -311,6 +332,7 @@ export function DiffPage({ initialInput, onCreateWorkspace }: DiffPageProps = {}
   const [before, setBefore] = useState(initialInput?.current ?? '');
   const [after, setAfter] = useState(initialInput?.intended ?? '');
   const [domain, setDomain] = useState('');
+  const [liveOrigin, setLiveOrigin] = useState('');
   const [currentOrigin, setCurrentOrigin] = useState(
     suppliedOrigin(initialInput?.currentOrigin, initialInput?.origin),
   );
@@ -442,6 +464,15 @@ export function DiffPage({ initialInput, onCreateWorkspace }: DiffPageProps = {}
       setError(parsed.error.message);
       return;
     }
+    const parsedOrigin = validateDnsName(liveOrigin);
+    if (!parsedOrigin.ok) {
+      setError(`Authoritative zone origin: ${parsedOrigin.error.message}`);
+      return;
+    }
+    if (!isWithinZone(parsed.value.ascii, parsedOrigin.value.ascii)) {
+      setError('The current DNS name must be the zone origin or a name beneath it.');
+      return;
+    }
     const selected = CURRENT_TYPES.filter((type) => types.has(type));
     if (selected.length === 0) {
       setError('Select at least one current record type.');
@@ -462,6 +493,8 @@ export function DiffPage({ initialInput, onCreateWorkspace }: DiffPageProps = {}
           );
           if (!isDefinitiveDnsObservation(response.message.responseCode)) {
             return {
+              controlledRecords: [],
+              dependencyRecords: [],
               error: `${type}: resolver returned ${response.message.responseCode}; this scope was not compared.`,
               observedAt: response.receivedAt,
               records: [],
@@ -471,6 +504,8 @@ export function DiffPage({ initialInput, onCreateWorkspace }: DiffPageProps = {}
           }
           if (response.message.responseCode !== 'NOERROR')
             return {
+              controlledRecords: [],
+              dependencyRecords: [],
               observedAt: response.receivedAt,
               records: [],
               response,
@@ -484,6 +519,8 @@ export function DiffPage({ initialInput, onCreateWorkspace }: DiffPageProps = {}
           if (bound.error !== undefined) {
             return {
               bindingError: bound.error,
+              controlledRecords: [],
+              dependencyRecords: [],
               error: `${type}: ${bound.error}`,
               observedAt: response.receivedAt,
               records: [],
@@ -491,9 +528,18 @@ export function DiffPage({ initialInput, onCreateWorkspace }: DiffPageProps = {}
               type,
             };
           }
+          const evidenceRecords = [...bound.aliases, ...bound.records];
+          const controlledRecords = evidenceRecords.filter(
+            (record) =>
+              canonicalOwner(record.owner) === parsed.value.ascii &&
+              isWithinZone(record.owner, parsedOrigin.value.ascii),
+          );
+          const controlled = new Set(controlledRecords);
           return {
+            controlledRecords,
+            dependencyRecords: evidenceRecords.filter((record) => !controlled.has(record)),
             observedAt: response.receivedAt,
-            records: [...bound.aliases, ...bound.records],
+            records: evidenceRecords,
             response,
             type,
           };
@@ -505,6 +551,8 @@ export function DiffPage({ initialInput, onCreateWorkspace }: DiffPageProps = {}
                 ? cause.message
                 : 'DNS query failed.';
           return {
+            controlledRecords: [],
+            dependencyRecords: [],
             error: `${type}: ${message}`,
             ...(cause instanceof DnsQueryError ? { errorCode: cause.code } : {}),
             observedAt: new Date().toISOString(),
@@ -521,20 +569,19 @@ export function DiffPage({ initialInput, onCreateWorkspace }: DiffPageProps = {}
     }
     const completedAt = new Date().toISOString();
     const currentSnapshot = [
-      ...new Set(outcomes.flatMap((outcome) => outcome.records).map(bindRecord)),
+      ...new Set(outcomes.flatMap((outcome) => outcome.controlledRecords).map(bindRecord)),
+    ].join('\n');
+    const dependencySnapshot = [
+      ...new Set(outcomes.flatMap((outcome) => outcome.dependencyRecords).map(bindRecord)),
     ].join('\n');
     const partialErrors = outcomes.flatMap((outcome) =>
       outcome.error === undefined ? [] : [outcome.error],
     );
-    const currentIncompleteReasons = [
-      `Current DNS was observed only for the selected ${selected.join(', ')} record types; all unselected record types and authoritative-zone data remain unknown.`,
-      ...partialErrors,
-    ];
     const incompleteTypes = outcomes.flatMap((outcome) =>
       outcome.error === undefined ? [] : [outcome.type],
     );
-    const prior = parseZoneSnippet(currentSnapshot, { origin: parsed.value.ascii });
-    const next = parseZoneSnippet(after, { origin: parsed.value.ascii });
+    const prior = parseZoneSnippet(currentSnapshot, { origin: parsedOrigin.value.ascii });
+    const next = parseZoneSnippet(after, { origin: parsedOrigin.value.ascii });
     const parserReasons = [
       ...blockingParserReasons('Observed current snapshot', prior),
       ...blockingParserReasons('Proposed snapshot', next),
@@ -543,13 +590,34 @@ export function DiffPage({ initialInput, onCreateWorkspace }: DiffPageProps = {}
       stopIncomplete(parserReasons);
       return;
     }
+    const scopedRecords = next.records.filter(
+      (record) => canonicalOwner(record.owner) === parsed.value.ascii,
+    );
+    const excludedProposedRecords = next.records.filter(
+      (record) => canonicalOwner(record.owner) !== parsed.value.ascii,
+    );
+    const scopedNext = scopedDocument(next, scopedRecords);
+    const observationScope = `Live comparison covers only ${parsed.value.absolute} for the selected ${selected.join(', ')} record types within the declared ${parsedOrigin.value.absolute} authoritative zone; other owners, unselected types and delegation boundaries remain unknown.`;
+    const excludedScope =
+      excludedProposedRecords.length === 0
+        ? undefined
+        : excludedProposedRecords.length === 1
+          ? '1 proposed record at another owner was excluded because its current state was not observed.'
+          : `${String(excludedProposedRecords.length)} proposed records at other owners were excluded because their current state was not observed.`;
+    const currentIncompleteReasons = [
+      observationScope,
+      ...(excludedScope === undefined ? [] : [excludedScope]),
+      ...partialErrors,
+    ];
     const observedTypes = new Set<string>([...selected, 'CNAME']);
     const unobservedProposedTypes = [
       ...new Set(
-        next.records.map((record) => record.type).filter((type) => !observedTypes.has(type)),
+        scopedNext.records
+          .map((record) => record.type)
+          .filter((type) => !observedTypes.has(type)),
       ),
     ];
-    const report = omitIncompleteRecordTypes(compareZoneDocuments(prior, next), [
+    const report = omitIncompleteRecordTypes(compareZoneDocuments(prior, scopedNext), [
       ...incompleteTypes,
       ...unobservedProposedTypes,
     ]);
@@ -557,8 +625,12 @@ export function DiffPage({ initialInput, onCreateWorkspace }: DiffPageProps = {}
       stopIncomplete(report.incompleteReasons);
       return;
     }
-    const plan = planDnsChanges(prior, next, report, {
+    const plan = planDnsChanges(prior, scopedNext, report, {
       incompleteTypes: [...incompleteTypes, ...unobservedProposedTypes],
+      observationLimitations: [
+        observationScope,
+        ...(excludedScope === undefined ? [] : [excludedScope]),
+      ],
       ...(plannedDate === undefined ? {} : { plannedAt: plannedDate }),
     });
     if (plan.status === 'incomplete') {
@@ -570,8 +642,9 @@ export function DiffPage({ initialInput, onCreateWorkspace }: DiffPageProps = {}
       analysedAt: new Date(completedAt),
       before: prior,
       currentIncompleteReasons,
-      currentOrigin: parsed.value.absolute,
+      currentOrigin: parsedOrigin.value.absolute,
       currentSnapshot,
+      dependencySnapshot,
       evidence: currentEvidence(
         outcomes,
         resolverId,
@@ -580,7 +653,7 @@ export function DiffPage({ initialInput, onCreateWorkspace }: DiffPageProps = {}
         completedAt,
         partialErrors,
       ),
-      intendedOrigin: parsed.value.absolute,
+      intendedOrigin: parsedOrigin.value.absolute,
       partialErrors,
       plan,
       report,
@@ -594,6 +667,7 @@ export function DiffPage({ initialInput, onCreateWorkspace }: DiffPageProps = {}
     setBefore('');
     setAfter('');
     setDomain('');
+    setLiveOrigin('');
     setCurrentOrigin('');
     setIntendedOrigin('');
     setPlannedAt('');
@@ -803,6 +877,25 @@ export function DiffPage({ initialInput, onCreateWorkspace }: DiffPageProps = {}
               />
             </div>
             <div className="field-group">
+              <label htmlFor="current-zone-origin">Authoritative zone origin</label>
+              <input
+                id="current-zone-origin"
+                aria-describedby="current-zone-origin-note"
+                value={liveOrigin}
+                onChange={(event) => {
+                  invalidateResult();
+                  setLiveOrigin(event.currentTarget.value);
+                }}
+                placeholder="example.com"
+                maxLength={2048}
+                spellCheck={false}
+              />
+              <small id="current-zone-origin-note">
+                Required to distinguish the queried owner from the zone apex and keep
+                alias-target observations outside the controlled change state.
+              </small>
+            </div>
+            <div className="field-group">
               <label htmlFor="diff-resolver">Resolver</label>
               <select
                 id="diff-resolver"
@@ -946,12 +1039,24 @@ export function DiffPage({ initialInput, onCreateWorkspace }: DiffPageProps = {}
           ) : null}
           {display.currentSnapshot === undefined ? null : (
             <details className="method-note">
-              <summary>Observed recursive-resolver snapshot</summary>
+              <summary>Observed controlled-owner snapshot</summary>
               <pre className="spf-output">
                 {display.currentSnapshot === ''
                   ? 'No selected records were returned.'
                   : display.currentSnapshot}
               </pre>
+            </details>
+          )}
+          {display.dependencySnapshot === undefined ||
+          display.dependencySnapshot === '' ? null : (
+            <details className="method-note">
+              <summary>Observed alias dependency evidence</summary>
+              <pre className="spf-output">{display.dependencySnapshot}</pre>
+              <p>
+                These reachable alias-target records are retained as resolver evidence. They
+                were not treated as current change-state values because this live comparison
+                directly observed only the requested owner.
+              </p>
             </details>
           )}
           <article className="result-panel change-plan-summary">
