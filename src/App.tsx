@@ -363,7 +363,9 @@ export function App() {
         </p>
         <div>
           <a href={href('about/#privacy')}>Privacy</a>
-          <a href={href('about/#legal')}>AGPL-3.0-only</a>
+          <a href={href('SOURCE.md')}>Source</a>
+          <a href={href('TERMS.md')}>Terms</a>
+          <a href={href('about/#legal')}>Legal</a>
           <span>© 2026 slicedearth</span>
         </div>
       </footer>

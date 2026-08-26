@@ -1,5 +1,6 @@
 {
   "compilerOptions": {
+    "allowImportingTsExtensions": true,
     "composite": true,
     "erasableSyntaxOnly": true,
     "exactOptionalPropertyTypes": true,
@@ -26,6 +27,7 @@
     "playwright.config.ts",
     "netlify/functions/**/*.ts",
     "scripts/**/*.ts",
+    "tests/build/**/*.ts",
     "tests/e2e",
     "tests/functions/**/*.ts"
   ]

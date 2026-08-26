@@ -457,8 +457,9 @@ export function ChangeWorkspacePage({
           consistency; it does not reproduce or endorse stored analysis. Treat imported analysis
           as supplied historical data until you run local reanalysis. Imported resolver
           endpoints are displayed only as inert provenance text and are never contacted by this
-          page. File contents and edits remain in this tab's memory until you export them or
-          leave the page.
+          page. The exported JSON is not encrypted. Use workspace content only when you are
+          authorised to process and disclose it. File contents and edits remain in this tab's
+          memory until you export them or leave the page.
         </p>
       </article>
 

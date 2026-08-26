@@ -152,6 +152,7 @@ describe('local Change Workspace', () => {
     ).toBeVisible();
     expect(screen.getByRole('heading', { name: 'Validated import' })).toBeVisible();
     expect(screen.getByText(/^SHA-256 internally consistent:/u)).toBeVisible();
+    expect(screen.getByText(/exported JSON is not encrypted/iu)).toBeVisible();
     expect(screen.getByText(/stored analysis supplied with or captured into/iu)).toBeVisible();
     expect(onWorkspaceChange).toHaveBeenCalledTimes(1);
     expect(onWorkspaceChange).toHaveBeenLastCalledWith(imported);

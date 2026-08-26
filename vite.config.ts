@@ -3,8 +3,16 @@ import { readFileSync } from 'node:fs';
 import react from '@vitejs/plugin-react';
 import { defineConfig, type Plugin } from 'vite';
 
-function legalAssets(): Plugin {
-  const files = ['LICENSE', 'THIRD_PARTY_NOTICES.md'] as const;
+function publicDocuments(): Plugin {
+  const files = [
+    'LICENSE',
+    'PRIVACY.md',
+    'SECURITY.md',
+    'SOURCE.md',
+    'TERMS.md',
+    'THIRD_PARTY_NOTICES.md',
+    'TRADEMARKS.md',
+  ] as const;
   return {
     apply: 'build',
     buildStart() {
@@ -16,7 +24,7 @@ function legalAssets(): Plugin {
         });
       }
     },
-    name: 'zoneskein-legal-assets',
+    name: 'zoneskein-public-documents',
   };
 }
 
@@ -25,5 +33,5 @@ export default defineConfig({
     outDir: 'dist',
     sourcemap: false,
   },
-  plugins: [react(), legalAssets()],
+  plugins: [react(), publicDocuments()],
 });

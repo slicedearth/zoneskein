@@ -2,12 +2,20 @@
 
 Contributions should preserve ZoneSkein’s static, privacy-conscious, bounded design.
 
+Unless the maintainers agree otherwise in writing, every contribution intentionally submitted
+for inclusion in ZoneSkein is licensed under GNU AGPL-3.0-only on the same terms as the project.
+By submitting it, you confirm that you have the right to do so. Do not copy code, tests, text,
+fixtures, images, protocol vectors, or other material whose licence or provenance is unknown or
+incompatible. ZoneSkein uses this inbound-equals-outbound approach rather than a separate
+contributor licence agreement.
+
 ## Before proposing a change
 
 - Keep protocol and transformation logic in `src/core`; React components should orchestrate and present typed results.
 - Do not add authentication, analytics, advertising, telemetry, arbitrary fetch targets, bulk discovery, subdomain generation, or a general-purpose proxy.
 - Use explicit result states and conservative conclusions. Incomplete evidence must remain partial, unknown, unsupported, or failed.
 - Prefer mature dependencies with permissive licences. Document every added production dependency and its transitive runtime dependencies in `THIRD_PARTY_NOTICES.md`.
+- Keep the deployed corresponding-source archive complete. New production, build, configuration, asset, or function paths must remain inside the checked source-archive allowlist.
 - Never depend on live public DNS in deterministic tests.
 
 ## Development

@@ -1,5 +1,7 @@
 # Privacy
 
+Last reviewed: 16 August 2026
+
 ## Summary
 
 ZoneSkein is static-first. Its only server-side application component is an optional, explicitly selected Netlify compatibility relay for Quad9. The delivered browser application necessarily holds active inputs and results in page memory.
@@ -18,7 +20,7 @@ Every wire query includes EDNS Client Subnet with a zero source prefix (`0.0.0.0
 
 Direct live tools do not place visitor-supplied DNS names in the Netlify page-request path or query string. The optional Quad9 relay uses the fixed same-origin path `/api/doh/quad9` and a POST body, not a DNS-name-bearing path or query string. An explicitly created share link can contain report names and data after `#`; browsers do not send that fragment in the HTTP request to Netlify.
 
-Cloudflare questions use RFC 8484 POST bodies. Google and **Quad9 (direct)** questions use RFC 8484 GET because their standards-compliant POST endpoints do not currently work with ordinary browser CORS; the DNS wire message is base64url-encoded in the selected resolver's `dns=` URL parameter. Quad9 (direct) additionally requires the browser's complete network path to preserve HTTP/2 or HTTP/3. It remains the default Quad9 path.
+Cloudflare questions use RFC 8484 POST bodies. Google and **Quad9 (direct)** questions use RFC 8484 GET because their standards-compliant POST endpoints do not currently work with ordinary browser CORS; the DNS wire message is base64url-encoded in the selected resolver's `dns=` URL parameter. Base64url is readable encoding, not encryption. The selected resolver and local browser tooling or extensions can observe the encoded request URL. HTTPS protects it in transit from ordinary passive network observers. Quad9 (direct) additionally requires the browser's complete network path to preserve HTTP/2 or HTTP/3. It remains the default Quad9 path.
 
 If a visitor explicitly selects **Quad9 (compatibility mode)**, the browser instead sends one bounded RFC 8484 wire question in a POST body to `/api/doh/quad9`. Netlify receives the question and ordinary connection metadata, and a fixed Node.js HTTP/2 client forwards it only to `https://dns.quad9.net/dns-query`. No user-supplied upstream, DNS-name-bearing request query string, cookie, credential, application log, or server-side response cache is used. Netlify's platform and infrastructure policies still govern any connection metadata or platform-level processing outside ZoneSkein's application code. Quad9 receives the forwarded question and the relay connection information. HTTPS protects each transport leg; it does not hide the question from Netlify in compatibility mode or from Quad9.
 
@@ -38,7 +40,7 @@ DMARC alignment mode accepts domains and claimed prior authentication results, n
 
 Query history is not persisted by default. Normal DNS responses use a bounded in-memory TTL cache that disappears with the page session.
 
-To coordinate abuse controls across tabs, ZoneSkein stores a bounded rate-limit ledger in local storage. It contains only random request identifiers, timestamps, per-resolver buckets, and temporary cooldown expiry times. It contains no DNS names, record types, answers, pasted content, or report data, and entries age out automatically.
+To coordinate abuse controls across tabs, ZoneSkein stores a bounded rate-limit ledger in local storage. It contains only random request identifiers, timestamps, per-resolver buckets, and temporary cooldown expiry times. It contains no DNS names, record types, answers, pasted content, or report data. Request events cover a rolling one-minute window; any resolver cooldown is capped at 15 minutes, and stale state is rejected.
 
 Local snapshots are a separate, explicit opt-in feature:
 
@@ -46,6 +48,7 @@ Local snapshots are a separate, explicit opt-in feature:
 - only reports saved by a separate user action enter IndexedDB;
 - at most 100 reports are retained;
 - each report is limited to 256 KiB of UTF-8 content;
+- snapshots remain until explicitly deleted, the feature is disabled and erased, browser storage is cleared, or the oldest snapshot is evicted at the 100-report limit;
 - disabling local snapshots asks other ZoneSkein tabs to release the database, erases IndexedDB, and then clears the opt-in preference; the interface reports blocked or failed deletion and claims erasure only after the browser confirms it.
 
 ZoneSkein uses no cookies. It does not use local storage for query history or DNS content; local storage holds only the snapshot opt-in boolean and the bounded anonymous rate-limit ledger described above.
@@ -65,3 +68,5 @@ Fragments are not secret storage. The contents may remain in browser history, cl
 ## Pasted data
 
 Zone snippets, proposed changes, Record Studio working sets, raw messages, and sender or alignment inputs stay in the browser. A Record Studio working set enters IndexedDB only after an explicit snapshot action. The DKIM message, SPF sender, and DMARC alignment pages provide no snapshot or share action for their sensitive inputs. Untrusted DNS and pasted text are rendered as text, never as HTML.
+
+Only enter, query, import, copy, save, or export personal, customer, employee, message, or internal infrastructure information when you are authorised to process it and disclose it to the selected resolver, intermediary, clipboard destination, storage location, or recipient. Prefer synthetic data for demonstrations. The separate [hosted service terms](TERMS.md) describe acceptable use; they do not restrict the AGPL rights in copies of the software.

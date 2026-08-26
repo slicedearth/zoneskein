@@ -112,12 +112,13 @@ export function AboutPage() {
               fixed allowlisted endpoints for Google Public DNS, Cloudflare 1.1.1.1, and Quad9.
               Resolver URLs cannot be supplied by a user. Cloudflare uses a wire-format POST;
               Google and Quad9 (direct) use standard base64url wire-format GET so their
-              endpoints work from an ordinary browser. Quad9 (direct) remains the default Quad9
-              path. If you explicitly select Quad9 (compatibility mode), the browser sends a
-              bounded wire-format POST to the same-origin `/api/doh/quad9` endpoint, and Netlify
-              forwards it only to Quad9 over HTTP/2. Netlify sees your connection in
-              compatibility mode, while Quad9 sees the relay connection; both receive the
-              question.
+              endpoints work from an ordinary browser. Base64url is readable encoding, not
+              encryption; the resolver and local browser tooling can observe the encoded URL.
+              Quad9 (direct) remains the default Quad9 path. If you explicitly select Quad9
+              (compatibility mode), the browser sends a bounded wire-format POST to the
+              same-origin `/api/doh/quad9` endpoint, and Netlify forwards it only to Quad9 over
+              HTTP/2. Netlify sees your connection in compatibility mode, while Quad9 sees the
+              relay connection; both receive the question.
             </p>
           </div>
           <div>
@@ -136,13 +137,15 @@ export function AboutPage() {
             <p>
               No cookies, analytics, telemetry, external fonts, advertising, or tracking pixels
               are used. The local snapshot preference contains no query. A bounded anonymous
-              rate ledger stores only opaque request metadata, never questions or answers.
-              Manual snapshots remain in IndexedDB. Explicit share links put report data in the
-              URL fragment; browser history and every recipient can still see it. DNSSEC
-              evidence bundles contain complete raw packets, decoded questions, resolver
-              endpoints, and capture times, so copying, snapshotting, or sharing them exposes
-              those details to the selected destination or recipient. Change Workspace state
-              remains in page memory unless explicitly downloaded; imported files are read
+              rate ledger stores only opaque request metadata, never questions or answers. Its
+              request events cover a rolling one-minute window; a resolver cooldown can persist
+              for at most 15 minutes. Manual snapshots remain in IndexedDB until you erase them
+              or the oldest is evicted at the 100-snapshot limit. Explicit share links put
+              report data in the URL fragment; browser history and every recipient can still see
+              it. DNSSEC evidence bundles contain complete raw packets, decoded questions,
+              resolver endpoints, and capture times, so copying, snapshotting, or sharing them
+              exposes those details to the selected destination or recipient. Change Workspace
+              state remains in page memory unless explicitly downloaded; imported files are read
               locally and their retained resolver endpoints are never contacted.
             </p>
           </div>
@@ -155,7 +158,9 @@ export function AboutPage() {
               derived selector TXT questions. Copied DKIM evidence excludes the raw message,
               filename, addresses, and body, and redacts any AUID local-part. DMARC alignment
               accepts domains and supplied prior authentication results, not a raw message. None
-              of these sensitive inputs is saved or shared automatically.
+              of these sensitive inputs is saved or shared automatically. Use real personal,
+              customer, employee, or internal information only when you are authorised to
+              process it and disclose any derived DNS questions.
             </p>
           </div>
         </div>
@@ -203,17 +208,23 @@ export function AboutPage() {
 
       <section className="prose-section" id="legal" aria-labelledby="legal-title">
         <p className="eyebrow">Licence and legal notices</p>
-        <h2 id="legal-title">AGPL-3.0-only</h2>
+        <h2 id="legal-title">Licence, source, and hosted use</h2>
         <div className="conclusion-panel">
           <StatusBadge tone="information">Free software</StatusBadge>
           <p>
             Copyright © 2026 slicedearth. ZoneSkein’s original source is licensed under the GNU
             Affero General Public License version 3 only. You may run, study, modify, and convey
-            the covered work under that licence. Network use of a modified version can require
-            offering its corresponding source to users. There is no warranty. The complete,
-            controlling terms are in the deployed <a href="/LICENSE">LICENSE</a> file;
-            third-party packages keep their own licences as listed in{' '}
-            <a href="/THIRD_PARTY_NOTICES.md">THIRD_PARTY_NOTICES.md</a>.
+            the covered work under that licence. The machine-readable{' '}
+            <a href="/zoneskein-corresponding-source.tar.gz" download>
+              corresponding source for this deployed build
+            </a>{' '}
+            is offered at no charge, with verification and unpacking directions in{' '}
+            <a href="/SOURCE.md">SOURCE.md</a>. There is no warranty, subject to rights that
+            applicable law does not permit to be excluded. The complete, controlling terms are
+            in the deployed <a href="/LICENSE">LICENSE</a> file; hosted use is described in{' '}
+            <a href="/TERMS.md">TERMS.md</a>; third-party packages retain the licences listed in{' '}
+            <a href="/THIRD_PARTY_NOTICES.md">THIRD_PARTY_NOTICES.md</a>; and the project’s
+            branding position is in <a href="/TRADEMARKS.md">TRADEMARKS.md</a>.
           </p>
         </div>
       </section>

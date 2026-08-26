@@ -17,6 +17,8 @@ describe('application shell', () => {
       'href',
       '/dnssec/',
     );
+    expect(screen.getByRole('link', { name: 'Source' })).toHaveAttribute('href', '/SOURCE.md');
+    expect(screen.getByRole('link', { name: 'Terms' })).toHaveAttribute('href', '/TERMS.md');
   });
 
   it('offers a keyboard-operable theme control', async () => {

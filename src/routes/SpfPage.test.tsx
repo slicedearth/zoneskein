@@ -156,6 +156,11 @@ describe('SpfPage', () => {
     render(<SpfPage />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Sender evaluation' }));
+    expect(screen.getByText(/only when you are authorised to process it/iu)).toBeVisible();
+    expect(screen.getByRole('form', { name: 'SPF inputs' })).toHaveAttribute(
+      'aria-describedby',
+      'spf-sender-privacy-note',
+    );
     fireEvent.change(screen.getByLabelText('SMTP client IP'), {
       target: { value: '192.0.2.1' },
     });

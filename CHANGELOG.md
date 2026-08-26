@@ -4,6 +4,7 @@ All notable changes to ZoneSkein are documented here.
 
 ## Unreleased
 
+- Added a deployed AGPL corresponding-source archive with a per-file manifest and checksum, public source, hosted-use and trade-mark links, explicit contribution licensing, authorised-data warnings, and build/release verification that binds the archive to the exact source tree.
 - Reworked the crowded primary navigation into accessible tool groups, introduced a restrained first-party SVG mark, added active-route titles, and tightened responsive workbench spacing and touch targets.
 - Added forward-record select-all and default-reset controls, compact type-major resolver results, keyboard-accessible record tables, stale-result invalidation, and provenance-preserving lookup exports.
 - Added resolver-specific Quad9 transport guidance for browser, VPN, or inspection paths that cannot preserve its required HTTP/2-or-newer DNS-over-HTTPS connection.

@@ -94,6 +94,13 @@ describe('DkimPage', () => {
     expect(messageMode).toHaveAttribute('aria-pressed', 'false');
     expect(screen.queryByRole('tab')).not.toBeInTheDocument();
     await user.click(messageMode);
+    expect(
+      screen.getByText(/only when you are authorised to process its contents/iu),
+    ).toBeVisible();
+    expect(screen.getByRole('form', { name: 'DKIM inputs' })).toHaveAttribute(
+      'aria-describedby',
+      'dkim-message-privacy-note',
+    );
     await user.type(
       screen.getByLabelText('Raw RFC 5322 message'),
       'From: sender@example.com\n\nBody',

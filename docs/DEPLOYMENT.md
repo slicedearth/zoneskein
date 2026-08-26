@@ -7,6 +7,8 @@ ZoneSkein is static-first. It produces a static `dist` directory with:
 - one application entry point and code-split route assets;
 - `_redirects` for direct-route fallback;
 - `_headers` for Netlify security headers;
+- public privacy, security, source, hosted-use, third-party, and trade-mark notices;
+- `zoneskein-corresponding-source.tar.gz`, its per-file manifest, and a deployed SHA-256 checksum;
 - no production source maps, server-rendered routes, credentials, or environment-specific API URLs.
 
 The deployment also contains exactly one Netlify Function source,
@@ -29,8 +31,9 @@ quality workflow. npm 12.0.2 is pinned through Netlify's `NPM_VERSION`, the
 package-manager declaration, and an explicit continuous-integration setup
 step. Production dependencies and build tools are locked by `package-lock.json`.
 
-The build finishes by verifying the static output allowlist, file and asset-size
-bounds, legal-file copies, resolver/CSP alignment, SPA rewrite, the exactly one
+The build finishes by generating and verifying the exact corresponding-source
+archive, its manifest and checksum, then checking the static output allowlist,
+file and asset-size bounds, public-document copies, resolver/CSP alignment, SPA rewrite, the exactly one
 allowlisted Netlify Function source and its fixed route, upstream and rate-limit
 contract, and SHA-256 hashes of the entry assets. The function is deployed by
 Netlify rather than copied into `dist`; the static output remains exact and
@@ -42,18 +45,23 @@ relay request shape. An end-to-end `/api/doh/quad9` check requires a Netlify
 local runtime or a deployed preview. Deterministic function tests exercise the
 request validation and HTTP/2 boundary without contacting Quad9.
 
-Version tags matching `v*` run the same checked build and produce two distinct
-deterministic archives. `zoneskein-static.tar.gz` contains only the verified
-contents of `dist` and is a browser-client artefact without the relay.
-`zoneskein-netlify-source.tar.gz` is the complete prebuilt Netlify deployment
+Version tags matching `v*` run the same checked build and produce three distinct
+deterministic archives. `zoneskein-static.tar.gz` contains the verified
+contents of `dist`, including the corresponding-source offer. It does not place
+the relay at a deployable Netlify Function path; the nested source offer still
+contains the relay source.
+`zoneskein-netlify-deployment.tar.gz` is the complete prebuilt Netlify deployment
 artefact: it contains exactly `dist`, `netlify/functions/quad9-doh.ts`,
-`netlify.toml`, `package.json`, `package-lock.json`, `LICENSE`, and
-`THIRD_PARTY_NOTICES.md`. The static archive is capped at 4 MiB and the complete
-archive at 8 MiB.
+`netlify.toml`, package manifests, and the public legal documents.
+`zoneskein-corresponding-source.tar.gz` is the machine-readable source used for
+the build, including all production package source distributions and the Vite
+and Rolldown package source for helpers emitted into the browser assets, and is
+capped at 3 MiB. The static archive is capped at 4 MiB and the
+complete deployment archive at 8 MiB.
 
 The workflow also produces a bounded CycloneDX software bill of materials and a
-SHA-256 checksum file covering both archives and the SBOM. GitHub records
-separate provenance and SBOM attestations for each archive, then retains the
+SHA-256 checksum file covering all three archives and the SBOM. GitHub records
+separate provenance attestations for the archives and SBOM attestations for the deployment artefacts, then retains the
 files for 90 days. The exact archive commands do not use repository globs, so
 tests, local files, and unrelated source cannot enter the deployment archive.
 This workflow does not deploy the site or create a GitHub release.
@@ -64,11 +72,12 @@ This workflow does not deploy the site or create a GitHub release.
 2. Confirm the build command and publish directory from `netlify.toml`.
 3. Preserve the committed `netlify/functions` source directory and do not add another function or Edge Function.
 4. Deploy without application environment variables or secrets.
-5. Open `/`, `/lookup/`, `/dnssec/`, `/spf/`, `/zone-lint/`, `/studio/`, `/diff/`, `/workspace/`, `/dmarc/`, `/dkim/`, `/caa/`, `/snapshots/`, and `/about/` directly.
-6. Refresh each route and confirm the application loads.
-7. Run manual direct checks against Google, Cloudflare, and Quad9 from a supported browser.
-8. Explicitly enable Quad9 compatibility mode and confirm a valid DNS wire POST to `/api/doh/quad9` succeeds while invalid methods, media types, query strings, oversized or malformed bodies, and unsupported question shapes are rejected. Confirm responses declare `Cache-Control: no-store`.
-9. Inspect the deploy log's post-processing stage and confirm Netlify accepted the code-based rate-limit rule. Then confirm the deployed rule aggregates by source IP address and site domain, permits no more than 120 requests in 60 seconds, and does not expose a caller-selected upstream. Netlify does not necessarily fail a deploy when a code-based rule is invalid, so a successful build alone is insufficient.
+5. Confirm `/SOURCE.md`, `/SOURCE_SHA256`, and `/zoneskein-corresponding-source.tar.gz` are reachable and that the checksum validates the archive.
+6. Open `/`, `/lookup/`, `/dnssec/`, `/spf/`, `/zone-lint/`, `/studio/`, `/diff/`, `/workspace/`, `/dmarc/`, `/dkim/`, `/caa/`, `/snapshots/`, and `/about/` directly.
+7. Refresh each route and confirm the application loads.
+8. Run manual direct checks against Google, Cloudflare, and Quad9 from a supported browser.
+9. Explicitly enable Quad9 compatibility mode and confirm a valid DNS wire POST to `/api/doh/quad9` succeeds while invalid methods, media types, query strings, oversized or malformed bodies, and unsupported question shapes are rejected. Confirm responses declare `Cache-Control: no-store`.
+10. Inspect the deploy log's post-processing stage and confirm Netlify accepted the code-based rate-limit rule. Then confirm the deployed rule aggregates by source IP address and site domain, permits no more than 120 requests in 60 seconds, and does not expose a caller-selected upstream. Netlify does not necessarily fail a deploy when a code-based rule is invalid, so a successful build alone is insufficient.
 
 ## Security headers
 

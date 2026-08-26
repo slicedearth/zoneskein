@@ -787,7 +787,19 @@ export function SpfPage() {
           Sender evaluation
         </button>
       </div>
-      <form className="workbench-form" onSubmit={(event) => void submit(event)}>
+      {mode === 'sender' ? (
+        <p className="detail-note" id="spf-sender-privacy-note">
+          Use real sender, client, and receiver information only when you are authorised to
+          process it. SPF macros can place those values in DNS questions visible to the selected
+          resolver; synthetic values are safer for demonstrations.
+        </p>
+      ) : null}
+      <form
+        className="workbench-form"
+        aria-label="SPF inputs"
+        aria-describedby={mode === 'sender' ? 'spf-sender-privacy-note' : undefined}
+        onSubmit={(event) => void submit(event)}
+      >
         {mode === 'sender' ? (
           <>
             <div className="field-group">

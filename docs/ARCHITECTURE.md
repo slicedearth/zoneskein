@@ -2,7 +2,7 @@
 
 ## Deployment shape
 
-ZoneSkein is static-first: a single Vite client build is deployed as static files on Netlify, and all application paths are rewritten to `index.html`. The only server-side application component is `netlify/functions/quad9-doh.ts`, exposed at the fixed same-origin path `/api/doh/quad9` for an explicitly selected Quad9 compatibility relay. There are no server-rendered routes, Edge Functions, service workers, hosted application jobs, authentication services, or server-side databases. A repository workflow periodically checks the bundled DNSSEC trust anchors, but it is not part of the deployed application.
+ZoneSkein is static-first: a single Vite client build is deployed as static files on Netlify, and all application paths are rewritten to `index.html`. The static output includes the checked public legal documents and a deterministic archive of the corresponding source used for that build. The only server-side application component is `netlify/functions/quad9-doh.ts`, exposed at the fixed same-origin path `/api/doh/quad9` for an explicitly selected Quad9 compatibility relay. There are no server-rendered routes, Edge Functions, service workers, hosted application jobs, authentication services, or server-side databases. A repository workflow periodically checks the bundled DNSSEC trust anchors, but it is not part of the deployed application.
 
 Routes are loaded with dynamic imports. The home shell remains small; protocol-heavy modules such as SPF analysis load only when needed.
 
@@ -45,6 +45,8 @@ No ANY query, arbitrary URL, or unrestricted batch input is exposed. The relay d
 Ordinary form and response state lives in React memory. DNS caching is memory-only. The Quad9 relay has no application response cache or durable application state. The theme is selected from browser preference and is not persisted. Cross-tab rate coordination writes only a bounded ledger of opaque request identifiers, timestamps, resolver buckets, and cooldown expiries to local storage; it never writes questions or answers.
 
 Snapshot persistence is separate. A boolean opt-in preference contains no DNS value. Only explicit saves write to IndexedDB. Disabling the feature asks other ZoneSkein tabs to close database handles, waits for confirmed IndexedDB deletion, and only then clears the preference; blocked or failed deletion remains visible. Share state is created only on request, bounded, encoded in a URL fragment, and runtime-validated when read.
+
+The corresponding-source archive is build output rather than application state. Its generator reads only an explicit set of source roots and root files, rejects non-files and resource-bound violations, produces a deterministic tar/gzip stream with a SHA-256 manifest, and writes a separate archive checksum. The build verifier expands the archive under independent bounds and compares every archived byte with the current source before permitting deployment.
 
 Raw DKIM messages, SPF sender inputs, and DMARC alignment inputs remain in current React memory, and those routes provide no snapshot or share control for them. DKIM verification sends only derived selector TXT questions. SPF macros can place parts of supplied sender context into resolver-visible DNS questions. Record Studio working sets remain temporary unless the visitor explicitly saves one through the snapshot control.
 

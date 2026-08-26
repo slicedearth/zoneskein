@@ -30,13 +30,13 @@ Parsing, cryptography, linting, policy evaluation, diffing, report generation, a
 
 Quad9 no longer accepts DNS-over-HTTPS over HTTP/1.1. A browser, VPN, enterprise inspection product, or network proxy that downgrades Quad9 requests can therefore make that resolver unavailable even while Google or Cloudflare works. **Quad9 (direct)** remains the default Quad9 path. A visitor can explicitly opt into **Quad9 (compatibility mode)**, which sends the DNS wire question in a bounded POST body to `/api/doh/quad9`; Netlify then forwards it only to `https://dns.quad9.net/dns-query` through a fixed Node.js HTTP/2 client. Netlify can observe that question and ordinary connection metadata in compatibility mode. The relay uses no request query string, cookies, credentials, application logging, or server-side response cache. Google and Cloudflare evidence remains independent, and no recursive answer is treated as authoritative or globally representative.
 
-SPF sender mode can place parts of a supplied mailbox, IP address, HELO/EHLO name, or receiver name into resolver-visible DNS questions when a policy uses macros. DKIM message mode keeps the raw message in page memory and sends only derived selector TXT questions. See the privacy documentation before using real sender or message data.
+SPF sender mode can place parts of a supplied mailbox, IP address, HELO/EHLO name, or receiver name into resolver-visible DNS questions when a policy uses macros. DKIM message mode keeps the raw message in page memory and sends only derived selector TXT questions. Use real personal, customer, employee, sender, or message data only when authorised; prefer synthetic values for demonstrations.
 
 Queries are not persisted by default. A bounded anonymous rate-limit ledger stores only opaque request identifiers, timestamps, resolver buckets, and cooldown expiries in local storage; it contains no questions, answers, names, or pasted content. Enabling local snapshots stores only manually saved reports in IndexedDB. The opt-in preference contains no domain name. Share links are created only on request and use the URL fragment, which is not sent to the hosting server; browser history and link recipients can still see its contents.
 
 Change Workspaces remain in page memory unless explicitly downloaded as a bounded JSON file. Importing one reads it locally, performs strict schema and SHA-256 consistency checks, and never contacts resolver endpoints retained as provenance. Import validation does not reproduce or endorse stored analysis; treat it as supplied historical data until running local reanalysis. A mismatch shows that the content no longer matches the included digest. A match shows internal consistency only: because the digest is stored with the file and can be recomputed, it provides no authenticity, authorisation, or tamper resistance. Downloaded files can contain DNS names, records, operational timing, and historical resolver evidence, so they should be handled as sensitive operational documents.
 
-See [PRIVACY.md](PRIVACY.md), [SECURITY.md](SECURITY.md), and [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md).
+See [PRIVACY.md](PRIVACY.md), [SECURITY.md](SECURITY.md), [TERMS.md](TERMS.md), and [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md).
 
 ## Abuse controls
 
@@ -89,13 +89,13 @@ npm run test:e2e
 npm run test:live
 ```
 
-`npm run build` also verifies the bounded static output, legal assets, CSP resolver allowlist, SPA rewrite, entry-asset hashes, and the single allowlisted Netlify Function contract. `npm run check:build` repeats that verification for an existing `dist` directory and the committed relay source and configuration. Production source maps are not emitted. Browser tests exercise deterministic, mocked workflows in Chromium, Firefox, WebKit, and a mobile Chromium viewport. The dedicated accessibility project checks every static route with axe, 320-CSS-pixel reflow, keyboard skip-link focus, forced colours, and reduced motion. Property tests use fixed seeds and bounded generated inputs so failures remain locally reproducible.
+`npm run build` also creates and verifies a deterministic corresponding-source archive, its per-file manifest and SHA-256 checksum, the bounded static output, public legal documents, CSP resolver allowlist, SPA rewrite, entry-asset hashes, and the single allowlisted Netlify Function contract. `npm run check:build` repeats that verification for an existing `dist` directory and the current source, relay, and configuration. Production source maps are not emitted because the complete source is offered separately. Browser tests exercise deterministic, mocked workflows in Chromium, Firefox, WebKit, and a mobile Chromium viewport. The dedicated accessibility project checks every static route with axe, 320-CSS-pixel reflow, keyboard skip-link focus, forced colours, and reduced motion. Property tests use fixed seeds and bounded generated inputs so failures remain locally reproducible.
 
 `npm run test:live` is an optional manual check against current public resolvers. It is excluded from normal tests and continuous integration. Unit and browser tests otherwise use deterministic fixtures and mocked network responses.
 
 The Vite development and preview servers exercise the static client but do not execute Netlify Functions. Direct resolver modes work there; an end-to-end Quad9 relay check requires a Netlify local runtime or a deployed preview. The deterministic function tests still cover its request validation and HTTP/2 transport without contacting Quad9.
 
-Version tags produce a browser-only static archive and a separate, bounded complete Netlify deployment archive containing the verified `dist` output, the single Quad9 function, deployment configuration, package manifests, and legal notices. Both archives are checksummed and receive separate provenance and SBOM attestations; neither workflow deploys the site.
+Version tags produce a browser-only static archive, a bounded complete Netlify deployment archive, and the exact corresponding-source archive also served by the built site. Release files are checksummed; deployment artefacts receive provenance and SBOM attestations, and the source archive receives its own provenance attestation. The workflow does not deploy the site.
 
 ## Netlify deployment
 
@@ -124,4 +124,4 @@ See [LIMITATIONS.md](LIMITATIONS.md), [docs/DNSSEC-MODEL.md](docs/DNSSEC-MODEL.m
 
 ZoneSkein’s original source code is free software licensed under **GNU AGPL-3.0-only**. The complete terms in [LICENSE](LICENSE) control. The software is provided without warranty.
 
-Third-party packages retain their own licences; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Every production build offers its exact, machine-readable corresponding source as described in [SOURCE.md](SOURCE.md). Hosted use is described separately in [TERMS.md](TERMS.md), without restricting the AGPL rights in distributed copies. Third-party packages retain their own licences; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Project branding is addressed in [TRADEMARKS.md](TRADEMARKS.md).

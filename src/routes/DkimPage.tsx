@@ -485,7 +485,19 @@ export function DkimPage() {
           Message verifier
         </button>
       </div>
-      <form className="workbench-form" onSubmit={(event) => void inspect(event)}>
+      {mode === 'message' ? (
+        <p className="detail-note" id="dkim-message-privacy-note">
+          Use a real message only when you are authorised to process its contents. Raw message
+          bytes stay in this tab, but derived selector and signing-domain DNS questions are sent
+          to the selected resolver.
+        </p>
+      ) : null}
+      <form
+        className="workbench-form"
+        aria-label="DKIM inputs"
+        aria-describedby={mode === 'message' ? 'dkim-message-privacy-note' : undefined}
+        onSubmit={(event) => void inspect(event)}
+      >
         {mode === 'key' ? (
           <>
             <div className="field-group">

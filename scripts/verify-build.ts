@@ -2,17 +2,34 @@ import { createHash } from 'node:crypto';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { extname, join, relative, resolve, sep } from 'node:path';
 
+import {
+  collectCorrespondingSource,
+  parseCorrespondingSourceArchive,
+  SOURCE_ARCHIVE_DIGEST_NAME,
+  SOURCE_ARCHIVE_NAME,
+  SOURCE_MANIFEST_NAME,
+  sourceArchiveDigest,
+} from './source-archive.ts';
+
 const root = resolve(import.meta.dirname, '..');
 const output = join(root, 'dist');
 const functionsDirectory = join(root, 'netlify', 'functions');
-const MAX_FILES = 128;
+const MAX_FILES = 160;
 const MAX_TOTAL_OCTETS = 4 * 1024 * 1024;
 const MAX_SINGLE_ASSET_OCTETS = 512 * 1024;
 const MAX_FUNCTION_SOURCE_OCTETS = 64 * 1024;
+const MAX_SOURCE_ARCHIVE_OCTETS = 3 * 1024 * 1024;
 const HASHED_ASSET_NAME = /^assets\/[A-Za-z0-9_-]+-[A-Za-z0-9_-]{8}\.(?:css|js)$/u;
 const REQUIRED_ROOT_FILES = new Set([
   'LICENSE',
+  'PRIVACY.md',
+  'SECURITY.md',
+  'SOURCE.md',
+  SOURCE_ARCHIVE_DIGEST_NAME,
+  SOURCE_ARCHIVE_NAME,
+  'TERMS.md',
   'THIRD_PARTY_NOTICES.md',
+  'TRADEMARKS.md',
   '_headers',
   '_redirects',
   'favicon.svg',
@@ -50,6 +67,36 @@ async function requireExactCopy(sourceName: string, outputName = sourceName): Pr
     readFile(join(output, outputName)),
   ]);
   if (!source.equals(built)) fail(`${outputName} does not exactly match ${sourceName}.`);
+}
+
+async function verifyCorrespondingSource(): Promise<string> {
+  const [archive, digestFile, expectedEntries] = await Promise.all([
+    readFile(join(output, SOURCE_ARCHIVE_NAME)),
+    readFile(join(output, SOURCE_ARCHIVE_DIGEST_NAME), 'utf8'),
+    collectCorrespondingSource(root),
+  ]);
+  if (archive.length > MAX_SOURCE_ARCHIVE_OCTETS)
+    fail(`${SOURCE_ARCHIVE_NAME} exceeds ${String(MAX_SOURCE_ARCHIVE_OCTETS)} octets.`);
+  const digest = sourceArchiveDigest(archive);
+  if (digestFile !== `${digest}  ${SOURCE_ARCHIVE_NAME}\n`)
+    fail(`${SOURCE_ARCHIVE_DIGEST_NAME} does not match ${SOURCE_ARCHIVE_NAME}.`);
+
+  let archivedEntries: ReadonlyMap<string, Uint8Array>;
+  try {
+    archivedEntries = parseCorrespondingSourceArchive(archive);
+  } catch (cause) {
+    fail(cause instanceof Error ? cause.message : 'corresponding-source archive is invalid.');
+  }
+  if (archivedEntries.size !== expectedEntries.length + 1)
+    fail('corresponding-source archive does not contain the exact source file set.');
+  for (const expected of expectedEntries) {
+    const archived = archivedEntries.get(expected.path);
+    if (archived === undefined || !Buffer.from(archived).equals(Buffer.from(expected.content)))
+      fail(`corresponding-source archive does not exactly match ${expected.path}.`);
+  }
+  if (!archivedEntries.has(SOURCE_MANIFEST_NAME))
+    fail(`corresponding-source archive is missing ${SOURCE_MANIFEST_NAME}.`);
+  return digest;
 }
 
 function directiveValues(policy: string, directive: string): ReadonlySet<string> {
@@ -112,13 +159,20 @@ for (const required of REQUIRED_ROOT_FILES) {
 
 await Promise.all([
   requireExactCopy('LICENSE'),
+  requireExactCopy('PRIVACY.md'),
+  requireExactCopy('SECURITY.md'),
+  requireExactCopy('SOURCE.md'),
+  requireExactCopy('TERMS.md'),
   requireExactCopy('THIRD_PARTY_NOTICES.md'),
+  requireExactCopy('TRADEMARKS.md'),
   requireExactCopy('public/_headers', '_headers'),
   requireExactCopy('public/_redirects', '_redirects'),
   requireExactCopy('public/favicon.svg', 'favicon.svg'),
   requireExactCopy('public/logo.svg', 'logo.svg'),
   requireExactCopy('public/robots.txt', 'robots.txt'),
 ]);
+
+const sourceDigest = await verifyCorrespondingSource();
 
 const [html, headers, redirects, resolverSource, netlifyConfig, relaySource] =
   await Promise.all([
@@ -229,5 +283,5 @@ const entryHashes = await Promise.all(
 );
 
 process.stdout.write(
-  `Verified ${String(files.length)} static build files (${String(totalOctets)} octets).\n${entryHashes.join('\n')}\n`,
+  `Verified ${String(files.length)} static build files (${String(totalOctets)} octets).\n${entryHashes.join('\n')}\n${SOURCE_ARCHIVE_NAME} sha256-${sourceDigest}\n`,
 );
