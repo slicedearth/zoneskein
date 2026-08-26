@@ -162,6 +162,114 @@ describe('DNS wire messages', () => {
     expect(() => decodeDnsMessage(query)).toThrow(/query instead/);
   });
 
+  it('rejects response shapes that exceed semantic allocation budgets', () => {
+    const twoQuestions = encode({
+      flags: 0x8180,
+      id: 0,
+      questions: [
+        { class: 'IN', name: 'example.com.', type: 'A' },
+        { class: 'IN', name: 'example.net.', type: 'A' },
+      ],
+      type: 'response',
+    });
+    expect(() => decodeDnsMessage(twoQuestions)).toThrow(/exactly one question/iu);
+
+    const tooManyRecords = encode({
+      answers: Array.from({ length: 513 }, () => ({
+        class: 'IN' as const,
+        data: '192.0.2.1',
+        name: 'example.com.',
+        ttl: 60,
+        type: 'A' as const,
+      })),
+      flags: 0x8180,
+      id: 0,
+      questions: [{ class: 'IN', name: 'example.com.', type: 'A' }],
+      type: 'response',
+    });
+    expect(() => decodeDnsMessage(tooManyRecords)).toThrow(/512-record safety limit/iu);
+
+    const tooManyTxtChunks = encode({
+      answers: [
+        {
+          class: 'IN',
+          data: Array.from({ length: 257 }, () => ''),
+          name: 'example.com.',
+          ttl: 60,
+          type: 'TXT',
+        },
+      ],
+      flags: 0x8180,
+      id: 0,
+      questions: [{ class: 'IN', name: 'example.com.', type: 'TXT' }],
+      type: 'response',
+    });
+    expect(() => decodeDnsMessage(tooManyTxtChunks)).toThrow(/256-chunk safety limit/iu);
+
+    const tooManyOptions = encode({
+      additionals: [
+        {
+          class: 'IN',
+          name: '.',
+          options: Array.from({ length: 257 }, () => ({ code: 'PADDING', length: 0 })),
+          type: 'OPT',
+          udpPayloadSize: 1232,
+        } as never,
+      ],
+      flags: 0x8180,
+      id: 0,
+      questions: [{ class: 'IN', name: 'example.com.', type: 'A' }],
+      type: 'response',
+    });
+    expect(() => decodeDnsMessage(tooManyOptions)).toThrow(/256-option safety limit/iu);
+
+    const typeBitmap = Uint8Array.from([
+      0,
+      32,
+      ...new Uint8Array(32).fill(0xff),
+      1,
+      32,
+      ...new Uint8Array(32).fill(0xff),
+      2,
+      1,
+      0x80,
+    ]);
+    const nsecRdata = Uint8Array.from([0, ...typeBitmap]);
+    const excessiveTypeBitmap = Uint8Array.from([
+      0,
+      0,
+      0x81,
+      0x80,
+      0,
+      1,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      47,
+      0,
+      1,
+      0xc0,
+      0x0c,
+      0,
+      47,
+      0,
+      1,
+      0,
+      0,
+      0,
+      60,
+      nsecRdata.length >>> 8,
+      nsecRdata.length & 0xff,
+      ...nsecRdata,
+    ]);
+    expect(() => decodeDnsMessage(excessiveTypeBitmap)).toThrow(/512-type safety limit/iu);
+  });
+
   it('decodes extended DNS errors from EDNS options', () => {
     const text = new TextEncoder().encode('validation failed');
     const data = new Uint8Array(2 + text.length);

@@ -7,6 +7,7 @@ import {
 } from '../technical-text';
 
 const strictDecoder = new TextDecoder('utf-8', { fatal: true });
+const MAX_PRESENTED_SVCB_PARAMETERS = 256;
 
 export interface RecordField {
   readonly label: string;
@@ -44,6 +45,10 @@ function objectFields(value: object): readonly RecordField[] {
 
 function textFromFields(fields: readonly RecordField[]): string {
   return fields.map(({ value }) => value).join(' ');
+}
+
+function genericRdataText(raw: Uint8Array): string {
+  return `\\# ${String(raw.length)} ${hex(raw)}`;
 }
 
 function txtView(data: unknown, raw: Uint8Array): ParsedRecordView {
@@ -195,15 +200,30 @@ function svcbView(raw: Uint8Array): ParsedRecordView | null {
   const priority = readUint16(raw, 0);
   const target = parseUncompressedName(raw, 2);
   if (priority === null || target === null) return null;
-  const fields: RecordField[] = [
+  const identityFields: readonly RecordField[] = [
     projectedField('Priority', priority),
     projectedField('Target', target.name),
   ];
+  const fields: RecordField[] = [...identityFields];
   let offset = target.offset;
+  let parameters = 0;
   while (offset < raw.length) {
     const key = readUint16(raw, offset);
     const length = readUint16(raw, offset + 2);
     if (key === null || length === null || offset + 4 + length > raw.length) return null;
+    parameters += 1;
+    if (parameters > MAX_PRESENTED_SVCB_PARAMETERS) {
+      return {
+        fields: [
+          ...identityFields,
+          projectedField(
+            'SvcParam presentation',
+            `Not expanded: this record contains more than ${String(MAX_PRESENTED_SVCB_PARAMETERS)} parameters. Complete raw RDATA is retained.`,
+          ),
+        ],
+        text: genericRdataText(raw),
+      };
+    }
     const value = raw.slice(offset + 4, offset + 4 + length);
     fields.push(
       projectedField(SVCB_KEYS[key] ?? `key${String(key)}`, svcbParameter(key, value)),
@@ -247,7 +267,7 @@ export function parseRecordView(record: DnsRecord): ParsedRecordView {
     return (
       svcbView(record.rawRdata) ?? {
         fields: [],
-        text: `\\# ${String(record.rawRdata.length)} ${hex(record.rawRdata)}`,
+        text: genericRdataText(record.rawRdata),
       }
     );
   }
@@ -255,7 +275,7 @@ export function parseRecordView(record: DnsRecord): ParsedRecordView {
     return (
       tlsaView(record.rawRdata) ?? {
         fields: [],
-        text: `\\# ${String(record.rawRdata.length)} ${hex(record.rawRdata)}`,
+        text: genericRdataText(record.rawRdata),
       }
     );
   }
@@ -263,7 +283,7 @@ export function parseRecordView(record: DnsRecord): ParsedRecordView {
     return (
       zonemdView(record.rawRdata) ?? {
         fields: [],
-        text: `\\# ${String(record.rawRdata.length)} ${hex(record.rawRdata)}`,
+        text: genericRdataText(record.rawRdata),
       }
     );
   }
@@ -280,7 +300,7 @@ export function parseRecordView(record: DnsRecord): ParsedRecordView {
   }
   return {
     fields: [],
-    text: `\\# ${String(record.rawRdata.length)} ${hex(record.rawRdata)}`,
+    text: genericRdataText(record.rawRdata),
   };
 }
 

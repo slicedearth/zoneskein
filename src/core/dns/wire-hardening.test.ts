@@ -242,7 +242,7 @@ describe('DNS wire hardening', () => {
     const rdataStart = 12 + question.length + 4 + firstHeader.length + 2;
     const chain: number[] = [0];
     const pointerOffsets: number[] = [];
-    for (let index = 0; index < 120; index += 1) {
+    for (let index = 0; index < 127; index += 1) {
       const target = index === 0 ? rdataStart : pointerOffsets[index - 1];
       if (target === undefined) throw new Error('Compression fixture target is missing.');
       pointerOffsets.push(rdataStart + chain.length);
@@ -268,7 +268,7 @@ describe('DNS wire hardening', () => {
       2,
       1,
     ];
-    const repeatedCount = 550;
+    const repeatedCount = 510;
     const answerCount = repeatedCount + 1;
     const bytes = concat(
       [0, 0, 0x81, 0x80, 0, 1, answerCount >>> 8, answerCount & 0xff, 0, 0, 0, 0],

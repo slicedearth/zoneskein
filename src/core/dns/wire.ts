@@ -29,6 +29,10 @@ import { projectTechnicalBytes } from '../technical-text';
 
 export const MAX_DNS_MESSAGE_BYTES = 65_535;
 export const DNS_QUERY_PADDING_BLOCK_BYTES = 128;
+const MAX_DNS_RECORDS = 512;
+const MAX_EDNS_OPTIONS = 256;
+const MAX_TXT_CHUNKS = 256;
+const MAX_TYPE_BITMAP_TYPES = 512;
 const MAX_DNS_MESSAGE_NAME_OPERATIONS = MAX_DNS_MESSAGE_BYTES;
 const MAX_DNS_NAME_POINTERS = 128;
 const MAX_DNS_NAME_OPERATIONS = 256;
@@ -223,6 +227,10 @@ function rawDnsLayout(message: Uint8Array): RawDnsLayout {
   const flags = readUint16(message, 2);
   const questionCount = readUint16(message, 4);
   const recordCount = readUint16(message, 6) + readUint16(message, 8) + readUint16(message, 10);
+  if (questionCount !== 1) throw new Error('DNS response must contain exactly one question.');
+  if (recordCount > MAX_DNS_RECORDS) {
+    throw new Error(`DNS response exceeds the ${String(MAX_DNS_RECORDS)}-record safety limit.`);
+  }
   const budget: RawDnsNameBudget = { operations: 0 };
   let offset = 12;
 
@@ -317,8 +325,14 @@ function rawTypeBitmap(bytes: Uint8Array, initialOffset: number): readonly strin
       const value = bytes[offset + 2 + octet];
       if (value === undefined) throw new Error('DNS type bitmap is truncated.');
       for (let bit = 0; bit < 8; bit += 1) {
-        if ((value & (0x80 >>> bit)) !== 0)
+        if ((value & (0x80 >>> bit)) !== 0) {
+          if (types.length >= MAX_TYPE_BITMAP_TYPES) {
+            throw new Error(
+              `DNS type bitmap exceeds the ${String(MAX_TYPE_BITMAP_TYPES)}-type safety limit.`,
+            );
+          }
           types.push(wireTypeText(window * 256 + octet * 8 + bit));
+        }
       }
     }
     previousWindow = window;
@@ -335,6 +349,9 @@ function rawTxtData(raw: RawDnsRecord): readonly Uint8Array[] {
     const length = raw.rdata[offset];
     if (length === undefined || offset + 1 + length > raw.rdata.length)
       throw new Error('TXT RDATA is malformed.');
+    if (chunks.length >= MAX_TXT_CHUNKS) {
+      throw new Error(`TXT RDATA exceeds the ${String(MAX_TXT_CHUNKS)}-chunk safety limit.`);
+    }
     chunks.push(raw.rdata.slice(offset + 1, offset + 1 + length));
     offset += 1 + length;
   }
@@ -358,6 +375,9 @@ function rawOptData(raw: RawDnsRecord): Readonly<Record<string, unknown>> {
     const length = readUint16(raw.rdata, offset + 2);
     if (offset + 4 + length > raw.rdata.length)
       throw new Error('EDNS option exceeds its declared RDATA.');
+    if (options.length >= MAX_EDNS_OPTIONS) {
+      throw new Error(`OPT RDATA exceeds the ${String(MAX_EDNS_OPTIONS)}-option safety limit.`);
+    }
     options.push({ code, data: raw.rdata.slice(offset + 4, offset + 4 + length) });
     offset += 4 + length;
   }

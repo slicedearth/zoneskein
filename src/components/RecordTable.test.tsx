@@ -78,4 +78,40 @@ describe('RecordTable', () => {
     expect(owner).toHaveAttribute('dir', 'ltr');
     expect(owner).not.toHaveTextContent(control);
   });
+
+  it('bounds SVCB field nodes while retaining complete raw evidence', () => {
+    const parameters = Array.from({ length: 257 }, (_, index) => {
+      const key = index + 9;
+      return [key >>> 8, key & 0xff, 0, 0];
+    }).flat();
+    const rawRdata = Uint8Array.from([0, 1, 0, ...parameters]);
+
+    render(
+      <RecordTable
+        compact
+        records={[
+          {
+            class: 'IN',
+            data: null,
+            owner: 'example.test.',
+            rawRdata,
+            section: 'answer',
+            ttl: 300,
+            type: 'HTTPS',
+            typeCode: 65,
+          },
+        ]}
+      />,
+    );
+
+    expect(document.querySelectorAll('.record-fields > div')).toHaveLength(3);
+    expect(
+      screen.getByText(
+        'Not expanded: this record contains more than 256 parameters. Complete raw RDATA is retained.',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(`Raw RDATA · ${String(rawRdata.length)} octets`),
+    ).toBeInTheDocument();
+  });
 });

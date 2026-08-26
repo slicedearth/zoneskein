@@ -129,4 +129,37 @@ describe('DNS record field views', () => {
     );
     expect(view.text).toContain('h2\\u{202E}');
   });
+
+  it('uses one explicit raw fallback for excessive SVCB presentation fan-out', () => {
+    const parameters = Array.from({ length: 257 }, (_, index) => {
+      const key = index + 9;
+      return [key >>> 8, key & 0xff, 0, 0];
+    }).flat();
+    const rawRdata = Uint8Array.from([0, 1, 0, ...parameters]);
+    const view = parseRecordView({
+      class: 'IN',
+      data: null,
+      owner: 'example.',
+      rawRdata,
+      section: 'answer',
+      ttl: 300,
+      type: 'HTTPS',
+      typeCode: 65,
+    });
+
+    expect(view.fields).toEqual([
+      { label: 'Priority', value: '1' },
+      { label: 'Target', value: '.' },
+      {
+        label: 'SvcParam presentation',
+        value:
+          'Not expanded: this record contains more than 256 parameters. Complete raw RDATA is retained.',
+      },
+    ]);
+    const expectedHex = [...rawRdata]
+      .map((byte) => byte.toString(16).padStart(2, '0'))
+      .join('')
+      .toUpperCase();
+    expect(view.text).toBe(`\\# ${String(rawRdata.length)} ${expectedHex}`);
+  });
 });
