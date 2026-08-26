@@ -7,8 +7,9 @@ ZoneSkein’s original source is AGPL-3.0-only. The packages below are separate 
 | `@dnsquery/dns-packet`    |   6.1.1 | MIT          | <https://github.com/dnsquery/dns-packet>        | DNS wire-message encoding and decoding |
 | `@leichtgewicht/ip-codec` |   2.0.5 | MIT          | <https://github.com/martinheidegger/ip-codec>   | Transitive IP wire codec               |
 | `utf8-codec`              |   1.0.0 | MIT          | <https://github.com/martinheidegger/utf8-codec> | Transitive UTF-8 wire codec            |
-| `cidr-tools`              |  12.1.3 | BSD-2-Clause | <https://github.com/silverwind/cidr-tools>      | Safe CIDR normalisation and coalescing |
-| `ip-bigint`               |   9.0.8 | BSD-2-Clause | <https://github.com/silverwind/ip-bigint>       | Transitive integer CIDR operations     |
+| `cidr-tools`              |  13.0.1 | BSD-2-Clause | <https://github.com/silverwind/cidr-tools>      | Safe CIDR normalisation and coalescing |
+| `cidr-regex`              |   7.1.0 | BSD-2-Clause | <https://github.com/silverwind/cidr-regex>      | Transitive strict CIDR validation      |
+| `ip-bigint`               |  10.0.1 | BSD-2-Clause | <https://github.com/silverwind/ip-bigint>       | Transitive integer CIDR operations     |
 | `idb`                     |   8.0.3 | ISC          | <https://github.com/jakearchibald/idb>          | Explicitly enabled IndexedDB snapshots |
 | `html-entities`           |   2.6.0 | MIT          | <https://github.com/mdevils/html-entities>      | Transitive Markdown entity codec       |
 | `ipaddr.js`               |   2.5.0 | MIT          | <https://github.com/whitequark/ipaddr.js>       | IPv4 and IPv6 parsing and validation   |
@@ -17,7 +18,7 @@ ZoneSkein’s original source is AGPL-3.0-only. The packages below are separate 
 | `react`                   |  19.2.8 | MIT          | <https://github.com/facebook/react>             | User interface runtime                 |
 | `react-dom`               |  19.2.8 | MIT          | <https://github.com/facebook/react>             | Browser rendering                      |
 | `scheduler`               |  0.27.0 | MIT          | <https://github.com/facebook/react>             | Transitive React scheduling runtime    |
-| `vite`                    |   8.2.1 | MIT          | <https://github.com/vitejs/vite>                | Generated module-preload helper        |
+| `vite`                    |   8.2.2 | MIT          | <https://github.com/vitejs/vite>                | Generated module-preload helper        |
 | `rolldown`                |   1.2.4 | MIT          | <https://github.com/rolldown/rolldown>          | Generated module runtime helpers       |
 
 ## Licence texts
@@ -100,7 +101,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### `cidr-tools` and `ip-bigint`
+### `cidr-tools`, `cidr-regex`, and `ip-bigint`
 
 These packages ship byte-identical `LICENSE` files, reproduced once below.
 

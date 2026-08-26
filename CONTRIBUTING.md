@@ -24,6 +24,8 @@ contributor licence agreement.
 npm install --global npm@12.0.2
 npm --version
 npm ci
+npm audit signatures
+npm audit --audit-level=high
 npm run format:check
 npm run lint
 npm run check
