@@ -11,12 +11,17 @@ interface RateLimitStorage {
   setItem(key: string, value: string): void;
 }
 
+interface RateLimitLockManager {
+  request<T>(name: string, callback: () => Promise<T> | T): Promise<T>;
+}
+
 interface RuntimeGlobal {
   readonly process?: { readonly release?: { readonly name?: unknown } };
 }
 
 export interface BrowserRateLimiterOptions {
   readonly channelFactory?: (name: string) => RateLimitChannel | null;
+  readonly lockManager?: RateLimitLockManager | null;
   readonly storage?: RateLimitStorage | null;
 }
 
@@ -73,6 +78,7 @@ const MAX_STATE_AGE_MS = MAX_COOLDOWN_MS + WINDOW_MS;
 const MAX_PERSISTED_CHARACTERS = 32_768;
 const MAX_EVENT_ID_CHARACTERS = 96;
 const CHANNEL_NAME = 'zoneskein-doh-rate-v2';
+const LOCK_NAME_PREFIX = 'zoneskein-doh-rate-reservation-v1';
 const STORAGE_KEY = 'zoneskein-doh-rate-v2';
 const RESOLVER_IDS = [
   'cloudflare',
@@ -137,6 +143,21 @@ function defaultChannel(): RateLimitChannel | undefined {
     return typeof BroadcastChannel === 'undefined'
       ? undefined
       : new BroadcastChannel(CHANNEL_NAME);
+  } catch {
+    return undefined;
+  }
+}
+
+function defaultLockManager(): RateLimitLockManager | undefined {
+  try {
+    if (typeof navigator === 'undefined') return undefined;
+    const manager = (navigator as unknown as { readonly locks?: LockManager }).locks;
+    if (manager === undefined) return undefined;
+    return {
+      request<T>(name: string, callback: () => Promise<T> | T): Promise<T> {
+        return manager.request(name, () => callback());
+      },
+    };
   } catch {
     return undefined;
   }
@@ -214,6 +235,7 @@ function persistedState(value: unknown, now: number): PersistedState | null {
 export class BrowserRateLimiter {
   readonly #channel: RateLimitChannel | undefined;
   readonly #instanceId = instanceId();
+  readonly #lockManager: RateLimitLockManager | undefined;
   readonly #now: () => number;
   readonly #queues = new Map<ResolverId, QueueEntry[]>();
   readonly #running = new Set<ResolverId>();
@@ -225,6 +247,10 @@ export class BrowserRateLimiter {
     this.#now = now;
     this.#storage =
       options.storage === undefined ? defaultStorage() : (options.storage ?? undefined);
+    this.#lockManager =
+      options.lockManager === undefined
+        ? defaultLockManager()
+        : (options.lockManager ?? undefined);
     try {
       this.#channel =
         options.channelFactory === undefined
@@ -444,7 +470,7 @@ export class BrowserRateLimiter {
     if (value.type === 'request') {
       const timestamp = requestTimestamp(value.timestamp, now);
       if (timestamp === null) return;
-      this.#record(value.resolverId, { id: value.id, timestamp }, now);
+      this.#record(value.resolverId, { id: value.id, timestamp }, now, false);
       return;
     }
     if (value.until <= now || value.until > now + MAX_COOLDOWN_MS + MAX_FUTURE_SKEW_MS) return;
@@ -453,17 +479,16 @@ export class BrowserRateLimiter {
       resolverWindow.cooldownUntil,
       Math.min(value.until, now + MAX_COOLDOWN_MS),
     );
-    this.#persist(now);
   }
 
-  #record(resolverId: ResolverId, request: RequestStamp, now: number): void {
+  #record(resolverId: ResolverId, request: RequestStamp, now: number, persist = true): void {
     const resolverWindow = this.#window(resolverId);
     this.#prune(resolverWindow, now);
     if (resolverWindow.requests.some((candidate) => candidate.id === request.id)) return;
     if (resolverWindow.requests.length >= MAX_REQUESTS_PER_WINDOW) return;
     resolverWindow.requests.push(request);
     this.#prune(resolverWindow, now);
-    this.#persist(now);
+    if (persist) this.#persist(now);
   }
 
   #startDrain(resolverId: ResolverId): void {
@@ -475,29 +500,35 @@ export class BrowserRateLimiter {
   async #takeSlot(resolverId: ResolverId, signal?: AbortSignal): Promise<void> {
     for (;;) {
       if (signal?.aborted) throw new DnsQueryError('aborted', 'The DNS run was cancelled.');
-      const now = this.#time();
-      this.#loadPersisted(now);
-      const resolverWindow = this.#window(resolverId);
-      this.#prune(resolverWindow, now);
-      if (resolverWindow.cooldownUntil > now) {
-        throw new DnsQueryError(
-          'cooldown',
-          'The resolver is cooling down after a rate-limit response.',
-          resolverWindow.cooldownUntil - now,
-        );
-      }
-      if (resolverWindow.requests.length >= MAX_REQUESTS_PER_WINDOW) {
-        const oldest = resolverWindow.requests.at(0);
-        if (oldest === undefined) continue;
-        throw new DnsQueryError(
-          'rate-limited',
-          'This browser has reached the rolling DNS request limit.',
-          Math.max(0, WINDOW_MS - (now - oldest.timestamp)),
-        );
-      }
+      const decision = await this.#withReservationLock(resolverId, () => {
+        if (signal?.aborted) throw new DnsQueryError('aborted', 'The DNS run was cancelled.');
+        const now = this.#time();
+        this.#loadPersisted(now);
+        const resolverWindow = this.#window(resolverId);
+        this.#prune(resolverWindow, now);
+        if (resolverWindow.cooldownUntil > now) {
+          throw new DnsQueryError(
+            'cooldown',
+            'The resolver is cooling down after a rate-limit response.',
+            resolverWindow.cooldownUntil - now,
+          );
+        }
+        if (resolverWindow.requests.length >= MAX_REQUESTS_PER_WINDOW) {
+          const oldest = resolverWindow.requests.at(0);
+          if (oldest === undefined) return { delayMs: 1, granted: false } as const;
+          throw new DnsQueryError(
+            'rate-limited',
+            'This browser has reached the rolling DNS request limit.',
+            Math.max(0, WINDOW_MS - (now - oldest.timestamp)),
+          );
+        }
 
-      const tokens = this.#tokens(resolverWindow.requests, now);
-      if (tokens >= 1) {
+        const tokens = this.#tokens(resolverWindow.requests, now);
+        if (tokens < 1)
+          return {
+            delayMs: Math.max(1, Math.ceil(((1 - tokens) / REFILL_PER_SECOND) * 1000)),
+            granted: false,
+          } as const;
         const request: SharedRequestEvent = {
           id: this.#nextRequestId(),
           resolverId,
@@ -506,13 +537,16 @@ export class BrowserRateLimiter {
         };
         this.#record(resolverId, { id: request.id, timestamp: request.timestamp }, now);
         this.#post(request);
-        return;
-      }
-      await this.#delay(
-        Math.max(1, Math.ceil(((1 - tokens) / REFILL_PER_SECOND) * 1000)),
-        signal,
-      );
+        return { granted: true } as const;
+      });
+      if (decision.granted) return;
+      await this.#delay(decision.delayMs, signal);
     }
+  }
+
+  async #withReservationLock<T>(resolverId: ResolverId, callback: () => T): Promise<T> {
+    if (this.#lockManager === undefined) return callback();
+    return this.#lockManager.request(`${LOCK_NAME_PREFIX}:${resolverId}`, callback);
   }
 
   #time(): number {

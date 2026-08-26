@@ -7,6 +7,7 @@ import {
   listSnapshots,
   snapshotFromFragment,
   snapshotsEnabled,
+  snapshotsErasurePending,
   subscribeSnapshotState,
 } from '../core/snapshots/store';
 import { SnapshotsPage } from './SnapshotsPage';
@@ -20,6 +21,7 @@ vi.mock('../core/snapshots/store', () => ({
   snapshotFragment: vi.fn(() => '#report=fixture'),
   snapshotFromFragment: vi.fn(),
   snapshotsEnabled: vi.fn(),
+  snapshotsErasurePending: vi.fn(),
   subscribeSnapshotState: vi.fn(() => () => undefined),
 }));
 
@@ -29,6 +31,7 @@ describe('local snapshot controls', () => {
     window.history.replaceState({}, '', '/snapshots/');
     vi.mocked(snapshotFromFragment).mockReturnValue(null);
     vi.mocked(snapshotsEnabled).mockReturnValue(true);
+    vi.mocked(snapshotsErasurePending).mockReturnValue(false);
     vi.mocked(listSnapshots).mockResolvedValue([]);
     vi.mocked(disableAndEraseSnapshots).mockResolvedValue();
     vi.mocked(subscribeSnapshotState).mockReturnValue(() => undefined);
@@ -63,17 +66,23 @@ describe('local snapshot controls', () => {
   });
 
   it('retains the enabled controls and surfaces a rejected erasure', async () => {
-    vi.mocked(disableAndEraseSnapshots).mockRejectedValue(
-      new Error('The browser refused to erase local snapshots.'),
-    );
+    let pending = false;
+    vi.mocked(snapshotsErasurePending).mockImplementation(() => pending);
+    vi.mocked(disableAndEraseSnapshots).mockImplementation(() => {
+      pending = true;
+      return Promise.reject(new Error('The browser refused to erase local snapshots.'));
+    });
     render(<SnapshotsPage />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Disable and erase all' }));
 
     expect(
-      await screen.findByText('The browser refused to erase local snapshots.'),
+      await screen.findByText(/The browser refused to erase local snapshots/iu),
     ).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Disable and erase all' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Retry erasure' })).toBeEnabled();
+    expect(
+      screen.queryByRole('button', { name: 'Enable local snapshots' }),
+    ).not.toBeInTheDocument();
   });
 
   it('surfaces a rejected opt-in without claiming storage is enabled', async () => {

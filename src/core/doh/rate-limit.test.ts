@@ -42,6 +42,19 @@ class TestChannel {
   }
 }
 
+class TestLockManager {
+  #tail: Promise<unknown> = Promise.resolve();
+
+  request<T>(_name: string, callback: () => Promise<T> | T): Promise<T> {
+    const result = this.#tail.then(callback, callback);
+    this.#tail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+}
+
 function isolated(now: () => number): BrowserRateLimiter {
   return new BrowserRateLimiter(now, { channelFactory: () => null, storage: null });
 }
@@ -316,7 +329,7 @@ describe('browser DNS rate limiter', () => {
     limiter.close();
   });
 
-  it('stops persisting new shared events after the bounded ledger is full', () => {
+  it('keeps received cross-tab events bounded without overwriting canonical storage', async () => {
     const now = 1_000_000;
     const channel = new TestChannel();
     const storage = new MemoryStorage();
@@ -333,9 +346,9 @@ describe('browser DNS rate limiter', () => {
         type: 'request',
       });
 
-    expect(storage.writes).toHaveLength(120);
-    expect(storage.value?.match(/"timestamp":/gu)?.length).toBe(120);
-    expect(storage.writes.every((value) => value.length <= 32_768)).toBe(true);
+    expect(storage.writes).toHaveLength(0);
+    expect(storage.value).toBeNull();
+    await expect(limiter.wait('quad9')).rejects.toMatchObject({ code: 'rate-limited' });
     limiter.close();
   });
 
@@ -405,5 +418,42 @@ describe('browser DNS rate limiter', () => {
     expect(storage.value?.match(/"timestamp":/gu)?.length).toBe(1);
     limiter.close();
     restored.close();
+  });
+
+  it('reserves the final shared slot atomically when origin-wide locks are available', async () => {
+    const now = 1_000_000;
+    const storage = new MemoryStorage(
+      JSON.stringify({
+        savedAt: now,
+        version: 1,
+        windows: {
+          google: {
+            cooldownUntil: 0,
+            requests: Array.from({ length: 119 }, (_, index) => ({
+              id: `external-${String(index)}`,
+              timestamp: now - (118 - index) * 500,
+            })),
+          },
+        },
+      }),
+    );
+    const lockManager = new TestLockManager();
+    const first = new BrowserRateLimiter(() => now, {
+      channelFactory: () => null,
+      lockManager,
+      storage,
+    });
+    const second = new BrowserRateLimiter(() => now, {
+      channelFactory: () => null,
+      lockManager,
+      storage,
+    });
+
+    const results = await Promise.allSettled([first.wait('google'), second.wait('google')]);
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+    expect(storage.value?.match(/"timestamp":/gu)?.length).toBe(120);
+    first.close();
+    second.close();
   });
 });

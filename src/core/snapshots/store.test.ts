@@ -13,6 +13,7 @@ import {
   snapshotFragment,
   snapshotFromFragment,
   snapshotsEnabled,
+  snapshotsErasurePending,
 } from './store';
 
 const DATABASE_NAME = 'zoneskein-snapshots-v1';
@@ -100,22 +101,45 @@ describe('explicit local snapshots', () => {
     expect(await listSnapshots()).toEqual([]);
   });
 
-  it('keeps the opt-in preference until a blocked database deletion completes', async () => {
+  it('blocks every new write before a blocked database deletion completes', async () => {
     enableSnapshots();
     await saveSnapshot({ content: 'record', title: 'Lookup', tool: 'lookup' });
     const blockingDatabase = await openSnapshotDatabase();
     let blocked = false;
+    let reportBlocked: (() => void) | undefined;
+    const blockedDeletion = new Promise<void>((resolve) => {
+      reportBlocked = resolve;
+    });
 
     const erasure = disableAndEraseSnapshots(() => {
       blocked = true;
-      expect(snapshotsEnabled()).toBe(true);
-      blockingDatabase.close();
+      reportBlocked?.();
     });
 
+    await blockedDeletion;
+    expect(snapshotsEnabled()).toBe(false);
+    expect(snapshotsErasurePending()).toBe(true);
+    await expect(
+      saveSnapshot({ content: 'raced', title: 'Raced save', tool: 'lookup' }),
+    ).rejects.toThrow('Enable local snapshots');
+    blockingDatabase.close();
     await erasure;
     expect(blocked).toBe(true);
     expect(snapshotsEnabled()).toBe(false);
+    expect(snapshotsErasurePending()).toBe(false);
     expect(await storedRowCount()).toBe(0);
+  });
+
+  it('invalidates an earlier opt-in generation after disablement and re-enablement', async () => {
+    enableSnapshots();
+    const firstEpoch = window.localStorage.getItem('zoneskein-snapshots-epoch-v1');
+    await disableAndEraseSnapshots();
+    enableSnapshots();
+
+    expect(window.localStorage.getItem('zoneskein-snapshots-epoch-v1')).not.toBe(firstEpoch);
+    await expect(
+      saveSnapshot({ content: 'current', title: 'Current generation', tool: 'lookup' }),
+    ).resolves.toMatchObject({ content: 'current' });
   });
 
   it('reports a storage-denied opt-in without claiming snapshots are enabled', () => {

@@ -12,6 +12,7 @@ import {
   snapshotFragment,
   snapshotFromFragment,
   snapshotsEnabled,
+  snapshotsErasurePending,
   subscribeSnapshotState,
 } from '../core/snapshots/store';
 import {
@@ -30,6 +31,7 @@ export function SnapshotsPage() {
   const [message, setMessage] = useState('');
   const [shareLink, setShareLink] = useState('');
   const [storageBusy, setStorageBusy] = useState(false);
+  const [erasurePending, setErasurePending] = useState(snapshotsErasurePending);
   const [imported] = useState<SnapshotInput | null>(() =>
     snapshotFromFragment(window.location.hash),
   );
@@ -61,6 +63,7 @@ export function SnapshotsPage() {
     () =>
       subscribeSnapshotState(() => {
         const nextEnabled = snapshotsEnabled();
+        setErasurePending(snapshotsErasurePending());
         setEnabled(nextEnabled);
         if (!nextEnabled) setRecords([]);
       }),
@@ -71,6 +74,7 @@ export function SnapshotsPage() {
     try {
       enableSnapshots();
       setEnabled(true);
+      setErasurePending(false);
       setMessage('Local snapshot storage is enabled on this browser.');
     } catch (cause) {
       setMessage(
@@ -81,6 +85,9 @@ export function SnapshotsPage() {
 
   async function disable() {
     setStorageBusy(true);
+    setEnabled(false);
+    setErasurePending(true);
+    setRecords([]);
     setMessage('Erasing local snapshots…');
     try {
       await disableAndEraseSnapshots(() => {
@@ -89,12 +96,17 @@ export function SnapshotsPage() {
         );
       });
       setEnabled(false);
+      setErasurePending(false);
       setRecords([]);
       setMessage('Local snapshots and the opt-in preference were erased.');
     } catch (cause) {
-      setEnabled(snapshotsEnabled());
+      setEnabled(false);
+      setErasurePending(snapshotsErasurePending());
+      setRecords([]);
       setMessage(
-        cause instanceof Error ? cause.message : 'Local snapshots could not be erased.',
+        cause instanceof Error
+          ? `${cause.message} Local snapshots remain disabled; retry erasure before enabling them again.`
+          : 'Local snapshots remain disabled, but erasure could not be confirmed. Retry erasure before enabling them again.',
       );
     } finally {
       setStorageBusy(false);
@@ -134,22 +146,26 @@ export function SnapshotsPage() {
       </ToolIntro>
       <article className="storage-control">
         <div>
-          <StatusBadge tone={enabled ? 'pass' : 'unknown'}>
-            {enabled ? 'Enabled' : 'Disabled by default'}
+          <StatusBadge tone={enabled ? 'pass' : erasurePending ? 'warning' : 'unknown'}>
+            {enabled ? 'Enabled' : erasurePending ? 'Erasure pending' : 'Disabled by default'}
           </StatusBadge>
           <p>
             The opt-in preference contains no domain name. Snapshot content is stored only after
             a separate save action.
           </p>
         </div>
-        {enabled ? (
+        {enabled || erasurePending ? (
           <button
             className="danger-button"
             type="button"
             disabled={storageBusy}
             onClick={() => void disable()}
           >
-            {storageBusy ? 'Erasing…' : 'Disable and erase all'}
+            {storageBusy
+              ? 'Erasing…'
+              : erasurePending
+                ? 'Retry erasure'
+                : 'Disable and erase all'}
           </button>
         ) : (
           <button className="primary-button" type="button" onClick={enable}>
@@ -190,7 +206,7 @@ export function SnapshotsPage() {
             <button
               className="quiet-button"
               type="button"
-              disabled={!enabled}
+              disabled={!enabled || storageBusy}
               onClick={() => void save(imported)}
             >
               Import locally
@@ -214,6 +230,7 @@ export function SnapshotsPage() {
             onChange={(event) => setTitle(event.currentTarget.value)}
             maxLength={80}
             placeholder="Change review — 13 August"
+            disabled={storageBusy}
           />
         </div>
         <div className="field-group">
@@ -222,6 +239,7 @@ export function SnapshotsPage() {
             id="snapshot-tool"
             value={tool}
             onChange={(event) => setTool(event.currentTarget.value as SnapshotTool)}
+            disabled={storageBusy}
           >
             {SNAPSHOT_TOOLS.map((value) => (
               <option value={value} key={value}>
@@ -239,10 +257,11 @@ export function SnapshotsPage() {
             maxLength={262_144}
             rows={12}
             spellCheck={false}
+            disabled={storageBusy}
           />
         </div>
         <div className="form-actions">
-          <button className="primary-button" type="submit" disabled={!enabled}>
+          <button className="primary-button" type="submit" disabled={!enabled || storageBusy}>
             Save locally
           </button>
           <button
@@ -299,6 +318,7 @@ export function SnapshotsPage() {
                     <button
                       className="danger-button"
                       type="button"
+                      disabled={storageBusy}
                       onClick={() => {
                         void (async () => {
                           try {

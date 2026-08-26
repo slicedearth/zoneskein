@@ -9,6 +9,8 @@ import {
 
 const DATABASE_NAME = 'zoneskein-snapshots-v1';
 const ENABLED_KEY = 'zoneskein-snapshots-enabled';
+const EPOCH_KEY = 'zoneskein-snapshots-epoch-v1';
+const ERASURE_KEY = 'zoneskein-snapshots-erasure-v1';
 const CONTROL_CHANNEL_NAME = 'zoneskein-snapshots-control-v1';
 const MAX_SNAPSHOTS = 100;
 export const MAX_SNAPSHOT_CONTENT_OCTETS = 262_144;
@@ -116,7 +118,8 @@ function publishControlMessage(message: SnapshotControlMessage): void {
 function ensureStorageListener(): void {
   if (storageListenerInstalled || typeof window === 'undefined') return;
   window.addEventListener('storage', (event) => {
-    if (event.key === ENABLED_KEY) notifyStateListeners();
+    if (event.key === ENABLED_KEY || event.key === EPOCH_KEY || event.key === ERASURE_KEY)
+      notifyStateListeners();
   });
   storageListenerInstalled = true;
 }
@@ -269,21 +272,68 @@ function base64UrlToBytes(value: string): Uint8Array | null {
 }
 
 export function snapshotsEnabled(): boolean {
+  return snapshotWriteEpoch() !== null;
+}
+
+export function snapshotsErasurePending(): boolean {
   const target = storage();
   if (target === null) return false;
   try {
-    return target.getItem(ENABLED_KEY) === 'true';
+    return target.getItem(ERASURE_KEY) !== null;
   } catch {
     return false;
   }
 }
 
+function snapshotWriteEpoch(): string | null {
+  const target = storage();
+  if (target === null) return null;
+  try {
+    if (target.getItem(ERASURE_KEY) !== null || target.getItem(ENABLED_KEY) !== 'true')
+      return null;
+    return target.getItem(EPOCH_KEY) ?? 'legacy-enabled';
+  } catch {
+    return null;
+  }
+}
+
+function newEpoch(): string {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  }
+}
+
+function assertSnapshotWriteEpoch(expected: string): void {
+  if (snapshotWriteEpoch() !== expected)
+    throw new Error('Local snapshot storage changed while this operation was running.');
+}
+
+async function abortTransaction(transaction: {
+  abort(): void;
+  readonly done: Promise<unknown>;
+}) {
+  transaction.abort();
+  await transaction.done.catch(() => undefined);
+}
+
 export function enableSnapshots(): void {
   const target = storage();
   if (target === null) throw new Error('Browser storage is unavailable.');
+  if (snapshotsErasurePending())
+    throw new Error('Finish erasing local snapshots before enabling storage again.');
+  const epoch = newEpoch();
   try {
+    target.setItem(EPOCH_KEY, epoch);
     target.setItem(ENABLED_KEY, 'true');
   } catch {
+    try {
+      target.removeItem(ENABLED_KEY);
+      target.removeItem(EPOCH_KEY);
+    } catch {
+      // A failed rollback still cannot appear enabled unless both reads succeed later.
+    }
     throw new Error('Browser storage did not allow local snapshots.');
   }
   notifyStateListeners();
@@ -298,6 +348,37 @@ export function subscribeSnapshotState(listener: () => void): () => void {
 }
 
 export async function disableAndEraseSnapshots(onBlocked?: () => void): Promise<void> {
+  const target = storage();
+  if (target === null)
+    throw new Error(
+      'Browser storage is unavailable, so snapshot erasure could not start safely.',
+    );
+  try {
+    target.setItem(ERASURE_KEY, newEpoch());
+  } catch {
+    throw new Error('Browser storage did not allow snapshot erasure to start safely.');
+  }
+  try {
+    target.removeItem(ENABLED_KEY);
+    target.removeItem(EPOCH_KEY);
+  } catch {
+    // The erasure marker takes precedence over stale opt-in values.
+  }
+  notifyStateListeners();
+  publishControlMessage({ action: 'state-changed', version: 1 });
+
+  closeActiveDatabases();
+  publishControlMessage({ action: 'close-databases', version: 1 });
+
+  const db = await database();
+  try {
+    const transaction = db.transaction('snapshots', 'readwrite');
+    await transaction.store.clear();
+    await transaction.done;
+  } finally {
+    closeDatabase(db);
+  }
+
   closeActiveDatabases();
   publishControlMessage({ action: 'close-databases', version: 1 });
   await deleteDB(DATABASE_NAME, {
@@ -306,16 +387,11 @@ export async function disableAndEraseSnapshots(onBlocked?: () => void): Promise<
     },
   });
 
-  const target = storage();
-  if (target === null)
-    throw new Error(
-      'Snapshots were erased, but browser storage was unavailable to clear the opt-in preference.',
-    );
   try {
-    target.removeItem(ENABLED_KEY);
+    target.removeItem(ERASURE_KEY);
   } catch {
     throw new Error(
-      'Snapshots were erased, but the browser did not allow the opt-in preference to be cleared.',
+      'Snapshots were erased, but the browser did not allow the erasure marker to be cleared.',
     );
   }
   notifyStateListeners();
@@ -323,7 +399,8 @@ export async function disableAndEraseSnapshots(onBlocked?: () => void): Promise<
 }
 
 export async function saveSnapshot(input: SnapshotInput): Promise<SnapshotRecord> {
-  if (!snapshotsEnabled()) throw new Error('Enable local snapshots before saving.');
+  const epoch = snapshotWriteEpoch();
+  if (epoch === null) throw new Error('Enable local snapshots before saving.');
   const validated = validateInput(input);
   const db = await database();
   try {
@@ -334,6 +411,12 @@ export async function saveSnapshot(input: SnapshotInput): Promise<SnapshotRecord
       schemaVersion: 1,
     };
     const transaction = db.transaction('snapshots', 'readwrite');
+    try {
+      assertSnapshotWriteEpoch(epoch);
+    } catch (cause) {
+      await abortTransaction(transaction);
+      throw cause;
+    }
     await transaction.store.put(record);
     const index = transaction.store.index('createdAt');
     const count = await transaction.store.count();
@@ -345,6 +428,12 @@ export async function saveSnapshot(input: SnapshotInput): Promise<SnapshotRecord
         excess -= 1;
         cursor = await cursor.continue();
       }
+    }
+    try {
+      assertSnapshotWriteEpoch(epoch);
+    } catch (cause) {
+      await abortTransaction(transaction);
+      throw cause;
     }
     await transaction.done;
     return record;
@@ -393,10 +482,25 @@ export async function listSnapshots(): Promise<readonly SnapshotRecord[]> {
 }
 
 export async function deleteSnapshot(id: string): Promise<void> {
-  if (!snapshotsEnabled()) throw new Error('Local snapshots are disabled.');
+  const epoch = snapshotWriteEpoch();
+  if (epoch === null) throw new Error('Local snapshots are disabled.');
   const db = await database();
   try {
-    await db.delete('snapshots', id);
+    const transaction = db.transaction('snapshots', 'readwrite');
+    try {
+      assertSnapshotWriteEpoch(epoch);
+    } catch (cause) {
+      await abortTransaction(transaction);
+      throw cause;
+    }
+    await transaction.store.delete(id);
+    try {
+      assertSnapshotWriteEpoch(epoch);
+    } catch (cause) {
+      await abortTransaction(transaction);
+      throw cause;
+    }
+    await transaction.done;
   } finally {
     closeDatabase(db);
   }

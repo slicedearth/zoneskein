@@ -42,4 +42,34 @@ describe('SnapshotButton', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Local snapshots are disabled.');
     expect(saveSnapshot).not.toHaveBeenCalled();
   });
+
+  it('disables duplicate submissions and ignores a stale completion after content changes', async () => {
+    let resolveSave: (() => void) | undefined;
+    vi.mocked(saveSnapshot).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSave = () =>
+            resolve({
+              content: 'first',
+              createdAt: '2026-08-26T00:00:00.000Z',
+              id: '11111111-1111-4111-8111-111111111111',
+              schemaVersion: 1,
+              title: 'Report',
+              tool: 'lookup',
+            });
+        }),
+    );
+    const view = render(<SnapshotButton content="first" title="Report" tool="lookup" />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save snapshot' }));
+    expect(screen.getByRole('button', { name: 'Saving…' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Saving…' }));
+    expect(saveSnapshot).toHaveBeenCalledTimes(1);
+
+    view.rerender(<SnapshotButton content="second" title="Report" tool="lookup" />);
+    expect(await screen.findByRole('button', { name: 'Save snapshot' })).toBeEnabled();
+    resolveSave?.();
+    await Promise.resolve();
+    expect(screen.getByRole('button', { name: 'Save snapshot' })).toBeEnabled();
+  });
 });

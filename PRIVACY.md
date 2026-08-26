@@ -40,18 +40,18 @@ DMARC alignment mode accepts domains and claimed prior authentication results, n
 
 Query history is not persisted by default. Normal DNS responses use a bounded in-memory TTL cache that disappears with the page session.
 
-To coordinate abuse controls across tabs, ZoneSkein stores a bounded rate-limit ledger in local storage. It contains only random request identifiers, timestamps, per-resolver buckets, and temporary cooldown expiry times. It contains no DNS names, record types, answers, pasted content, or report data. Request events cover a rolling one-minute window; any resolver cooldown is capped at 15 minutes, and stale state is rejected.
+To coordinate abuse controls across tabs, ZoneSkein uses an origin-wide browser reservation lock where available and stores a bounded rate-limit ledger in local storage. Replay-resistant cross-tab messages update in-memory state but do not overwrite that canonical ledger. Browsers without origin-wide locks retain a best-effort cross-tab fallback. The ledger contains only random request identifiers, timestamps, per-resolver buckets, and temporary cooldown expiry times. It contains no DNS names, record types, answers, pasted content, or report data. Request events cover a rolling one-minute window; any resolver cooldown is capped at 15 minutes, and stale state is rejected.
 
 Local snapshots are a separate, explicit opt-in feature:
 
-- the opt-in preference is one boolean and contains no DNS name;
+- the opt-in state contains only a boolean and an opaque storage-generation identifier, with no DNS name;
 - only reports saved by a separate user action enter IndexedDB;
 - at most 100 reports are retained;
 - each report is limited to 256 KiB of UTF-8 content;
 - snapshots remain until explicitly deleted, the feature is disabled and erased, browser storage is cleared, or the oldest snapshot is evicted at the 100-report limit;
-- disabling local snapshots asks other ZoneSkein tabs to release the database, erases IndexedDB, and then clears the opt-in preference; the interface reports blocked or failed deletion and claims erasure only after the browser confirms it.
+- disabling local snapshots first records an origin-wide erasure marker, invalidates the active storage generation, and blocks every new save, import, or deletion before clearing and deleting IndexedDB; the interface reports blocked or failed deletion, keeps storage disabled until a failed erasure is retried, and claims erasure only after the browser confirms it.
 
-ZoneSkein uses no cookies. It does not use local storage for query history or DNS content; local storage holds only the snapshot opt-in boolean and the bounded anonymous rate-limit ledger described above.
+ZoneSkein uses no cookies. It does not use local storage for query history or DNS content; local storage holds only snapshot control state and the bounded anonymous rate-limit ledger described above.
 
 ## Change Workspace files
 
