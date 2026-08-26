@@ -1,12 +1,22 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const isCI = Boolean(process.env['CI']);
+
 export default defineConfig({
   testDir: './tests/e2e',
   fullyParallel: true,
-  forbidOnly: Boolean(process.env['CI']),
-  retries: process.env['CI'] ? 2 : 0,
+  failOnFlakyTests: isCI,
+  forbidOnly: isCI,
+  retries: isCI ? 1 : 0,
   workers: 2,
-  reporter: process.env['CI'] ? [['html', { open: 'never' }], ['github']] : 'list',
+  reporter: isCI
+    ? [
+        ['list'],
+        ['github'],
+        ['json', { outputFile: 'playwright-results.json' }],
+        ['html', { open: 'never' }],
+      ]
+    : 'list',
   use: {
     baseURL: 'http://127.0.0.1:4173',
     screenshot: 'only-on-failure',
@@ -41,7 +51,7 @@ export default defineConfig({
   ],
   webServer: {
     command: 'npm run build && npm run preview -- --host 127.0.0.1',
-    reuseExistingServer: !process.env['CI'],
+    reuseExistingServer: !isCI,
     timeout: 120_000,
     url: 'http://127.0.0.1:4173',
   },

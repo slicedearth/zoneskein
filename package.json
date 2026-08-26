@@ -22,6 +22,7 @@
     "test:coverage": "vitest run --coverage --maxWorkers=4 --testTimeout=30000",
     "test:a11y": "playwright test --project accessibility-chromium",
     "test:e2e": "playwright test",
+    "test:e2e:stress": "playwright test --project=chromium --project=mobile-chromium --workers=1 --retries=0 --repeat-each=5",
     "test:live": "node scripts/live-smoke.ts"
   },
   "engines": {

@@ -1,0 +1,83 @@
+name: End-to-end tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  browser:
+    name: ${{ matrix.label }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - artifact: chromium
+            browser: chromium
+            label: Chromium
+            project: chromium
+          - artifact: firefox
+            browser: firefox
+            label: Firefox
+            project: firefox
+          - artifact: webkit
+            browser: webkit
+            label: WebKit
+            project: webkit
+          - artifact: mobile-chromium
+            browser: chromium
+            label: Mobile Chromium
+            project: mobile-chromium
+          - artifact: accessibility
+            browser: chromium
+            label: Accessibility
+            project: accessibility-chromium
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@94196ee1d15439c1b6651cd87ef14e88ec435966 # post-v7.0.0 security fix
+        with:
+          cache: npm
+          node-version: 24.19.0
+      - name: Install the pinned package manager
+        run: npm install --global npm@12.0.2
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Install the project browser
+        run: npx playwright install --with-deps ${{ matrix.browser }}
+      - name: Verify canonical brand assets
+        if: matrix.project == 'chromium'
+        run: npm run generate:favicon -- --check
+      - name: Run the browser project
+        run: npm run test:e2e -- --project=${{ matrix.project }}
+      - name: Upload result data
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-results-${{ matrix.artifact }}
+          path: playwright-results.json
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Upload failure report
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-failure-${{ matrix.artifact }}
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 7

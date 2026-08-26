@@ -1,8 +1,10 @@
 [
   ".github/dependabot.yml",
+  ".github/workflows/browser-stress.yml",
   ".github/workflows/codeql.yml",
   ".github/workflows/dependency-review.yml",
   ".github/workflows/dnssec-anchors.yml",
+  ".github/workflows/e2e.yml",
   ".github/workflows/quality.yml",
   ".github/workflows/release.yml",
   ".gitignore",
