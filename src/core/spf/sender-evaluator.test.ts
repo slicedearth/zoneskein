@@ -450,6 +450,19 @@ describe('sender-context SPF evaluation', () => {
     }
   });
 
+  it('returns permerror for non-space policy separators after otherwise valid terms', async () => {
+    for (const separator of ['\t', '\r', '\n', '\u00a0', '\u2003']) {
+      const evaluation = await evaluateSpfSender(
+        context(),
+        new FixtureDns({
+          'TXT|sender.test': answer([`v=spf1 ip4:192.0.2.3${separator}-all`]),
+        }),
+      );
+
+      expect(evaluation.result).toBe('permerror');
+    }
+  });
+
   it('rejects CIDR syntax on ineligible mechanisms and dual CIDR on address literals', async () => {
     const records = [
       'v=spf1 include:provider.test/24 -all',

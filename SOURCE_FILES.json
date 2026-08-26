@@ -172,6 +172,7 @@
   "src/core/spf/evaluator.ts",
   "src/core/spf/flatten.ts",
   "src/core/spf/lexer.ts",
+  "src/core/spf/limits.ts",
   "src/core/spf/parser.test.ts",
   "src/core/spf/parser.ts",
   "src/core/spf/sender-evaluator.test.ts",

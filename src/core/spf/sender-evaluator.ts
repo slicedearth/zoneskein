@@ -1,6 +1,7 @@
 import { processStrictIpAddress, type ProcessedIpAddress } from '../dns/ip';
 import { validateDnsName } from '../dns/names';
 import { DnsQueryError } from '../dns/types';
+import { spfLookupShapeError } from './limits';
 import { parseSpfRecord } from './parser';
 import { validateMailFromLocalPart } from './sender-input';
 import type {
@@ -19,9 +20,6 @@ const MAX_RECURSION_DEPTH = 20;
 const MAX_MX_RECORDS = 10;
 const MAX_PTR_TARGETS = 10;
 const MAX_DNS_QUERIES = 128;
-const MAX_DNS_VALUES = 256;
-const MAX_DNS_VALUE_CHARACTERS = 8192;
-const MAX_DNS_MESSAGE_BYTES = 65_535;
 const MAX_TRACE_ENTRIES = 512;
 const MAX_TRACE_VALUES = 12;
 const MAX_MACRO_OUTPUT_OCTETS = 4096;
@@ -349,30 +347,6 @@ function consumeDnsTerm(
   }
 }
 
-function lookupShapeError(result: SpfLookupResult): string | null {
-  if (
-    !Number.isInteger(result.messageBytes) ||
-    result.messageBytes < 0 ||
-    result.messageBytes > MAX_DNS_MESSAGE_BYTES
-  ) {
-    return 'The resolver reported an invalid DNS message size.';
-  }
-  if (result.values.length > MAX_DNS_VALUES) {
-    return `The resolver returned more than ${String(MAX_DNS_VALUES)} values in one answer.`;
-  }
-  if (
-    result.values.some(
-      (value) => typeof value !== 'string' || value.length > MAX_DNS_VALUE_CHARACTERS,
-    )
-  ) {
-    return 'The resolver returned an invalid or overlong DNS value.';
-  }
-  if (result.status !== 'answer' && result.values.length > 0) {
-    return 'The resolver returned answer values with a non-answer status.';
-  }
-  return null;
-}
-
 function isVoid(result: SpfLookupResult): boolean {
   return (
     result.status === 'nxdomain' ||
@@ -466,7 +440,7 @@ async function performLookup(
     );
   }
 
-  const shapeError = lookupShapeError(result);
+  const shapeError = spfLookupShapeError(result);
   addTrace(state, {
     depth: options.depth,
     domain: options.domain,

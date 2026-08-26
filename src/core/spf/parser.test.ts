@@ -94,6 +94,11 @@ describe('SPF parser', () => {
     'v=spf1\u00a0ip4:192.0.2.0/24 -all',
     'v=spf1\tip4:192.0.2.0/24 -all',
     'v=spf1\nip4:192.0.2.0/24 -all',
+    'v=spf1 ip4:192.0.2.0/24\t-all',
+    'v=spf1 ip4:192.0.2.0/24\r-all',
+    'v=spf1 ip4:192.0.2.0/24\n-all',
+    'v=spf1 ip4:192.0.2.0/24\u00a0-all',
+    'v=spf1 ip4:192.0.2.0/24\u2003-all',
   ])('rejects non-printable or non-ASCII term separators', (record) => {
     const policy = parseSpfRecord(record, 'example.com');
     expect(policy.diagnostics).toEqual(
@@ -101,6 +106,13 @@ describe('SPF parser', () => {
         expect.objectContaining({ code: 'invalid-character', severity: 'error' }),
       ]),
     );
+  });
+
+  it('accepts repeated ordinary spaces without treating them as empty terms', () => {
+    const policy = parseSpfRecord('v=spf1   ip4:192.0.2.0/24    -all', 'example.com');
+
+    expect(policy.diagnostics.filter((item) => item.severity === 'error')).toEqual([]);
+    expect(policy.terms.map((term) => term.original)).toEqual(['ip4:192.0.2.0/24', '-all']);
   });
 
   it.each(['127.1', '0x7f000001', '010.0.0.1'])(

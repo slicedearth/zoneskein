@@ -22,9 +22,9 @@ Bundled anchors are checked by a maintenance command against IANA’s detached C
 
 ## SPF
 
-The analyser models lookup-causing terms and follows includes and redirects within bounded depth and question budgets. It reports policy term counts separately from the DNS-over-HTTPS questions ZoneSkein made.
+The analyser models lookup-causing terms and follows includes and redirects within bounded depth, work, cardinality, response-byte, and question budgets. It stops at an eleventh DNS-causing term and reports policy term counts separately from the DNS-over-HTTPS questions ZoneSkein made. Void accounting follows individual DNS questions separately for IPv4 and IPv6 sender paths.
 
-The snapshot flattener refuses output when correctness depends on macros, `exists`, `ptr`, cycles, unsupported syntax, non-pass DNS mechanism qualifiers, multiple SPF records, incomplete data, or lookup failures. Generated ranges can become stale as providers change infrastructure. Snapshot output is never published automatically.
+The snapshot flattener refuses output when correctness depends on macros, `exists`, `ptr`, cycles, unsupported syntax, non-pass DNS mechanism qualifiers, multiple SPF records, incomplete data, invalid answer shape, lookup or void-limit failures, or exhausted work bounds. Unsafe runs retain no partial network or provenance output. Generated ranges can become stale as providers change infrastructure. Absolute expiry is derived from every required response’s original observation time; if any required expiry is unavailable, aggregate freshness and recheck timing remain unknown. Snapshot output is never published automatically.
 
 Sender-context mode models one supplied SMTP client IP, MAIL FROM identity, HELO/EHLO domain, and optional receiver name against one point-in-time resolver observation. It is not an SMTP transaction and cannot reproduce a receiver's cache, local policy, or delivery decision. SPF macros can place portions of those inputs into DNS question names sent to the selected resolver.
 

@@ -491,8 +491,10 @@ describe('DmarcPage', () => {
       expect.objectContaining({
         acknowledged: true,
         provenance: { correlation: 'unbound', source: 'manual' },
-        qualification: expect.stringMatching(/not cryptographically bound/iu),
       }),
+    );
+    expect(parsedEvidence.evidence?.[0]?.qualification).toMatch(
+      /not cryptographically bound/iu,
     );
     expect(parsedEvidence.resolver?.id).toBe('google');
   });

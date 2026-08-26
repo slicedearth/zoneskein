@@ -687,7 +687,8 @@ export function evaluateDmarcAlignment(input: DmarcAlignmentInput): DmarcAlignme
   const boundaryStatuses = rawBoundaryStatuses as
     Readonly<Record<string, DmarcBoundaryStatus>> | undefined;
 
-  if (!Array.isArray(input.dkimDomains))
+  const rawDkimDomains: unknown = input.dkimDomains;
+  if (!Array.isArray(rawDkimDomains))
     return permanentInputError(
       adkim,
       aspf,
@@ -695,7 +696,8 @@ export function evaluateDmarcAlignment(input: DmarcAlignmentInput): DmarcAlignme
       fromDomain.normalised,
       organizationalDomain,
     );
-  if (input.dkimDomains.length > MAX_PASSING_DKIM_DOMAINS)
+  const dkimDomainsInput = rawDkimDomains as readonly unknown[];
+  if (dkimDomainsInput.length > MAX_PASSING_DKIM_DOMAINS)
     return permanentInputError(
       adkim,
       aspf,
@@ -734,18 +736,16 @@ export function evaluateDmarcAlignment(input: DmarcAlignmentInput): DmarcAlignme
       fromDomain.normalised,
       organizationalDomain,
     );
-  const dkimEvidence: readonly DmarcDkimAuthentication[] =
+  const dkimEvidenceInput: readonly unknown[] =
     rawDkimEvidence === undefined
-      ? input.dkimDomains.map((domain) => ({ domain }))
-      : (rawDkimEvidence as readonly DmarcDkimAuthentication[]);
+      ? dkimDomainsInput.map((domain) => ({ domain }))
+      : (rawDkimEvidence as readonly unknown[]);
   if (
-    dkimEvidence.length !== input.dkimDomains.length ||
-    dkimEvidence.some(
-      (entry, index) =>
-        entry === null ||
-        typeof entry !== 'object' ||
-        entry.domain !== input.dkimDomains[index],
-    )
+    dkimEvidenceInput.length !== dkimDomainsInput.length ||
+    dkimEvidenceInput.some((entry, index) => {
+      if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) return true;
+      return (entry as Readonly<Record<string, unknown>>)['domain'] !== dkimDomainsInput[index];
+    })
   )
     return permanentInputError(
       adkim,
@@ -754,6 +754,7 @@ export function evaluateDmarcAlignment(input: DmarcAlignmentInput): DmarcAlignme
       fromDomain.normalised,
       organizationalDomain,
     );
+  const dkimEvidence = dkimEvidenceInput as readonly DmarcDkimAuthentication[];
 
   const rawSpf: unknown = input.spf;
   if (typeof rawSpf !== 'object' || rawSpf === null)

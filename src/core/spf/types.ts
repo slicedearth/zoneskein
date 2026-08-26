@@ -80,6 +80,8 @@ export interface SpfMxRecord {
 
 export interface SpfLookupResult {
   readonly error?: string;
+  /** Absolute expiry derived from the response observation time and reachable RRset TTL. */
+  readonly expiresAt?: string;
   readonly messageBytes: number;
   /** Distinct MX RDATA, with canonical exchange names, for an MX answer. */
   readonly mxRecords?: readonly SpfMxRecord[];
@@ -94,16 +96,21 @@ export interface SpfDnsClient {
 
 export interface SpfResolution {
   readonly domain: string;
+  readonly expiresAt?: string;
   readonly kind: 'a' | 'mx' | 'exists';
   readonly networks: readonly string[];
   readonly targets: readonly string[];
   readonly termIndex: number;
   readonly ttl?: number;
-  readonly void: boolean;
+  readonly voidLookups: {
+    readonly ipv4: number;
+    readonly ipv6: number;
+  };
 }
 
 export interface SpfGraphNode {
   readonly domain: string;
+  readonly expiresAt?: string;
   readonly messageBytes: number;
   readonly policy?: SpfPolicy;
   readonly resolutions: readonly SpfResolution[];
@@ -119,14 +126,25 @@ export interface SpfGraphEdge {
 }
 
 export interface SpfAnalysis {
+  readonly completion: 'complete' | 'incomplete';
   readonly diagnostics: readonly SpfDiagnostic[];
   readonly edges: readonly SpfGraphEdge[];
   readonly maximumDepth: number;
   readonly maximumLookupTerms: number;
   readonly maximumVoidLookups: number;
+  readonly maximumVoidLookupsByFamily: {
+    readonly ipv4: number;
+    readonly ipv6: number;
+  };
   readonly nodes: readonly SpfGraphNode[];
   readonly rootDomain: string;
   readonly totalResponseBytes: number;
+  readonly work: {
+    readonly answerValues: number;
+    readonly dependencyVisits: number;
+    readonly networkValues: number;
+    readonly termExpansions: number;
+  };
 }
 
 export interface SpfProvenance {
@@ -134,7 +152,7 @@ export interface SpfProvenance {
   readonly network: string;
   readonly path: readonly string[];
   readonly sourceRecord: string;
-  readonly sourceTtl?: number;
+  readonly sourceExpiresAt?: string;
 }
 
 export interface SpfSnapshot {

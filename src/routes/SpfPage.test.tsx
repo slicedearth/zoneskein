@@ -267,7 +267,7 @@ describe('SpfPage', () => {
       };
     };
     expect(analysis).toMatchObject({
-      evidenceSchema: 'zoneskein-spf-analysis-v1',
+      evidenceSchema: 'zoneskein-spf-analysis-v2',
       resolver: {
         endpoint: '/api/doh/quad9',
         id: 'quad9-relay',
@@ -294,7 +294,7 @@ describe('SpfPage', () => {
       };
     };
     expect(snapshot).toMatchObject({
-      evidenceSchema: 'zoneskein-spf-snapshot-v1',
+      evidenceSchema: 'zoneskein-spf-snapshot-v2',
       resolver: { id: 'quad9-relay', relay: { operator: 'Netlify' } },
     });
 

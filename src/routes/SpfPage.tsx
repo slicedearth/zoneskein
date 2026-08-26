@@ -153,7 +153,7 @@ function SnapshotPanel({
   const json = JSON.stringify(
     {
       earliestSourceExpiry: snapshot.earliestSourceExpiry,
-      evidenceSchema: 'zoneskein-spf-snapshot-v1',
+      evidenceSchema: 'zoneskein-spf-snapshot-v2',
       estimatedResponseBytes: snapshot.estimatedResponseBytes,
       generatedAt: snapshot.generatedAt,
       provenance: snapshot.provenance,
@@ -248,7 +248,7 @@ function SnapshotPanel({
               <th>Network</th>
               <th>Original mechanism</th>
               <th>Complete path</th>
-              <th>Source TTL</th>
+              <th>Source expiry</th>
             </tr>
           </thead>
           <tbody>
@@ -261,7 +261,11 @@ function SnapshotPanel({
                   <code>{item.mechanism}</code>
                 </td>
                 <td>{item.path.join(' → ')}</td>
-                <td>{item.sourceTtl ?? 'Unknown'}</td>
+                <td>
+                  {item.sourceExpiresAt === undefined
+                    ? 'Unknown'
+                    : new Date(item.sourceExpiresAt).toLocaleString()}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -286,7 +290,7 @@ function AnalysisPanel({ report }: { readonly report: SpfRunReport }) {
     {
       ...analysis,
       dnsQuestions: report.dnsQuestions,
-      evidenceSchema: 'zoneskein-spf-analysis-v1',
+      evidenceSchema: 'zoneskein-spf-analysis-v2',
       resolver: resolverEvidence(report.resolverId),
     },
     null,
@@ -297,7 +301,7 @@ function AnalysisPanel({ report }: { readonly report: SpfRunReport }) {
       ? analysisJson
       : JSON.stringify(
           {
-            evidenceSchema: 'zoneskein-spf-snapshot-v1',
+            evidenceSchema: 'zoneskein-spf-snapshot-v2',
             resolver: resolverEvidence(report.resolverId),
             snapshot: report.snapshot,
           },
@@ -312,6 +316,9 @@ function AnalysisPanel({ report }: { readonly report: SpfRunReport }) {
           <h2 id="spf-results-title">{analysis.rootDomain}</h2>
         </div>
         <div className="export-actions">
+          <StatusBadge tone={analysis.completion === 'complete' ? 'pass' : 'error'}>
+            {analysis.completion === 'complete' ? 'Complete traversal' : 'Incomplete traversal'}
+          </StatusBadge>
           {report.snapshot === undefined ? (
             <CopyButton label="Copy analysis JSON" text={analysisJson} />
           ) : null}
@@ -328,8 +335,11 @@ function AnalysisPanel({ report }: { readonly report: SpfRunReport }) {
           <span>Worst-case SPF terms</span>
         </div>
         <div>
-          <strong>{analysis.maximumVoidLookups}</strong>
-          <span>Worst-case voids</span>
+          <strong>
+            {analysis.maximumVoidLookupsByFamily.ipv4} /{' '}
+            {analysis.maximumVoidLookupsByFamily.ipv6}
+          </strong>
+          <span>IPv4 / IPv6 worst-case voids</span>
         </div>
         <div>
           <strong>{analysis.maximumDepth}</strong>
@@ -347,7 +357,9 @@ function AnalysisPanel({ report }: { readonly report: SpfRunReport }) {
       <p className="detail-note">
         SPF’s ten-term limit applies to DNS-causing policy terms along evaluation paths. The DoH
         question count is separate and can be larger because a and mx expansion needs multiple
-        record types.
+        record types. This run visited {analysis.work.dependencyVisits} dependency paths,
+        examined {analysis.work.termExpansions} terms, retained {analysis.work.networkValues}{' '}
+        address values, and consumed {analysis.work.answerValues} bounded answer values.
       </p>
       {analysis.diagnostics.length > 0 ? (
         <article className="result-panel">
@@ -416,8 +428,16 @@ function AnalysisPanel({ report }: { readonly report: SpfRunReport }) {
                 </div>
                 <dl className="metadata-grid">
                   <div>
-                    <dt>Source TTL</dt>
+                    <dt>Observed TTL</dt>
                     <dd>{node.ttl ?? 'Unknown'}</dd>
+                  </div>
+                  <div>
+                    <dt>Absolute expiry</dt>
+                    <dd>
+                      {node.expiresAt === undefined
+                        ? 'Unknown'
+                        : new Date(node.expiresAt).toLocaleString()}
+                    </dd>
                   </div>
                   <div>
                     <dt>TXT value</dt>
@@ -748,7 +768,7 @@ export function SpfPage({ onUseForDmarc }: SpfPageProps = {}) {
         }
         setSenderReport({ evaluation, resolverId: selectedResolverId });
       } else if (mode === 'analysis') {
-        const analysis = await analyseSpf(policyDomain, dns);
+        const analysis = await analyseSpf(policyDomain, dns, run.signal);
         if (activeRun.current !== run) return;
         if (run.cancelled) {
           setState('cancelled');
@@ -760,7 +780,7 @@ export function SpfPage({ onUseForDmarc }: SpfPageProps = {}) {
           resolverId: selectedResolverId,
         });
       } else {
-        const result = await flattenSpf(policyDomain, dns);
+        const result = await flattenSpf(policyDomain, dns, new Date(), run.signal);
         if (activeRun.current !== run) return;
         if (run.cancelled) {
           setState('cancelled');

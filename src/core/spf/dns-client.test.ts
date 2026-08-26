@@ -19,6 +19,10 @@ const definition: ResolverDefinition = {
   privacyUrl: 'https://resolver.test/privacy',
 };
 
+function expiresAt(ttl: number): string {
+  return new Date(Date.parse('2026-08-13T00:00:00.000Z') + ttl * 1000).toISOString();
+}
+
 function record(
   data: unknown,
   type = 'PTR',
@@ -67,10 +71,19 @@ class FixtureResolver implements DnsResolver {
   readonly definition = definition;
   readonly questions: DnsQuestion[] = [];
   readonly #answers: readonly DnsRecord[];
+  readonly #cache: DnsResponse['cache'];
+  readonly #receivedAt: string;
   readonly #responseCode: string;
 
-  constructor(answers: readonly DnsRecord[], responseCode = 'NOERROR') {
+  constructor(
+    answers: readonly DnsRecord[],
+    responseCode = 'NOERROR',
+    receivedAt = '2026-08-13T00:00:00.000Z',
+    cache: DnsResponse['cache'] = 'miss',
+  ) {
     this.#answers = answers;
+    this.#cache = cache;
+    this.#receivedAt = receivedAt;
     this.#responseCode = responseCode;
   }
 
@@ -80,11 +93,11 @@ class FixtureResolver implements DnsResolver {
       answer.owner === '__question__' ? { ...answer, owner: question.name.absolute } : answer,
     );
     return Promise.resolve({
-      cache: 'miss',
+      cache: this.#cache,
       message: message(question, answers, this.#responseCode),
       queryTimeMs: 1,
       question,
-      receivedAt: '2026-08-13T00:00:00.000Z',
+      receivedAt: this.#receivedAt,
       resolver: definition,
     });
   }
@@ -105,6 +118,7 @@ describe('wire SPF DNS client', () => {
     expect(resolver.questions[0]?.name.absolute).toBe('3.2.0.192.in-addr.arpa.');
     expect(resolver.questions[0]?.type).toBe('PTR');
     expect(result).toEqual({
+      expiresAt: expiresAt(120),
       messageBytes: 120,
       status: 'answer',
       ttl: 120,
@@ -112,7 +126,7 @@ describe('wire SPF DNS client', () => {
     });
   });
 
-  it('bounds PTR presentation values before returning them to an evaluator', async () => {
+  it('rejects PTR answer cardinality beyond the shared SPF value bound', async () => {
     const resolver = new FixtureResolver(
       Array.from({ length: 300 }, (_, index) => record(`host-${String(index)}.example.test.`)),
     );
@@ -120,8 +134,9 @@ describe('wire SPF DNS client', () => {
 
     const result = await client.lookupPtr('2001:db8::1');
 
-    expect(result.values).toHaveLength(256);
-    expect(result.values.at(-1)).toBe('host-255.example.test.');
+    expect(result.status).toBe('error');
+    expect(result.values).toEqual([]);
+    expect(result.error).toMatch(/256-value SPF safety limit/iu);
     expect(resolver.questions[0]?.name.absolute).toMatch(/\.ip6\.arpa\.$/u);
   });
 
@@ -137,6 +152,21 @@ describe('wire SPF DNS client', () => {
 
     expect(nxdomain).toMatchObject({ status: 'nxdomain', values: [] });
     expect(servfail).toMatchObject({ status: 'servfail', values: [] });
+  });
+
+  it('derives cached-result freshness from the original observation time', async () => {
+    const resolver = new FixtureResolver(
+      [record('192.0.2.1', 'A', 60)],
+      'NOERROR',
+      '2026-08-13T00:00:00.000Z',
+      'hit',
+    );
+    const client = new WireSpfDnsClient(resolver, new DnsQueryRun());
+
+    await expect(client.lookup('example.test', 'A')).resolves.toMatchObject({
+      expiresAt: '2026-08-13T00:01:00.000Z',
+      ttl: 60,
+    });
   });
 
   it('rejects malformed addresses without issuing a DNS question', async () => {
@@ -178,6 +208,7 @@ describe('wire SPF DNS client', () => {
     const client = new WireSpfDnsClient(resolver, new DnsQueryRun());
 
     await expect(client.lookup('example.test', 'TXT')).resolves.toEqual({
+      expiresAt: expiresAt(60),
       messageBytes: 120,
       status: 'answer',
       ttl: 60,
@@ -234,6 +265,7 @@ describe('wire SPF DNS client', () => {
     );
 
     await expect(client.lookup('example.test', 'TXT')).resolves.toEqual({
+      expiresAt: expiresAt(60),
       messageBytes: 120,
       status: 'answer',
       ttl: 60,
@@ -277,6 +309,7 @@ describe('wire SPF DNS client', () => {
     );
 
     await expect(client.lookup('example.test', 'TXT')).resolves.toEqual({
+      expiresAt: expiresAt(60),
       messageBytes: 120,
       status: 'answer',
       ttl: 60,
@@ -293,6 +326,7 @@ describe('wire SPF DNS client', () => {
     const client = new WireSpfDnsClient(resolver, new DnsQueryRun());
 
     await expect(client.lookup('example.test', 'TXT')).resolves.toEqual({
+      expiresAt: expiresAt(60),
       messageBytes: 120,
       status: 'answer',
       ttl: 60,
@@ -309,6 +343,7 @@ describe('wire SPF DNS client', () => {
     const client = new WireSpfDnsClient(resolver, new DnsQueryRun());
 
     await expect(client.lookup('example.test', 'MX')).resolves.toEqual({
+      expiresAt: expiresAt(60),
       messageBytes: 120,
       mxRecords: [
         { exchange: 'mail.example.test', preference: 10 },

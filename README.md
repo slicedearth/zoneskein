@@ -115,7 +115,7 @@ ZoneSkein reports evidence conservatively:
 
 - recursive answers are point-in-time observations, not authoritative answers or proof of global propagation;
 - DNSSEC validates supported delegation, positive, NODATA, NXDOMAIN, wildcard, and alias-continuation proof paths from bundled IANA root trust anchors at one common instant. It is still a bounded selected-type validator rather than a general recursive resolver, and an NSEC3 Opt-Out interval cannot authenticate whether a covered delegation exists;
-- SPF flattening is a time-bound snapshot and is withheld whenever preserving the effective pass set would require guessing or sender context;
+- SPF flattening is a work- and cardinality-bounded snapshot tied to absolute source expiries; it is withheld whenever preserving the effective pass set would require guessing, sender context, invalid protocol paths, or partial evidence;
 - the zone parser is a practical subset, not a complete BIND or provider-specific parser; complete-zone digest mode stops when that subset cannot encode a record exactly and never infers that a snippet is complete;
 - DMARC policy publication does not prove alignment. Alignment mode evaluates supplied prior SPF and DKIM authentication results; DKIM message mode verifies supported signatures but does not establish DMARC alignment, ARC handling, reputation, or delivery; CAA publication does not guarantee issuance.
 

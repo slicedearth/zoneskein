@@ -3,10 +3,10 @@ import { parseRecordView } from '../dns/records';
 import { reverseNameFromAddress } from '../dns/reverse';
 import { DnsQueryError, type DnsRecord, type DnsResolver } from '../dns/types';
 import { DnsQueryRun } from '../doh/query-run';
+import { SPF_WORK_LIMITS } from './limits';
 import type { SpfSenderDnsClient } from './sender-evaluator';
 import type { SpfLookupResult, SpfLookupType, SpfMxRecord } from './types';
 
-const MAX_PTR_VALUES = 256;
 const MAX_CNAME_HOPS = 64;
 
 interface BoundAnswerRecords {
@@ -136,6 +136,13 @@ function statusFromCode(code: string): SpfLookupResult['status'] {
   return code === 'NOERROR' ? 'nodata' : 'error';
 }
 
+function absoluteExpiry(receivedAt: string, ttl: number): string | undefined {
+  const observed = Date.parse(receivedAt);
+  if (!Number.isFinite(observed)) return undefined;
+  const expires = observed + ttl * 1000;
+  return Number.isFinite(expires) ? new Date(expires).toISOString() : undefined;
+}
+
 export class WireSpfDnsClient implements SpfSenderDnsClient {
   readonly #resolver: DnsResolver;
   readonly #run: DnsQueryRun;
@@ -178,6 +185,14 @@ export class WireSpfDnsClient implements SpfSenderDnsClient {
         };
       }
       const matching = response.message.responseCode === 'NOERROR' ? bound.matching : [];
+      if (matching.length > SPF_WORK_LIMITS.lookupAnswerValues) {
+        return {
+          error: `The DNS answer exceeds the ${String(SPF_WORK_LIMITS.lookupAnswerValues)}-value SPF safety limit.`,
+          messageBytes: response.message.messageBytes,
+          status: 'error',
+          values: [],
+        };
+      }
       const mxRecords = type === 'MX' ? distinctMxRecords(matching) : undefined;
       const values = matching.flatMap((record) => {
         if (type === 'TXT') {
@@ -195,16 +210,21 @@ export class WireSpfDnsClient implements SpfSenderDnsClient {
         mxRecords === undefined
           ? [...new Set(values)]
           : [...new Set(mxRecords.map((record) => record.exchange))];
-      const boundedValues =
-        type === 'PTR' ? uniqueValues.slice(0, MAX_PTR_VALUES) : uniqueValues;
       const ttlValues = bound.ttlRecords.map((record) => record.ttl).filter((ttl) => ttl >= 0);
+      const ttl =
+        uniqueValues.length === 0 || ttlValues.length === 0
+          ? undefined
+          : Math.min(...ttlValues);
+      const expiresAt =
+        ttl === undefined ? undefined : absoluteExpiry(response.receivedAt, ttl);
       return {
         messageBytes: response.message.messageBytes,
         status:
-          boundedValues.length > 0 ? 'answer' : statusFromCode(response.message.responseCode),
-        ...(ttlValues.length === 0 ? {} : { ttl: Math.min(...ttlValues) }),
+          uniqueValues.length > 0 ? 'answer' : statusFromCode(response.message.responseCode),
+        ...(expiresAt === undefined ? {} : { expiresAt }),
+        ...(ttl === undefined ? {} : { ttl }),
         ...(mxRecords === undefined ? {} : { mxRecords }),
-        values: boundedValues,
+        values: uniqueValues,
       };
     } catch (cause) {
       if (
