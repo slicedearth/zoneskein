@@ -5,6 +5,7 @@ import {
   isDeprecatedSha1DnssecAlgorithm,
 } from '../dnssec/algorithm-policy';
 import { parseSpfRecord } from '../spf/parser';
+import { canonicalMasterName } from './master-name';
 import { parseTtl, parseZoneSnippet, ZONE_ANALYSIS_LIMITS } from './parser';
 import { canonicalSvcbKey, decodeBase64, isValidEchConfigList, svcbKeyNumber } from './svcb';
 import type {
@@ -66,6 +67,7 @@ function looksLikeIp(value: string): boolean {
 
 function validateOwner(record: ZoneRecord): readonly ZoneDiagnostic[] {
   if (record.owner === '@') return [];
+  if (canonicalMasterName(record.owner, '.') !== null) return [];
   const candidate = record.owner.replace(/^\*\./u, '');
   const parsed = validateDnsName(candidate);
   return parsed.ok ? [] : [item(record, 'owner-invalid', 'error', parsed.error.message)];

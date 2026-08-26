@@ -22,6 +22,8 @@ export interface ZoneRecord {
   readonly column: number;
   readonly line: number;
   readonly original: string;
+  /** Effective absolute origin when this record was parsed. */
+  readonly origin?: string;
   readonly owner: string;
   readonly ownerToken: string;
   readonly rdata: readonly ZoneToken[];

@@ -184,6 +184,8 @@
   "src/core/zone/authoring.ts",
   "src/core/zone/lint.test.ts",
   "src/core/zone/lint.ts",
+  "src/core/zone/master-name.test.ts",
+  "src/core/zone/master-name.ts",
   "src/core/zone/parser.property.test.ts",
   "src/core/zone/parser.ts",
   "src/core/zone/svcb.ts",

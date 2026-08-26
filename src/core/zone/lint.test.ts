@@ -40,6 +40,49 @@ www 300 IN A 192.0.2.10 ; deployed address
     ]);
   });
 
+  it('retains each effective origin and resolves nested relative origin directives', () => {
+    const document = parseZoneSnippet(`
+$ORIGIN example.
+@ 300 IN SOA ns hostmaster 1 3600 600 86400 300
+$ORIGIN child
+www 300 IN CNAME target
+$ORIGIN grand
+mail 300 IN MX 10 exchanger
+$ORIGIN example.
+@ 300 IN NS ns
+`);
+
+    expect(document.origin).toBe('example.');
+    expect(document.records).toEqual([
+      expect.objectContaining({ origin: 'example.', owner: 'example.', type: 'SOA' }),
+      expect.objectContaining({
+        origin: 'child.example.',
+        owner: 'www.child.example.',
+        type: 'CNAME',
+      }),
+      expect.objectContaining({
+        origin: 'grand.child.example.',
+        owner: 'mail.grand.child.example.',
+        type: 'MX',
+      }),
+      expect.objectContaining({ origin: 'example.', owner: 'example.', type: 'NS' }),
+    ]);
+  });
+
+  it('preserves structural escapes in canonical origins and owners', () => {
+    const document = parseZoneSnippet(String.raw`
+$ORIGIN foo\.bar.example.
+@ 300 IN SOA ns hostmaster 1 3600 600 86400 300
+www\.edge 300 IN A 192.0.2.1
+`);
+
+    expect(document.origin).toBe(String.raw`foo\046bar.example.`);
+    expect(document.records).toEqual([
+      expect.objectContaining({ owner: String.raw`foo\046bar.example.` }),
+      expect.objectContaining({ owner: String.raw`www\046edge.foo\046bar.example.` }),
+    ]);
+  });
+
   it('does not confuse mnemonic-looking owner labels with omitted owners', () => {
     const document = parseZoneSnippet(
       'ns 300 IN A 192.0.2.1\nin 600 IN AAAA 2001:db8::1\n300 900 IN TXT "numeric owner"',

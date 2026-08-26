@@ -1,4 +1,5 @@
 import { validateDnsName } from '../dns/names';
+import { canonicalMasterName } from './master-name';
 import type {
   ZoneDiagnostic,
   ZoneDocument,
@@ -409,15 +410,11 @@ export function parseTtl(value: string): number | null {
 
 function normalizeOrigin(value: string): string | null {
   const parsed = validateDnsName(value);
-  return parsed.ok ? parsed.value.absolute : null;
+  return parsed.ok ? (canonicalMasterName(parsed.value.absolute)?.absolute ?? null) : null;
 }
 
-function absoluteOwner(value: string, origin: string | undefined): string {
-  if (value === '@') return origin ?? '@';
-  if (value.endsWith('.')) return value.toLowerCase();
-  return origin === undefined
-    ? value.toLowerCase()
-    : `${value.toLowerCase()}.${origin}`.replace('..', '.');
+function absoluteOwner(value: string, origin: string | undefined): string | null {
+  return canonicalMasterName(value, origin)?.absolute ?? null;
 }
 
 export function parseZoneSnippet(source: string, options: ZoneParseOptions = {}): ZoneDocument {
@@ -426,11 +423,16 @@ export function parseZoneSnippet(source: string, options: ZoneParseOptions = {})
     budget.exceed('characters', ZONE_ANALYSIS_LIMITS.characters, 1, 1);
     return incompleteDocument(source, budget);
   }
-  let origin =
+  let currentOrigin =
     options.origin === undefined || options.origin.trim() === ''
       ? undefined
       : (normalizeOrigin(options.origin) ?? undefined);
-  if (options.origin !== undefined && options.origin.trim() !== '' && origin === undefined) {
+  let zoneOrigin = currentOrigin;
+  if (
+    options.origin !== undefined &&
+    options.origin.trim() !== '' &&
+    currentOrigin === undefined
+  ) {
     budget.addDiagnostic(
       diagnostic(
         'origin-invalid',
@@ -454,9 +456,9 @@ export function parseZoneSnippet(source: string, options: ZoneParseOptions = {})
     if (first === undefined) continue;
     if (!first.quoted && first.raw.startsWith('$')) {
       const directive = first.value.toUpperCase();
-      const argument = parts[1]?.value;
+      const argument = parts[1];
       if (directive === '$ORIGIN' && argument !== undefined) {
-        const normalized = normalizeOrigin(argument);
+        const normalized = canonicalMasterName(argument.raw, currentOrigin)?.absolute ?? null;
         if (normalized === null)
           budget.addDiagnostic(
             diagnostic(
@@ -467,9 +469,12 @@ export function parseZoneSnippet(source: string, options: ZoneParseOptions = {})
               first.column,
             ),
           );
-        else origin = normalized;
+        else {
+          currentOrigin = normalized;
+          zoneOrigin ??= normalized;
+        }
       } else if (directive === '$TTL' && argument !== undefined) {
-        const ttl = parseTtl(argument);
+        const ttl = parseTtl(argument.value);
         if (ttl === null)
           budget.addDiagnostic(
             diagnostic(
@@ -512,7 +517,20 @@ export function parseZoneSnippet(source: string, options: ZoneParseOptions = {})
         owner = '@';
       } else owner = previousOwner;
     } else {
-      owner = absoluteOwner(first.raw, origin);
+      const absolute = absoluteOwner(first.raw, currentOrigin);
+      if (absolute === null) {
+        if (currentOrigin !== undefined)
+          budget.addDiagnostic(
+            diagnostic(
+              'owner-invalid',
+              'error',
+              'The record owner is not a valid master-file domain name.',
+              first.line,
+              first.column,
+            ),
+          );
+        owner = first.raw.toLowerCase();
+      } else owner = absolute;
       previousOwner = owner;
       index += 1;
     }
@@ -569,6 +587,7 @@ export function parseZoneSnippet(source: string, options: ZoneParseOptions = {})
       column: first.column,
       line: first.line,
       original: statement.original.trimEnd(),
+      ...(currentOrigin === undefined ? {} : { origin: currentOrigin }),
       owner,
       ownerToken,
       rdata: parts.slice(index),
@@ -581,7 +600,7 @@ export function parseZoneSnippet(source: string, options: ZoneParseOptions = {})
 
   return {
     diagnostics: budget.diagnostics,
-    ...(origin === undefined ? {} : { origin }),
+    ...(zoneOrigin === undefined ? {} : { origin: zoneOrigin }),
     records,
     source,
   };

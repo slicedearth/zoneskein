@@ -1,5 +1,10 @@
 import { parseStrictIpAddress } from '../dns/ip';
-import { validateDnsName } from '../dns/names';
+import {
+  canonicalMasterName,
+  masterNameEquals,
+  masterNameIsAtOrBelow,
+  type CanonicalMasterName,
+} from './master-name';
 import { parseTtl } from './parser';
 import { decodeBase64, svcbKeyNumber } from './svcb';
 import type { ZoneDocument, ZoneRecord, ZoneToken } from './types';
@@ -39,6 +44,7 @@ const FATAL_PARSE_RULES = new Set([
   'escape-decimal-range',
   'escape-malformed',
   'origin-invalid',
+  'owner-invalid',
   'owner-missing',
   'record-incomplete',
   'syntax-parenthesis',
@@ -92,14 +98,8 @@ type EncodeResult =
   | { readonly bytes: Uint8Array; readonly ok: true }
   | { readonly ok: false; readonly reason: string };
 
-interface CanonicalNameValue {
-  readonly absolute: string;
-  readonly labels: readonly Uint8Array[];
-  readonly wire: Uint8Array;
-}
-
 interface CanonicalRecord {
-  readonly owner: CanonicalNameValue;
+  readonly owner: CanonicalMasterName;
   readonly rdata: Uint8Array;
   readonly ttl: number;
   readonly typeCode: number;
@@ -116,6 +116,7 @@ interface ParsedPublication {
 }
 
 const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
 
 function success(bytes: Uint8Array): EncodeResult {
   return { bytes, ok: true };
@@ -153,6 +154,12 @@ function readUint32(bytes: Uint8Array, offset: number): number | null {
     fourth === undefined
     ? null
     : ((first << 24) | (second << 16) | (third << 8) | fourth) >>> 0;
+}
+
+function readUint16(bytes: Uint8Array, offset: number): number | null {
+  const first = bytes[offset];
+  const second = bytes[offset + 1];
+  return first === undefined || second === undefined ? null : (first << 8) | second;
 }
 
 function join(parts: readonly Uint8Array[]): Uint8Array {
@@ -205,47 +212,20 @@ function isZonemdRecord(record: ZoneRecord): boolean {
   return typeCode(record.type) === 63;
 }
 
-function coversZonemd(record: ZoneRecord): boolean {
-  return record.type === 'RRSIG' && typeCode(record.rdata[0]?.value ?? '') === 63;
+function coversZonemd(record: ZoneRecord, fallbackOrigin?: string): boolean {
+  if (typeCode(record.type) !== 46) return false;
+  const encoded = encodeRdata(record, record.origin ?? fallbackOrigin);
+  return encoded.ok && readUint16(encoded.bytes, 0) === 63;
 }
 
-function absoluteName(value: string, origin: string): string | null {
-  const candidate =
-    value === '@'
-      ? origin
-      : value === '.' || value.endsWith('.')
-        ? value
-        : origin === '.'
-          ? `${value}.`
-          : `${value}.${origin}`;
-  const wildcard = candidate.startsWith('*.');
-  const parsed = validateDnsName(wildcard ? candidate.slice(2) : candidate);
-  return parsed.ok ? `${wildcard ? '*.' : ''}${parsed.value.absolute}` : null;
-}
-
-function canonicalName(value: string, origin: string): CanonicalNameValue | null {
-  const absolute = absoluteName(value, origin);
-  if (absolute === null) return null;
-  if (absolute === '.') return { absolute, labels: [], wire: new Uint8Array([0]) };
-  const labels = absolute
-    .slice(0, -1)
-    .split('.')
-    .map((label) => textEncoder.encode(label.toLowerCase()));
-  if (labels.some((label) => label.length === 0 || label.length > 63)) return null;
-  const wire = join([...labels.map((label) => join([uint8(label.length), label])), uint8(0)]);
-  return wire.length <= 255 ? { absolute, labels, wire } : null;
-}
-
-function isAtOrBelow(name: string, origin: string): boolean {
-  if (origin === '.') return true;
-  const nameLabels = name.toLowerCase().replace(/\.$/u, '').split('.');
-  const originLabels = origin.toLowerCase().replace(/\.$/u, '').split('.');
-  return (
-    nameLabels.length >= originLabels.length &&
-    originLabels.every(
-      (label, index) => nameLabels[nameLabels.length - originLabels.length + index] === label,
-    )
-  );
+function soaSerial(record: ZoneRecord): number | null {
+  if (typeCode(record.type) !== 6) return null;
+  if (record.type === 'SOA') return integer(record.rdata[2]?.value, 0xffff_ffff);
+  const generic = genericWireRdata(record);
+  if (!generic.ok) return null;
+  const mname = canonicalWireName(generic.bytes, 0);
+  const rname = mname === null ? null : canonicalWireName(generic.bytes, mname.next);
+  return rname === null ? null : readUint32(generic.bytes, rname.next);
 }
 
 function decodeMasterText(raw: string): Uint8Array | null {
@@ -304,8 +284,11 @@ function base64(tokens: readonly ZoneToken[]): Uint8Array | null {
   return decodeBase64(tokens.map((token) => token.value).join(''));
 }
 
-function encodedName(token: ZoneToken | undefined, origin: string): Uint8Array | null {
-  return token === undefined ? null : (canonicalName(token.value, origin)?.wire ?? null);
+function encodedName(
+  token: ZoneToken | undefined,
+  origin: string | undefined,
+): Uint8Array | null {
+  return token === undefined ? null : (canonicalMasterName(token.raw, origin)?.wire ?? null);
 }
 
 function encodedAddress(
@@ -380,60 +363,134 @@ function signatureTime(value: string | undefined): number | null {
   return integer(value, 0xffff_ffff);
 }
 
-function encodedSvcb(record: ZoneRecord, origin: string): EncodeResult {
+function asciiText(bytes: Uint8Array): string | null {
+  if (bytes.some((byte) => byte > 0x7f)) return null;
+  return textDecoder.decode(bytes);
+}
+
+function rawDelimiter(raw: string, delimiter: string): number {
+  for (let index = 0; index < raw.length; index += 1) {
+    if (raw[index] === '\\') {
+      const digits = raw.slice(index + 1, index + 4);
+      index += /^\d{3}$/u.test(digits) ? 3 : 1;
+      continue;
+    }
+    if (raw[index] === delimiter) return index;
+  }
+  return -1;
+}
+
+function svcValueList(
+  bytes: Uint8Array,
+  allowEscapedItems: boolean,
+): readonly Uint8Array[] | null {
+  const items: Uint8Array[] = [];
+  let item: number[] = [];
+  for (let index = 0; index < bytes.length; index += 1) {
+    const byte = bytes[index];
+    if (byte === 0x5c) {
+      const escaped = bytes[index + 1];
+      if (!allowEscapedItems || (escaped !== 0x2c && escaped !== 0x5c)) return null;
+      item.push(escaped);
+      index += 1;
+    } else if (byte === 0x2c) {
+      if (item.length === 0) return null;
+      items.push(new Uint8Array(item));
+      item = [];
+    } else if (byte !== undefined) item.push(byte);
+  }
+  if (item.length === 0) return null;
+  items.push(new Uint8Array(item));
+  return items;
+}
+
+function encodedSvcb(record: ZoneRecord, origin: string | undefined): EncodeResult {
   const priority = integer(record.rdata[0]?.value, 65_535);
   const target = encodedName(record.rdata[1], origin);
   if (priority === null || target === null)
     return failure(`${record.type} requires a priority and canonical target name.`);
   const parameters: { readonly key: number; readonly value: Uint8Array }[] = [];
   const seen = new Set<number>();
+  let mandatoryKeys: readonly number[] | undefined;
   for (const token of record.rdata.slice(2)) {
-    const equals = token.value.indexOf('=');
-    const keyText = (equals < 0 ? token.value : token.value.slice(0, equals)).toLowerCase();
+    const equals = rawDelimiter(token.raw, '=');
+    const rawKey = equals < 0 ? token.raw : token.raw.slice(0, equals);
+    if (rawKey.includes('\\') || rawKey.includes('"'))
+      return failure(`${record.type} contains an escaped or quoted SvcParam key.`);
+    const keyBytes = decodeMasterText(rawKey);
+    const keyText = keyBytes === null ? null : asciiText(keyBytes)?.toLowerCase();
+    if (keyText === null || keyText === undefined)
+      return failure(`${record.type} contains an invalid SvcParam key.`);
     const key = svcbKeyNumber(keyText);
     if (key === null || seen.has(key))
       return failure(`${record.type} contains an invalid or duplicate SvcParam key.`);
     seen.add(key);
-    const decoded = equals < 0 ? undefined : token.value.slice(equals + 1);
+    const rawValue = equals < 0 ? undefined : token.raw.slice(equals + 1);
+    const decoded = rawValue === undefined ? undefined : decodeMasterText(rawValue);
+    if (decoded === null) return failure(`${record.type} contains a malformed SvcParam value.`);
     let value: Uint8Array | null = null;
+    if ([0, 3, 4, 6].includes(key) && rawValue?.includes('\\') === true)
+      return failure(`${record.type} contains an escape where this SvcParam forbids one.`);
     if (key === 0 && decoded !== undefined) {
-      const required = decoded.split(',').map((item) => svcbKeyNumber(item.toLowerCase()));
-      value = required.some((item) => item === null)
-        ? null
-        : join((required as number[]).sort((left, right) => left - right).map(uint16));
-    } else if (key === 1 && decoded !== undefined) {
-      const protocols = decoded.split(',');
-      const encoded = protocols.map((protocol) => textEncoder.encode(protocol));
+      const list = svcValueList(decoded, false);
+      const required =
+        list?.map((item) => {
+          const text = asciiText(item);
+          return text === null ? null : svcbKeyNumber(text.toLowerCase());
+        }) ?? null;
       value =
-        protocols.some((protocol) => protocol === '') ||
-        encoded.some((protocol) => protocol.length > 255)
+        required === null || required.some((item) => item === null)
           ? null
-          : join(encoded.map((protocol) => join([uint8(protocol.length), protocol])));
+          : join((required as number[]).sort((left, right) => left - right).map(uint16));
+      if (value !== null) mandatoryKeys = required as number[];
+    } else if (key === 1 && decoded !== undefined) {
+      const protocols = svcValueList(decoded, true);
+      const protocolKeys = protocols?.map(bytesKey) ?? [];
+      value =
+        protocols === null ||
+        protocols.some((protocol) => protocol.length > 255) ||
+        new Set(protocolKeys).size !== protocolKeys.length
+          ? null
+          : join(protocols.map((protocol) => join([uint8(protocol.length), protocol])));
     } else if (key === 2 || key === 8) {
-      value = decoded === undefined || decoded === '' ? new Uint8Array() : null;
+      value = decoded === undefined || decoded.length === 0 ? new Uint8Array() : null;
     } else if (key === 3) {
-      const port = integer(decoded, 65_535);
+      const portText = decoded === undefined ? null : asciiText(decoded);
+      const port = portText === null ? null : integer(portText, 65_535);
       value = port === null ? null : uint16(port);
     } else if (key === 4 || key === 6) {
-      const addresses = (decoded ?? '').split(',');
+      const items = decoded === undefined ? null : svcValueList(decoded, false);
       const family = key === 4 ? 'ipv4' : 'ipv6';
-      const encoded = addresses.map((address) => {
+      const encoded = (items ?? []).map((item) => {
+        const address = asciiText(item);
+        if (address === null) return null;
         const parsed = parseStrictIpAddress(address);
         return parsed?.kind() === family ? new Uint8Array(parsed.toByteArray()) : null;
       });
-      value = encoded.some((address) => address === null)
-        ? null
-        : join(encoded as Uint8Array[]);
+      value =
+        items === null || encoded.some((address) => address === null)
+          ? null
+          : join(encoded as Uint8Array[]);
     } else if (key === 5 && decoded !== undefined) {
-      value = decodeBase64(decoded);
+      const encoded = asciiText(decoded);
+      value = encoded === null ? null : decodeBase64(encoded);
     } else if (equals >= 0) {
-      const rawEquals = token.raw.indexOf('=');
-      value = rawEquals < 0 ? null : decodeMasterText(token.raw.slice(rawEquals + 1));
+      value = decoded ?? null;
     }
     if (value === null || value.length > 65_535)
       return failure(`${record.type} contains an unsupported or malformed SvcParam value.`);
     parameters.push({ key, value });
   }
+  if (
+    mandatoryKeys?.some((key) => key === 0 || !seen.has(key)) === true ||
+    new Set(mandatoryKeys ?? []).size !== (mandatoryKeys?.length ?? 0)
+  ) {
+    return failure(
+      `${record.type} mandatory keys must be unique, present, and exclude mandatory.`,
+    );
+  }
+  if (seen.has(2) && !seen.has(1))
+    return failure(`${record.type} no-default-alpn requires an alpn parameter.`);
   parameters.sort((left, right) => left.key - right.key);
   return success(
     join([
@@ -444,7 +501,7 @@ function encodedSvcb(record: ZoneRecord, origin: string): EncodeResult {
   );
 }
 
-function genericRdata(record: ZoneRecord): EncodeResult {
+function genericWireRdata(record: ZoneRecord): EncodeResult {
   if (!/^TYPE\d+$/u.test(record.type) || record.rdata[0]?.value !== '#')
     return failure(`Record type ${record.type} has no supported canonical encoder.`);
   const length = integer(record.rdata[1]?.value, 65_535);
@@ -454,7 +511,152 @@ function genericRdata(record: ZoneRecord): EncodeResult {
     : success(data);
 }
 
-function encodeRdata(record: ZoneRecord, origin: string): EncodeResult {
+interface CanonicalWireName {
+  readonly bytes: Uint8Array;
+  readonly next: number;
+}
+
+function canonicalWireName(input: Uint8Array, offset: number): CanonicalWireName | null {
+  const parts: Uint8Array[] = [];
+  let cursor = offset;
+  let nameOctets = 0;
+  for (;;) {
+    const length = input[cursor];
+    if (length === undefined || (length & 0xc0) !== 0 || length > 63) return null;
+    cursor += 1;
+    nameOctets += 1;
+    if (length === 0)
+      return nameOctets <= 255 ? { bytes: join([...parts, uint8(0)]), next: cursor } : null;
+    if (cursor + length > input.length || nameOctets + length > 255) return null;
+    const label = input.slice(cursor, cursor + length);
+    const canonical = Uint8Array.from(label, (byte) =>
+      byte >= 0x41 && byte <= 0x5a ? byte + 0x20 : byte,
+    );
+    parts.push(join([uint8(length), canonical]));
+    cursor += length;
+    nameOctets += length;
+  }
+}
+
+function oneName(
+  input: Uint8Array,
+  offset: number,
+  exactEnd: boolean,
+  minimumTrailingOctets = 0,
+): EncodeResult {
+  const name = canonicalWireName(input, offset);
+  if (
+    name === null ||
+    (exactEnd && name.next !== input.length) ||
+    input.length - name.next < minimumTrailingOctets
+  )
+    return failure('Generic RDATA contains a malformed or compressed domain name.');
+  return success(join([input.slice(0, offset), name.bytes, input.slice(name.next)]));
+}
+
+function twoNames(input: Uint8Array, offset: number, trailingOctets: number): EncodeResult {
+  const first = canonicalWireName(input, offset);
+  const second = first === null ? null : canonicalWireName(input, first.next);
+  if (first === null || second === null || second.next + trailingOctets !== input.length)
+    return failure('Generic RDATA contains malformed or compressed domain names.');
+  return success(
+    join([input.slice(0, offset), first.bytes, second.bytes, input.slice(second.next)]),
+  );
+}
+
+function canonicaliseNaptr(input: Uint8Array): EncodeResult {
+  if (input.length < 4) return failure('Generic NAPTR RDATA is truncated.');
+  let offset = 4;
+  for (let index = 0; index < 3; index += 1) {
+    const length = input[offset];
+    if (length === undefined || offset + 1 + length > input.length)
+      return failure('Generic NAPTR RDATA contains a malformed character-string.');
+    offset += 1 + length;
+  }
+  return oneName(input, offset, true);
+}
+
+function canonicaliseA6(input: Uint8Array): EncodeResult {
+  const prefixLength = input[0];
+  if (prefixLength === undefined || prefixLength > 128)
+    return failure('Generic A6 RDATA is malformed.');
+  const suffixOctets = Math.ceil((128 - prefixLength) / 8);
+  const nameOffset = 1 + suffixOctets;
+  const paddingBits = suffixOctets * 8 - (128 - prefixLength);
+  const firstSuffix = input[1];
+  if (
+    paddingBits > 0 &&
+    (firstSuffix === undefined || (firstSuffix & (0xff << (8 - paddingBits))) !== 0)
+  ) {
+    return failure('Generic A6 RDATA has non-zero leading padding bits.');
+  }
+  if (prefixLength === 0)
+    return input.length === nameOffset
+      ? success(input)
+      : failure('Generic A6 RDATA has an invalid address length.');
+  return oneName(input, nameOffset, true);
+}
+
+function canonicaliseGenericSvcb(input: Uint8Array): EncodeResult {
+  if (input.length < 2) return failure('Generic service-binding RDATA is truncated.');
+  const target = canonicalWireName(input, 2);
+  if (target === null)
+    return failure('Generic service-binding RDATA contains a malformed target name.');
+  let offset = target.next;
+  let previousKey = -1;
+  while (offset < input.length) {
+    const key = readUint16(input, offset);
+    const length = readUint16(input, offset + 2);
+    if (
+      key === null ||
+      length === null ||
+      key <= previousKey ||
+      offset + 4 + length > input.length
+    ) {
+      return failure(
+        'Generic service-binding RDATA contains malformed or unordered parameters.',
+      );
+    }
+    previousKey = key;
+    offset += 4 + length;
+  }
+  return offset === input.length
+    ? success(join([input.slice(0, 2), target.bytes, input.slice(target.next)]))
+    : failure('Generic service-binding RDATA has trailing partial parameter data.');
+}
+
+function canonicaliseGenericRdata(type: number, input: Uint8Array): EncodeResult {
+  if ([2, 3, 4, 5, 7, 8, 9, 12, 39].includes(type)) return oneName(input, 0, true);
+  if ([14, 17].includes(type)) return twoNames(input, 0, 0);
+  if ([15, 18, 21, 36].includes(type))
+    return input.length < 2
+      ? failure('Generic RDATA is truncated before its domain name.')
+      : oneName(input, 2, true);
+  if (type === 6) return twoNames(input, 0, 20);
+  if (type === 24 || type === 46)
+    return input.length < 18
+      ? failure('Generic signature RDATA is truncated.')
+      : oneName(input, 18, false, 1);
+  if (type === 26)
+    return input.length < 2 ? failure('Generic PX RDATA is truncated.') : twoNames(input, 2, 0);
+  if (type === 30) return oneName(input, 0, false, 1);
+  if (type === 47) return oneName(input, 0, false, 3);
+  if (type === 33)
+    return input.length < 6
+      ? failure('Generic SRV RDATA is truncated.')
+      : oneName(input, 6, true);
+  if (type === 35) return canonicaliseNaptr(input);
+  if (type === 38) return canonicaliseA6(input);
+  if (type === 64 || type === 65) return canonicaliseGenericSvcb(input);
+  return success(input);
+}
+
+function encodeRdata(record: ZoneRecord, origin: string | undefined): EncodeResult {
+  if (/^TYPE\d+$/u.test(record.type)) {
+    const raw = genericWireRdata(record);
+    const code = typeCode(record.type);
+    return !raw.ok || code === null ? raw : canonicaliseGenericRdata(code, raw.bytes);
+  }
   const values = record.rdata.map((token) => token.value);
   if (record.type === 'A' || record.type === 'AAAA') {
     const value = encodedAddress(record.rdata[0], record.type === 'A' ? 'ipv4' : 'ipv6');
@@ -650,10 +852,10 @@ function encodeRdata(record: ZoneRecord, origin: string): EncodeResult {
       ? success(join([uint32(serial), uint8(scheme), uint8(algorithm), digest]))
       : failure('ZONEMD RDATA is malformed.');
   }
-  return genericRdata(record);
+  return failure(`Record type ${record.type} has no supported canonical encoder.`);
 }
 
-function compareNames(left: CanonicalNameValue, right: CanonicalNameValue): number {
+function compareNames(left: CanonicalMasterName, right: CanonicalMasterName): number {
   const length = Math.max(left.labels.length, right.labels.length);
   for (let offset = 1; offset <= length; offset += 1) {
     const leftLabel = left.labels.at(-offset);
@@ -685,7 +887,7 @@ function parsePublication(record: ZoneRecord): ParsedPublication {
     hashAlgorithm = integer(record.rdata[2]?.value, 255);
     digestBytes = hexadecimal(record.rdata.slice(3));
   } else {
-    const generic = genericRdata(record);
+    const generic = genericWireRdata(record);
     serial = generic.ok ? readUint32(generic.bytes, 0) : null;
     scheme = generic.ok ? (generic.bytes[4] ?? null) : null;
     hashAlgorithm = generic.ok ? (generic.bytes[5] ?? null) : null;
@@ -771,29 +973,50 @@ export async function analyseZoneDigest(
     );
   if (document.origin === undefined)
     return reportUnavailable('A valid zone origin is required for canonical zone digests.');
-  const originValue = canonicalName(document.origin, document.origin);
+  const originValue = canonicalMasterName(document.origin);
   if (originValue === null)
     return reportUnavailable('The parsed zone origin cannot be represented canonically.');
   const origin = originValue.absolute;
-  const apexSoas = document.records.filter(
-    (record) => record.owner.toLowerCase() === origin.toLowerCase() && record.type === 'SOA',
-  );
+  const ownerValues = new Map<ZoneRecord, CanonicalMasterName>();
+  for (const record of document.records) {
+    const owner = canonicalMasterName(record.owner);
+    if (owner === null)
+      return reportUnavailable(
+        `Line ${String(record.line)} has an owner that cannot be represented canonically.`,
+        origin,
+      );
+    ownerValues.set(record, owner);
+  }
+  const apexSoas = document.records.filter((record) => {
+    const owner = ownerValues.get(record);
+    return (
+      owner !== undefined && masterNameEquals(owner, originValue) && typeCode(record.type) === 6
+    );
+  });
   if (apexSoas.length !== 1)
     return reportUnavailable(
       'A complete zone digest requires exactly one SOA record at the zone apex.',
       origin,
     );
   const soa = apexSoas[0];
-  const serial = integer(soa?.rdata[2]?.value, 0xffff_ffff);
+  const serial = soa === undefined ? null : soaSerial(soa);
   if (soa === undefined || serial === null)
     return reportUnavailable('The apex SOA serial is malformed.', origin);
 
-  const coveringSignatures = document.records.filter(
-    (record) => record.owner.toLowerCase() === origin.toLowerCase() && coversZonemd(record),
-  );
-  const apexPublications = document.records.filter(
-    (record) => record.owner.toLowerCase() === origin.toLowerCase() && isZonemdRecord(record),
-  );
+  const coveringSignatures = document.records.filter((record) => {
+    const owner = ownerValues.get(record);
+    return (
+      owner !== undefined &&
+      masterNameEquals(owner, originValue) &&
+      coversZonemd(record, origin)
+    );
+  });
+  const apexPublications = document.records.filter((record) => {
+    const owner = ownerValues.get(record);
+    return (
+      owner !== undefined && masterNameEquals(owner, originValue) && isZonemdRecord(record)
+    );
+  });
   const publications = apexPublications.map(parsePublication);
   const tupleCounts = new Map<string, number>();
   for (const publication of publications) {
@@ -817,18 +1040,15 @@ export async function analyseZoneDigest(
   const issues: string[] = [];
 
   for (const record of document.records) {
-    const owner = canonicalName(record.owner, origin);
-    if (owner === null)
-      return reportUnavailable(
-        `Line ${String(record.line)} has an owner that cannot be represented canonically.`,
-        origin,
-      );
-    if (!isAtOrBelow(owner.absolute, origin)) {
+    const owner = ownerValues.get(record);
+    if (owner === undefined)
+      return reportUnavailable('An internal owner binding was unavailable.', origin);
+    if (!masterNameIsAtOrBelow(owner, originValue)) {
       excludedOutOfZoneRecords += 1;
       continue;
     }
-    const isApex = owner.absolute.toLowerCase() === origin.toLowerCase();
-    if (isApex && (isZonemdRecord(record) || coversZonemd(record))) {
+    const isApex = masterNameEquals(owner, originValue);
+    if (isApex && (isZonemdRecord(record) || coversZonemd(record, origin))) {
       excludedApexRecords += 1;
       continue;
     }
@@ -848,7 +1068,7 @@ export async function analyseZoneDigest(
         `Line ${String(record.line)} uses ${record.type}, whose numeric type code is unavailable. Use RFC 3597 TYPE#### syntax for unknown types.`,
         origin,
       );
-    const encoded = encodeRdata(record, origin);
+    const encoded = encodeRdata(record, record.origin ?? origin);
     if (!encoded.ok)
       return reportUnavailable(`Line ${String(record.line)}: ${encoded.reason}`, origin);
     if (encoded.bytes.length > MAX_RDATA_OCTETS)
