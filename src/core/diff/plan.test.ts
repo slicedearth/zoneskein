@@ -57,6 +57,16 @@ describe('DNS change planning', () => {
     );
   });
 
+  it('preserves malformed empty labels in unresolved target findings', () => {
+    const report = plan('', 'www 300 IN CNAME missing..target');
+    const targetFinding = report.findings.find(
+      (item) => item.code === 'internal-target-not-in-snapshot',
+    );
+
+    expect(targetFinding?.message).toContain('missing..target.example.com.');
+    expect(targetFinding?.message).not.toContain('missing.target.example.com.');
+  });
+
   it('accepts an SOA serial that advances through the 32-bit wrap boundary', () => {
     const report = plan(
       '@ 300 IN SOA ns1.example. hostmaster.example. 4294967295 3600 600 86400 300',

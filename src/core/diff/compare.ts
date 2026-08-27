@@ -19,9 +19,7 @@ interface RecordQueue {
 function absoluteTarget(value: string, origin: string | undefined): string {
   if (value === '@') return origin ?? '@';
   if (value.endsWith('.')) return value.toLowerCase();
-  return origin === undefined
-    ? value.toLowerCase()
-    : `${value.toLowerCase()}.${origin}`.replace('..', '.');
+  return origin === undefined ? value.toLowerCase() : `${value.toLowerCase()}.${origin}`;
 }
 
 function normalizedAddress(value: string): string {

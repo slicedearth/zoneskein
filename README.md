@@ -108,6 +108,7 @@ npm run format:check
 npm run lint
 npm run check
 npm run check:dnssec-anchors
+npm run security:codeql
 npm run generate:favicon
 npm test
 npm run build
@@ -120,6 +121,8 @@ npm run test:live
 `npm run build` creates and verifies the bounded static output plus a deterministic corresponding-source archive, per-file manifest, and SHA-256 checksum. It also checks route-specific canonical metadata, the sitemap, public legal documents, branded image dimensions, the CSP resolver and structured-data allowlists, SPA rewrite, entry-asset hashes, and the single allowlisted Netlify Function contract. `npm run check:build` repeats that verification for an existing `dist` directory and the current source, relay, and configuration. Production source maps are not emitted because the complete source is offered separately.
 
 Browser tests exercise deterministic mocked workflows in Chromium, Firefox, WebKit, and a mobile Chromium viewport. The accessibility project checks every static route with axe, 320-CSS-pixel reflow, keyboard skip-link focus, forced colours, and reduced motion. Property tests use fixed seeds and bounded generated inputs so failures remain locally reproducible.
+
+The CodeQL command uses the same path exclusions and `security-extended` query suite as continuous integration, builds a disposable JavaScript and TypeScript database, fails when any alert is present, prints a bounded finding summary, and removes the database afterwards. Install the current official CodeQL bundle with `codeql` on `PATH`, or set `CODEQL_PATH` to its absolute executable path. Run it before pushing security-relevant changes. The wrapper fixes the language and query suite, bounds process time, output, memory, threads, SARIF size, and displayed findings, and fails closed if the scan or cleanup is incomplete.
 
 `npm run generate:favicon` renders the canonical SVG logo into the committed 16, 32, 48, 64, 128, and 256-pixel ICO favicon, 180-pixel Apple touch icon, and 1,200-by-630 social preview. Run it after changing the mark; continuous integration reproduces the assets with the locked browser, while production verification checks their declarations, exact static copies, formats, dimensions, bounds, and favicon directory structure.
 

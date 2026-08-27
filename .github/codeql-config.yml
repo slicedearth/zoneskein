@@ -1,0 +1,9 @@
+name: ZoneSkein CodeQL configuration
+
+paths-ignore:
+  - '.netlify/**'
+  - 'coverage/**'
+  - 'dist/**'
+  - 'node_modules/**'
+  - 'playwright-report/**'
+  - 'test-results/**'

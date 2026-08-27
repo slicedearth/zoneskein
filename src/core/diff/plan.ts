@@ -151,7 +151,7 @@ function absoluteTarget(value: string, origin: string | undefined): string | nul
   if (value === '' || value === '.') return null;
   if (value === '@') return origin ?? null;
   if (value.endsWith('.')) return value.toLowerCase();
-  return origin === undefined ? null : `${value.toLowerCase()}.${origin}`.replace('..', '.');
+  return origin === undefined ? null : `${value.toLowerCase()}.${origin}`;
 }
 
 function target(record: ZoneRecord, origin: string | undefined): string | null {

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { open, readdir, readFile, stat } from 'node:fs/promises';
 import { extname, join, relative, resolve, sep } from 'node:path';
 
 import {
@@ -254,9 +255,36 @@ async function quad9RelaySource(): Promise<string> {
     fail('netlify/functions must contain exactly the quad9-doh.ts function source.');
   }
   const sourcePath = join(functionsDirectory, 'quad9-doh.ts');
-  if ((await stat(sourcePath)).size > MAX_FUNCTION_SOURCE_OCTETS)
-    fail(`quad9-doh.ts exceeds ${String(MAX_FUNCTION_SOURCE_OCTETS)} octets.`);
-  return readFile(sourcePath, 'utf8');
+  const handle = await open(sourcePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const before = await handle.stat({ bigint: true });
+    if (!before.isFile()) fail('quad9-doh.ts must remain a regular file.');
+    if (before.size > BigInt(MAX_FUNCTION_SOURCE_OCTETS))
+      fail(`quad9-doh.ts exceeds ${String(MAX_FUNCTION_SOURCE_OCTETS)} octets.`);
+
+    const buffer = Buffer.alloc(MAX_FUNCTION_SOURCE_OCTETS + 1);
+    let offset = 0;
+    while (offset < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, offset);
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+    if (offset > MAX_FUNCTION_SOURCE_OCTETS)
+      fail(`quad9-doh.ts exceeds ${String(MAX_FUNCTION_SOURCE_OCTETS)} octets.`);
+
+    const after = await handle.stat({ bigint: true });
+    if (
+      before.dev !== after.dev ||
+      before.ino !== after.ino ||
+      before.size !== after.size ||
+      before.mtimeNs !== after.mtimeNs ||
+      before.ctimeNs !== after.ctimeNs
+    )
+      fail('quad9-doh.ts changed while it was being verified.');
+    return buffer.subarray(0, offset).toString('utf8');
+  } finally {
+    await handle.close();
+  }
 }
 
 const files = await filesBelow(output);

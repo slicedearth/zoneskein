@@ -346,6 +346,21 @@ describe('DKIM message verification', () => {
     expect(results[0]).toMatchObject({ status: 'pass' });
   });
 
+  it('handles bounded folded whitespace before the b tag in linear work', async () => {
+    const bodyHash = await dkimBodyHash('body', 'simple');
+    const foldedWhitespace = '\r\n\t\t'.repeat(4_000);
+    const message = `DKIM-Signature: v=1; a=ed25519-sha256; d=example.test; s=folded; h=from; bh=${bodyHash};${foldedWhitespace}b=AAAA\r\nFrom: sender@example.test\r\n\r\nbody`;
+    const lookup = vi.fn(() =>
+      Promise.resolve({ error: 'No key is published.', records: [], temporary: false }),
+    );
+
+    const results = await verifyDkimMessage(message, lookup);
+
+    expect(lookup).toHaveBeenCalledOnce();
+    expect(lookup).toHaveBeenCalledWith('folded._domainkey.example.test');
+    expect(results[0]).toMatchObject({ reason: 'No key is published.', status: 'permerror' });
+  });
+
   it('rejects non-LDH selectors and AUID domains before DNS', async () => {
     const bodyHash = await dkimBodyHash('body', 'simple');
     const invalidSelector = `DKIM-Signature: v=1; a=ed25519-sha256; d=example.test; s=_private; h=from; bh=${bodyHash}; b=AAAA\r\nFrom: a@example.test\r\n\r\nbody`;
