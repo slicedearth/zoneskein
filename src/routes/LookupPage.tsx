@@ -6,6 +6,7 @@ import { SnapshotButton } from '../components/SnapshotButton';
 import { StatusBadge } from '../components/StatusBadge';
 import { ToolIntro } from '../components/ToolIntro';
 import { validateDnsName } from '../core/dns/names';
+import { useDomainThread } from '../core/domain-thread';
 import { bindRecord, recordDataText } from '../core/dns/presentation';
 import { recordJson } from '../core/dns/records';
 import { reverseNameFromAddress } from '../core/dns/reverse';
@@ -499,7 +500,8 @@ function ResultPanel({
 }
 
 export function LookupPage() {
-  const [input, setInput] = useState('');
+  const domainThread = useDomainThread();
+  const [input, setInput] = useState(() => domainThread.domain?.display ?? '');
   const [selectedTypes, setSelectedTypes] = useState<Set<DnsRecordType>>(
     () => new Set(DEFAULT_RECORD_TYPES),
   );
@@ -584,6 +586,8 @@ export function LookupPage() {
       }
       questions.push({ name: parsed.value, type });
     }
+    const firstQuestion = questions[0];
+    if (firstQuestion !== undefined) domainThread.setDomain(firstQuestion.name);
 
     activeRun.current?.cancel();
     const run = new DnsQueryRun();

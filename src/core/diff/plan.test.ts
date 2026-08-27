@@ -115,7 +115,7 @@ describe('DNS change planning', () => {
     const source = (count: number) =>
       Array.from(
         { length: count },
-        (_, index) => `record-${String(index)} IN TYPE${String(index)} value`,
+        (_, index) => `record-${String(index)} IN TYPE${String(index + 1)} value`,
       ).join('\n');
     const exactSource = source(ZONE_ANALYSIS_LIMITS.findings);
     const exactBefore = parseZoneSnippet(exactSource, { origin: 'example.com' });

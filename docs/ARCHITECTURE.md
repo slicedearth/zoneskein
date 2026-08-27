@@ -4,7 +4,7 @@
 
 ZoneSkein is static-first: a single Vite client build is deployed as static files on Netlify, and all application paths are rewritten to `index.html`. The static output includes the checked public legal documents and a deterministic archive of the corresponding source used for that build. The only server-side application component is `netlify/functions/quad9-doh.ts`, exposed at the fixed same-origin path `/api/doh/quad9` for automatic Quad9 compatibility after a qualifying direct failure. There are no server-rendered routes, Edge Functions, service workers, hosted application jobs, authentication services, or server-side databases. A repository workflow periodically checks the bundled DNSSEC trust anchors, but it is not part of the deployed application.
 
-Routes are loaded with dynamic imports. The home shell remains small; protocol-heavy modules such as SPF analysis load only when needed.
+Routes are loaded with dynamic imports. The home shell remains small; protocol-heavy modules, graph layout, archive handling, and certificate parsing load only when their routes need them.
 
 ## TypeScript toolchain
 
@@ -16,18 +16,23 @@ Application, protocol, test, and build-configuration source is strict TypeScript
 
 - `dns` validates names, models questions and responses, encodes or decodes DNS wire messages, parses record views, and formats exports;
 - `doh` owns fixed resolver definitions, timeouts, caching, deduplication, concurrency, rate limiting, cooldowns, cancellation, and per-run budgets;
-- `dnssec` anchors trust in a bundled IANA root set, reports anchor-maintenance and evidence-expiry state, validates DS and DNSKEY chains, compares DS digests, evaluates bounded NSEC/NSEC3 denial proofs, follows authenticated aliases, and verifies selected positive or negative application results from losslessly bound raw-wire evidence. RSA, ECDSA, and Ed25519 use browser Web Crypto; a dynamically loaded, version-locked Ed448 primitive is the sole third-party cryptographic operation, while protocol binding and policy remain in-house;
+- `evidence` models source-labelled nodes, relationships, observation times, TTLs and uncertainty, builds bounded DNS bundles, and compares resolver observations without deciding which answer is correct;
+- `measurement` owns the fixed external DNS-measurement request, browser rate ledger, response bounds and decoding, then projects returned probe observations into the same evidence model;
+- `dnssec` anchors trust in a bundled IANA root set, reports anchor-maintenance and evidence-expiry state, validates DS and DNSKEY chains, compares DS digests, evaluates bounded NSEC/NSEC3 denial proofs, follows authenticated aliases, verifies selected positive or negative application results from losslessly bound raw-wire evidence, and separately provides a bounded structural lifecycle model for supplied DNSKEY, DS, CDS, CDNSKEY, CSYNC and DSYNC material. RSA, ECDSA, and Ed25519 use browser Web Crypto; a dynamically loaded, version-locked Ed448 primitive is the sole third-party cryptographic operation, while protocol binding and policy remain in-house;
+- `protocol` interprets authoritative RESINFO responses and keeps new or unknown resource-record queries inside the shared DNS wire and safety contracts;
 - `spf` applies one printable-ASCII grammar and DNS answer contract, resolves work-bounded dependency graphs, measures per-family worst-case paths, constructs cardinality-bounded snapshots from absolute response expiries, and evaluates bounded sender context with macro and DNS evidence;
-- `zone` tokenises and lints recoverable zone snippets, preserves raw escaped-name and per-record origin semantics, serialises supported authoring records, and calculates bounded canonical complete-zone digests only after explicit completeness confirmation;
+- `zone` tokenises and lints recoverable zone snippets, preserves raw escaped-name and per-record origin semantics, serialises supported authoring records, expands bounded local include/generate bundles with provenance, previews common service templates, drafts conservative portable configuration, decodes bounded SVCB/HTTPS ECH data, and calculates canonical complete-zone digests only after explicit completeness confirmation;
 - `diff` normalises records, classifies semantic changes, and derives bounded preflight, risk, timing, rollback, and staged-rollout guidance;
 - `project` validates and serialises the versioned Change Workspace format, constructs Record Studio and Change Lab hand-offs, and reruns bounded local comparison without network or storage access;
 - `dmarc` performs RFC 9989 discovery and conditional alignment assessment from supplied prior authentication evidence, plus RFC 9990 and RFC 9991 reporting-destination checks;
 - `dkim` parses selector keys and locally canonicalises and verifies bounded messages;
-- `mail` derives the minimal SPF and DKIM fields needed by DMARC alignment and strictly validates a bounded versioned JSON transfer without retaining raw sender or message inputs;
+- `mail` derives the minimal SPF and DKIM fields needed by DMARC alignment, strictly validates a bounded versioned JSON transfer, expands bounded report archives, parses DMARC aggregate and TLS report formats, checks MTA-STS and TLS reporting policy, inspects X.509/TLSA associations, and performs local BIMI and structural ARC inspection without retaining raw inputs;
 - `caa` performs bounded inheritance analysis and record authoring;
 - `snapshots` owns bounded opt-in IndexedDB persistence and fragment serialisation.
 
 `src/routes` orchestrates user actions and renders typed results. `src/components` contains reusable presentation controls. React components do not define the authoritative DNSSEC, SPF, DMARC, DKIM, CAA, CIDR, zone-parser, or DNS-wire algorithms.
+
+`EvidenceGraph` is deliberately a renderer rather than an evidence authority. Modular D3 force, selection, drag and zoom packages calculate and manipulate a deterministic bounded SVG layout. The complete nodes and relationships remain available in semantic tables, and selecting or dragging a node does not change the underlying evidence bundle.
 
 ## DNS request flow
 
@@ -41,15 +46,28 @@ Application, protocol, test, and build-configuration source is strict TypeScript
 
 No ANY query, arbitrary URL, or unrestricted batch input is exposed. The relay does not provide a general-purpose proxy.
 
+## External measurement flow
+
+1. Delegation Lab validates the target, record type, protocol, location, probe count and optional intended resolver locally. A user must also acknowledge the external-data boundary.
+2. A timestamp-only local ledger admits no more than six runs in a rolling hour when browser storage is available. Each run requests no more than three probes.
+3. The browser sends one credential-free POST to the fixed `https://api.globalping.io/v1/measurements` endpoint. No ZoneSkein function, user-supplied API origin, key or account is involved.
+4. The returned identifier must match a small opaque identifier grammar and can only be appended to that fixed API path. Polling uses no-store requests, an abort signal, 64 attempts at 600-millisecond intervals, and the same one-mebibyte response reader on every response.
+5. Runtime decoding admits at most three results, 48 DNS hops per result, 256 answers per hop and bounded strings and numeric values. Invalid, mismatched or oversized service data fails the run rather than entering the graph.
+6. Probe results become source-labelled evidence while the raw service output remains visibly separate. The interface labels the sample point-in-time and never promotes it to global propagation or authoritative truth.
+
 ## State
 
 Ordinary form and response state lives in React memory. DNS caching is memory-only. The Quad9 relay has no application response cache or durable application state. The theme is selected from browser preference and is not persisted. Cross-tab rate coordination writes only a bounded ledger of opaque request identifiers, timestamps, resolver buckets, and cooldown expiries to local storage; it never writes questions or answers.
+
+The last successfully validated domain can travel between Lookup, Skein Map, Delegation Lab, Protocol Lab and DNSSEC inspection through one React context. The context holds the canonical validated name only in current application memory. It never persists that value, places it in browser history, or starts network work when a route mounts.
 
 Snapshot persistence is separate. The opt-in boolean and opaque storage-generation identifier contain no DNS value. Only explicit saves write to IndexedDB. Disabling the feature first records an origin-wide erasure marker and invalidates the generation so every writer fails closed, then clears the object store, asks other tabs to close database handles, and waits for confirmed IndexedDB deletion. A blocked or failed deletion remains visible and cannot be bypassed by re-enabling storage until erasure succeeds. Share state is created only on request, bounded, encoded in a URL fragment, and runtime-validated when read.
 
 The corresponding-source archive is build output rather than application state. Its generator reads only the exact sorted paths in `SOURCE_FILES.json`, verifies that the declared source directories contain no additional entries, rejects symbolic links, unsafe package-lock paths, non-files, and resource-bound violations, produces a deterministic tar/gzip stream with a SHA-256 manifest, and writes a separate archive checksum. The inventory is part of the archive, so an extracted source release can reproduce the build without repository metadata. The build verifier expands the archive under independent bounds and compares every archived byte with the current source before permitting deployment.
 
 Raw DKIM messages, SPF sender inputs, and DMARC alignment inputs remain in current React memory, and those routes provide no snapshot or share control for them. Passing DKIM domains or an SPF sender result can move into DMARC through application-owned callbacks; every new hand-off replaces the prior hand-off, so independently captured method families are never combined automatically. Passing SPF evidence retains only its authenticated MAIL FROM or null-path HELO identity domain and source, while non-pass evidence omits the unauthenticated domain. The hand-off also carries capture time, reconstruction state, a fixed resolver identifier, source kind, and schema metadata. A strict 16,384-octet JSON transfer offers an explicit clipboard path with exact keys, depth and count limits, duplicate-key rejection, canonical timestamps, LDH domains, and inert resolver provenance. Imported and manual prior results remain unbound to a common message and visible From context; they require explicit acknowledgement before they can support a conditional DMARC pass. Editing a transferred field detaches its provenance and invalidates the result. DKIM verification sends only derived selector TXT questions. SPF macros can place parts of supplied sender context into resolver-visible DNS questions. Record Studio working sets remain temporary unless the visitor explicitly saves one through the snapshot control.
+
+Mail Lab report files, certificates, BIMI material, ARC headers and policy text remain route-local React state. The archive layer expands only bounded XML or JSON entries, XML is consumed as parser events rather than mounted markup, and supplied SVG is inspected as inert text. Zone Exchange similarly reads explicitly selected files into route memory, expands only paths inside that selected bundle, and produces text drafts without invoking a target tool or provider API. Neither route offers automatic persistence or a share fragment.
 
 Change Workspace state is also memory-only. Record Studio and Change Lab can hand bounded typed state to it through application-owned React callbacks; browser history holds only the route. Explicit file export produces canonical JSON with a SHA-256 integrity field, and strict import reconstructs plain inert values without reproducing or endorsing stored analysis. Imported resolver endpoints are never passed to `WireDnsResolver`. Opening a workspace in Change Lab transfers both zone states, their omission reasons and distinct origins, and the exact in-memory workspace into pasted comparison mode. Incomplete inputs cannot produce a new comparison and can return losslessly.
 

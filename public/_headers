@@ -1,5 +1,5 @@
 /*
-  Content-Security-Policy: default-src 'self'; connect-src 'self' https://dns.google https://cloudflare-dns.com https://dns.quad9.net; img-src 'self' data:; style-src 'self'; script-src 'self' 'sha256-v1MKFqEKTHLem8WauqboCbBC+ZvCH/yevuVaRkAY8hs='; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; manifest-src 'self'
+  Content-Security-Policy: default-src 'self'; connect-src 'self' https://dns.google https://cloudflare-dns.com https://dns.quad9.net https://api.globalping.io; img-src 'self' data:; style-src 'self'; script-src 'self' 'sha256-v1MKFqEKTHLem8WauqboCbBC+ZvCH/yevuVaRkAY8hs='; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; manifest-src 'self'
   Cross-Origin-Opener-Policy: same-origin
   Cross-Origin-Resource-Policy: same-origin
   Permissions-Policy: camera=(), geolocation=(), microphone=(), payment=(), usb=()

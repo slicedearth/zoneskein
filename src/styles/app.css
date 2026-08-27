@@ -359,6 +359,207 @@ a {
   font-weight: 780;
 }
 
+.evidence-graph-shell {
+  display: grid;
+  gap: 1rem;
+}
+
+.graph-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.graph-toolbar p {
+  max-width: 66ch;
+  margin: 0;
+  color: var(--muted);
+}
+
+.evidence-graph-frame {
+  overflow: hidden;
+  border: 2px solid var(--line);
+  border-radius: 1.3rem 1.3rem 0.45rem;
+  background:
+    radial-gradient(
+      circle at 22% 18%,
+      color-mix(in srgb, var(--coral) 12%, transparent),
+      transparent 28%
+    ),
+    radial-gradient(
+      circle at 78% 74%,
+      color-mix(in srgb, var(--accent) 12%, transparent),
+      transparent 31%
+    ),
+    var(--surface-soft);
+  box-shadow: var(--shadow-offset);
+  touch-action: none;
+}
+
+.evidence-graph {
+  display: block;
+  width: 100%;
+  min-height: min(64vh, 600px);
+  cursor: grab;
+}
+
+.evidence-graph:active {
+  cursor: grabbing;
+}
+
+.evidence-links line {
+  stroke: color-mix(in srgb, var(--muted) 60%, transparent);
+  stroke-width: 2;
+  marker-end: url('#evidence-arrow');
+}
+
+#evidence-arrow path {
+  fill: var(--muted);
+}
+
+.evidence-node {
+  cursor: pointer;
+}
+
+.evidence-node circle {
+  fill: var(--surface-raised);
+  stroke: var(--sky);
+  stroke-width: 4;
+  transition:
+    filter 150ms ease,
+    stroke-width 150ms ease;
+}
+
+.evidence-node text {
+  fill: var(--text);
+  font-family: var(--display-font);
+  font-size: 13px;
+  font-weight: 740;
+  paint-order: stroke;
+  stroke: var(--surface-soft);
+  stroke-linejoin: round;
+  stroke-width: 4px;
+}
+
+.evidence-node:focus {
+  outline: none;
+}
+
+.evidence-node:focus circle,
+.evidence-node.is-selected circle {
+  filter: drop-shadow(0 0 9px color-mix(in srgb, var(--focus) 70%, transparent));
+  stroke: var(--focus);
+  stroke-width: 6;
+}
+
+.evidence-node-subject circle,
+.legend-dot.evidence-node-subject {
+  fill: var(--coral);
+  stroke: var(--paper);
+}
+
+.evidence-node-record circle,
+.legend-dot.evidence-node-record {
+  fill: var(--accent);
+  stroke: var(--ink);
+}
+
+.evidence-node-target circle,
+.legend-dot.evidence-node-target {
+  fill: var(--sky);
+  stroke: var(--ink);
+}
+
+.evidence-node-resolver circle,
+.legend-dot.evidence-node-resolver {
+  fill: var(--violet);
+  stroke: var(--paper);
+}
+
+.evidence-node-authority circle,
+.legend-dot.evidence-node-authority {
+  fill: var(--warm);
+  stroke: var(--ink);
+}
+
+.evidence-node-uncertainty circle,
+.legend-dot.evidence-node-uncertainty {
+  fill: var(--surface);
+  stroke: var(--coral);
+  stroke-dasharray: 4 3;
+}
+
+.graph-legend {
+  display: flex;
+  flex-wrap: wrap;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  gap: 0.55rem 1rem;
+}
+
+.graph-legend li {
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 700;
+  text-transform: capitalize;
+  gap: 0.4rem;
+}
+
+.legend-dot {
+  width: 0.8rem;
+  height: 0.8rem;
+  border: 2px solid var(--line);
+  border-radius: 50%;
+}
+
+.graph-selection {
+  padding: clamp(1rem, 3vw, 1.5rem);
+  border: 2px solid var(--line);
+  border-radius: 1.1rem 1.1rem 0.35rem;
+  background: var(--surface);
+}
+
+.graph-selection h3,
+.graph-selection p {
+  overflow-wrap: anywhere;
+}
+
+.graph-selection h3 {
+  margin: 0.15rem 0 0.5rem;
+}
+
+.graph-data-fallback > summary {
+  cursor: pointer;
+  color: var(--accent-strong);
+  font-weight: 750;
+}
+
+@media (max-width: 640px) {
+  .graph-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .evidence-graph {
+    min-height: 430px;
+  }
+
+  .evidence-node text {
+    font-size: 20px;
+    stroke-width: 6px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .evidence-node circle {
+    transition: none;
+  }
+}
+
 .theme-toggle-symbol {
   width: 0.82rem;
   height: 0.82rem;
@@ -925,6 +1126,17 @@ footer a:hover {
 .field-group {
   display: grid;
   gap: 0.5rem;
+}
+
+.field-wide {
+  grid-column: 1 / -1;
+}
+
+.field-label {
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 760;
+  letter-spacing: 0.03em;
 }
 
 .field-group label,
@@ -1512,6 +1724,48 @@ summary {
   font-size: 1rem;
 }
 
+.comparison-list {
+  display: grid;
+  border-top: 1px solid var(--line);
+}
+
+.comparison-list > details {
+  padding: 0.7rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.comparison-list > details > summary {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--text);
+  cursor: pointer;
+  font-weight: 780;
+  list-style: none;
+  gap: 0.75rem;
+}
+
+.comparison-list > details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.comparison-list > details > summary::before {
+  color: var(--accent-strong);
+  content: '＋';
+}
+
+.comparison-list > details[open] > summary::before {
+  content: '−';
+}
+
+.comparison-list > details > summary .status-badge {
+  margin-left: auto;
+}
+
+.comparison-list > details > :not(summary) {
+  margin-top: 0.75rem;
+}
+
 .step-label {
   margin: 0;
   color: var(--warm);
@@ -1660,6 +1914,126 @@ summary {
 .mode-switch button[aria-pressed='true'] {
   background: var(--accent);
   color: var(--accent-contrast);
+}
+
+.mode-tabs {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  padding: 0.3rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  box-shadow: 3px 3px 0 var(--bg-deep);
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.mode-tabs button {
+  min-height: 44px;
+  padding: 0.62rem 0.95rem;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-weight: 760;
+}
+
+.mode-tabs button[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.file-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0.58rem 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 0.42rem;
+  background: var(--surface-raised);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 760;
+}
+
+.file-button:hover {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+.result-grid {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 28rem), 1fr));
+  gap: 1rem;
+}
+
+.result-panel > pre {
+  max-height: 34rem;
+  margin: 0;
+  padding: 1rem;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 0.45rem;
+  background: var(--bg);
+  line-height: 1.55;
+}
+
+.nested-result {
+  padding: 1rem;
+  border: 1px dashed var(--line);
+  border-radius: 0.5rem;
+  background: var(--bg);
+}
+
+.nested-result > :first-child {
+  margin-top: 0;
+}
+
+.rollout-timeline {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  gap: 0;
+}
+
+.rollout-timeline li {
+  position: relative;
+  display: grid;
+  padding: 0 0 1.5rem 2.2rem;
+  grid-template-columns: 1fr;
+}
+
+.rollout-timeline li:not(:last-child)::before {
+  position: absolute;
+  top: 0.8rem;
+  bottom: -0.2rem;
+  left: 0.48rem;
+  width: 3px;
+  border-radius: 999px;
+  background: linear-gradient(var(--coral), var(--warm), var(--accent));
+  content: '';
+}
+
+.timeline-marker {
+  position: absolute;
+  top: 0.35rem;
+  left: 0;
+  width: 1.05rem;
+  height: 1.05rem;
+  border: 3px solid var(--surface);
+  border-radius: 50%;
+  background: var(--coral);
+  box-shadow: 0 0 0 2px var(--coral);
+}
+
+.rollout-timeline h3,
+.rollout-timeline p {
+  margin-top: 0;
 }
 
 .metric-strip {
@@ -2852,8 +3226,18 @@ details {
     width: 100%;
   }
 
+  .mode-tabs {
+    width: 100%;
+    border-radius: 0.7rem;
+  }
+
   .mode-switch button {
     flex: 1 1 9rem;
+  }
+
+  .mode-tabs button {
+    flex: 1 1 9rem;
+    border-radius: 0.5rem;
   }
 
   .record-picker,
@@ -3041,7 +3425,8 @@ details {
 
   .primary-nav a[aria-current='page'],
   .check-control:has(input:checked),
-  .mode-switch button[aria-pressed='true'] {
+  .mode-switch button[aria-pressed='true'],
+  .mode-tabs button[aria-pressed='true'] {
     background: Highlight;
     color: HighlightText;
   }
@@ -3057,6 +3442,7 @@ details {
   .comparison-grid > article,
   .method-note,
   .mode-switch,
+  .mode-tabs,
   .metric-strip,
   .about-boundaries article,
   .capability-list div {

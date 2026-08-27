@@ -24,10 +24,13 @@ const KNOWN_TYPES = new Set([
   'A',
   'AAAA',
   'CAA',
+  'CDNSKEY',
+  'CDS',
   'CNAME',
   'DNSKEY',
   'DNAME',
   'DS',
+  'DSYNC',
   'HTTPS',
   'MX',
   'NAPTR',
@@ -38,6 +41,7 @@ const KNOWN_TYPES = new Set([
   'RRSIG',
   'SOA',
   'SRV',
+  'CSYNC',
   'SSHFP',
   'SVCB',
   'TLSA',
@@ -567,16 +571,20 @@ export function parseZoneSnippet(source: string, options: ZoneParseOptions = {})
       continue;
     }
     const type = typeToken.value.toUpperCase();
-    if (!KNOWN_TYPES.has(type))
-      budget.addDiagnostic(
-        diagnostic(
-          'type-unsupported',
-          'warning',
-          `Record type ${type} is outside the supported linting subset.`,
-          typeToken.line,
-          typeToken.column,
-        ),
-      );
+    if (!KNOWN_TYPES.has(type)) {
+      const generic = /^TYPE(\d{1,5})$/u.exec(type);
+      const code = Number(generic?.[1]);
+      if (generic === null || !Number.isInteger(code) || code < 1 || code > 65_534)
+        budget.addDiagnostic(
+          diagnostic(
+            'type-unsupported',
+            'warning',
+            `Record type ${type} is outside the supported linting subset.`,
+            typeToken.line,
+            typeToken.column,
+          ),
+        );
+    }
     index += 1;
     if (records.length >= ZONE_ANALYSIS_LIMITS.records) {
       budget.exceed('records', ZONE_ANALYSIS_LIMITS.records, first.line, first.column);

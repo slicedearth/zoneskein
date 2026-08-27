@@ -44,9 +44,13 @@ const SUPPORTED_QUERY_TYPES = new Set([
   48, // DNSKEY
   50, // NSEC3
   52, // TLSA
+  59, // CDS
+  60, // CDNSKEY
+  62, // CSYNC
   63, // ZONEMD
   64, // SVCB
   65, // HTTPS
+  66, // DSYNC
   257, // CAA
 ]);
 const EXPECTED_EDNS_CLIENT_SUBNET = new Uint8Array([0, 8, 0, 4, 0, 1, 0, 0]);

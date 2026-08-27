@@ -5,9 +5,14 @@ import { expect, test, type Page, type Route } from '@playwright/test';
 const STATIC_ROUTES = [
   '/',
   '/lookup/',
+  '/map/',
+  '/delegation/',
   '/dnssec/',
+  '/protocol/',
   '/spf/',
+  '/mail/',
   '/zone-lint/',
+  '/zone-exchange/',
   '/studio/',
   '/diff/',
   '/workspace/',
@@ -182,6 +187,39 @@ test('a populated lookup remains accessible and bounded across target widths', a
       navigationTargetHeights.every((height) => height >= 43.5),
       `primary navigation targets were too short at ${String(width)} CSS pixels`,
     ).toBe(true);
+  }
+});
+
+test('a populated evidence graph remains accessible and reflows at target widths', async ({
+  page,
+}) => {
+  await mockLongTxtAnswer(page);
+  await page.goto('/map/');
+  await page.getByLabel('DNS name').fill('example.com');
+  await page.getByRole('button', { name: 'Build evidence map' }).click();
+  await expect(page.getByText(/nodes and .* relationships mapped/u)).toBeVisible();
+
+  const graph = page.locator('svg.evidence-graph');
+  const firstNode = graph.getByRole('button').first();
+  await firstNode.focus();
+  await page.keyboard.press('Enter');
+  await expect(firstNode).toHaveAttribute('aria-pressed', 'true');
+
+  const results = await new AxeBuilder({ page })
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+    .analyze();
+  expect(results.violations, summariseViolations(results.violations)).toEqual([]);
+
+  for (const width of REFLOW_WIDTHS) {
+    await page.setViewportSize({ height: 900, width });
+    const dimensions = await page.evaluate(() => ({
+      clientWidth: document.documentElement.clientWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+    }));
+    expect(
+      dimensions.scrollWidth,
+      `populated evidence graph overflowed at ${String(width)} CSS pixels`,
+    ).toBeLessThanOrEqual(dimensions.clientWidth + 1);
   }
 });
 

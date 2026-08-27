@@ -34,7 +34,7 @@ step. Production dependencies and build tools are locked by `package-lock.json`.
 
 The build finishes by generating and verifying the exact corresponding-source
 archive, its manifest and checksum, then checking the static output allowlist,
-file and asset-size bounds, public-document copies, resolver/CSP alignment, SPA rewrite, the exactly one
+file and asset-size bounds, public-document copies, fixed connection/CSP alignment, SPA rewrite, the exactly one
 allowlisted Netlify Function source and its fixed route, upstream and rate-limit
 contract, and SHA-256 hashes of the entry assets. The function is deployed by
 Netlify rather than copied into `dist`; the static output remains exact and
@@ -92,17 +92,18 @@ commit has landed on `main`.
 3. Preserve the committed `netlify/functions` source directory and do not add another function or Edge Function.
 4. Deploy without application environment variables or secrets.
 5. Confirm `/SOURCE.md`, `/SOURCE_SHA256`, and `/zoneskein-corresponding-source.tar.gz` are reachable and that the checksum validates the archive.
-6. Open `/`, `/lookup/`, `/dnssec/`, `/spf/`, `/zone-lint/`, `/studio/`, `/diff/`, `/workspace/`, `/dmarc/`, `/dkim/`, `/caa/`, `/snapshots/`, and `/about/` directly.
+6. Open `/`, `/lookup/`, `/map/`, `/delegation/`, `/dnssec/`, `/protocol/`, `/spf/`, `/mail/`, `/zone-lint/`, `/zone-exchange/`, `/studio/`, `/diff/`, `/workspace/`, `/dmarc/`, `/dkim/`, `/caa/`, `/snapshots/`, and `/about/` directly.
 7. Refresh each route and confirm the application loads.
 8. Run manual direct checks against Google, Cloudflare, and Quad9 from a supported browser.
 9. Exercise automatic Quad9 fallback from a path that cannot complete the direct request, and confirm the result identifies **Quad9 (compatibility mode)**. Confirm a valid DNS wire POST to `/api/doh/quad9` succeeds while invalid methods, media types, query strings, oversized or malformed bodies, and unsupported question shapes are rejected. Confirm responses declare `Cache-Control: no-store`.
 10. Inspect the deploy log's post-processing stage and confirm Netlify accepted the code-based rate-limit rule. Then confirm the deployed rule aggregates by source IP address and site domain, permits no more than 120 requests in 60 seconds, and does not expose a caller-selected upstream. Netlify does not necessarily fail a deploy when a code-based rule is invalid, so a successful build alone is insufficient.
+11. With an authorised test name, consent to one Delegation Lab run and confirm the browser contacts only `https://api.globalping.io/v1/measurements`, requests no more than the selected three probes, and does not send that request through a ZoneSkein function. Confirm the result remains labelled as a bounded point-in-time sample.
 
 ## Security headers
 
 The Netlify `_headers` file sets:
 
-- a Content Security Policy allowing self-hosted assets, including the same-origin relay, and only the three direct DNS-over-HTTPS origins;
+- a Content Security Policy allowing self-hosted assets, including the same-origin relay, the three direct DNS-over-HTTPS origins, and the one fixed external measurement API origin;
 - `frame-ancestors 'none'` and `X-Frame-Options: DENY`;
 - `Referrer-Policy: no-referrer`;
 - a two-year `Strict-Transport-Security` policy covering the deployment hostname and its subdomains;
@@ -133,7 +134,7 @@ After configuration, verify both hostnames, the apex-to-`www` redirect, `/robots
 
 ## Costs and external services
 
-ZoneSkein requires no paid resolver API, database, scheduled job, authentication provider, application secret, or environment variable. The Quad9 compatibility relay does consume Netlify Function invocations and bandwidth. Netlify plan availability, function limits, rate-limiting availability, quotas, and pricing are external and can change; review the current plan before deployment.
+ZoneSkein requires no database, scheduled job, authentication provider, application secret, or environment variable. The Quad9 compatibility relay consumes Netlify Function invocations and bandwidth. Delegation Lab uses Globalping’s unauthenticated API from the browser and is subject to that service’s terms, availability, free limits, probe capacity, blocking and pricing changes; the local interface further limits use to six runs per rolling hour and three probes per run. Netlify and Globalping plan availability, limits, quotas, and pricing are external and can change, so review their current terms before deployment.
 
 ## Rollback
 

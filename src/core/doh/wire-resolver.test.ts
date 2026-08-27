@@ -74,7 +74,9 @@ function testDependencies(fetchMock: typeof fetch) {
 
 describe('wire DoH resolver', () => {
   it('uses fixed browser-compatible GET wire requests and TTL cache', async () => {
-    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(answerResponse());
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockImplementation(() => Promise.resolve(answerResponse()));
     const resolver = new WireDnsResolver(resolverById('google'), testDependencies(fetchMock));
     const options = { checkingDisabled: false, dnssecOk: true };
 
@@ -91,6 +93,24 @@ describe('wire DoH resolver', () => {
     expect(init).toEqual(
       expect.objectContaining({ credentials: 'omit', method: 'GET', redirect: 'error' }),
     );
+  });
+
+  it('keeps recursive and recursion-disabled questions in separate cache entries', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockImplementation(() => Promise.resolve(answerResponse()));
+    const resolver = new WireDnsResolver(resolverById('google'), testDependencies(fetchMock));
+    const options = { checkingDisabled: false, dnssecOk: true };
+
+    await expect(resolver.query(question(), options)).resolves.toMatchObject({ cache: 'miss' });
+    await expect(
+      resolver.query(question(), { ...options, recursionDesired: false }),
+    ).resolves.toMatchObject({ cache: 'miss' });
+    await expect(resolver.query(question(), options)).resolves.toMatchObject({ cache: 'hit' });
+    await expect(
+      resolver.query(question(), { ...options, recursionDesired: false }),
+    ).resolves.toMatchObject({ cache: 'hit' });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('uses a same-origin POST for the explicit Quad9 compatibility relay', async () => {

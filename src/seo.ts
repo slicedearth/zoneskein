@@ -39,6 +39,13 @@ export const SEO_ROUTES = [
   },
   {
     description:
+      'Trace DNS delegations from bounded external vantage points, check intended authorities, and model DNSSEC rollover stages.',
+    path: 'delegation',
+    sitemap: true,
+    title: 'Delegation Lab — ZoneSkein',
+  },
+  {
+    description:
       'Inspect DKIM selector records or verify bounded RSA-SHA256 and Ed25519-SHA256 signatures locally in the browser.',
     path: 'dkim',
     sitemap: true,
@@ -66,6 +73,20 @@ export const SEO_ROUTES = [
     title: 'DNS record lookup — ZoneSkein',
   },
   {
+    description:
+      'Explore a bounded, accessible D3 map of DNS records, dependencies, resolver provenance, TTLs, and uncertainty.',
+    path: 'map',
+    sitemap: true,
+    title: 'Skein Map — ZoneSkein',
+  },
+  {
+    description:
+      'Open DMARC and TLS reports locally, review MTA-STS and TLS-RPT, match TLSA certificates, and inspect BIMI and ARC inputs.',
+    path: 'mail',
+    sitemap: true,
+    title: 'Mail Lab — ZoneSkein',
+  },
+  {
     description: 'Read the GNU AGPL-3.0-only software licence that applies to ZoneSkein.',
     path: 'licence',
     sitemap: true,
@@ -77,6 +98,13 @@ export const SEO_ROUTES = [
     path: 'privacy',
     sitemap: true,
     title: 'Privacy — ZoneSkein',
+  },
+  {
+    description:
+      'Query safe numeric DNS data types, decode ECHConfigList values, inspect resolver self-publication, and retain unknown RDATA.',
+    path: 'protocol',
+    sitemap: true,
+    title: 'Protocol Lab — ZoneSkein',
   },
   {
     description:
@@ -146,6 +174,13 @@ export const SEO_ROUTES = [
     path: 'workspace',
     sitemap: true,
     title: 'Change Workspace — ZoneSkein',
+  },
+  {
+    description:
+      'Expand bounded zone-file bundles, preview Domain Connect templates, and draft portable DNS configuration locally.',
+    path: 'zone-exchange',
+    sitemap: true,
+    title: 'Zone Exchange — ZoneSkein',
   },
   {
     description:

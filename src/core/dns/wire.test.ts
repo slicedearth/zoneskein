@@ -83,6 +83,17 @@ describe('DNS wire messages', () => {
     expectQueryPadding(bytes, opt);
   });
 
+  it('encodes an authoritative-style numeric question with recursion disabled', () => {
+    const bytes = encodeDnsQuery(
+      { name: name('resolver.arpa'), type: 'TYPE261' },
+      { checkingDisabled: false, dnssecOk: false, recursionDesired: false },
+    );
+    const packet = decode(bytes);
+
+    expect((bytes[2] ?? 0) & 0x01).toBe(0);
+    expect(packet.questions?.[0]?.type).toBe('UNKNOWN_261');
+  });
+
   it('pads different valid query lengths to 128-octet blocks', () => {
     const questions = [
       { name: name('a.test'), type: 'A' as const },

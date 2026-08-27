@@ -5,6 +5,7 @@ import { SnapshotButton } from '../components/SnapshotButton';
 import { StatusBadge } from '../components/StatusBadge';
 import { ToolIntro } from '../components/ToolIntro';
 import { validateDnsName } from '../core/dns/names';
+import { useDomainThread } from '../core/domain-thread';
 import { parseRecordView } from '../core/dns/records';
 import type { DnsQuestion, ValidatedDnsName } from '../core/dns/types';
 import {
@@ -475,7 +476,8 @@ function StepDetails({ step }: { readonly step: DnssecChainStep }) {
 }
 
 export function DnssecPage() {
-  const [input, setInput] = useState('');
+  const domainThread = useDomainThread();
+  const [input, setInput] = useState(() => domainThread.domain?.display ?? '');
   const [resolverId, setResolverId] = useState<SelectableResolverId>('google');
   const [rrsetType, setRrsetType] = useState<'chain' | DnssecApplicationType>('chain');
   const [state, setState] = useState<'idle' | 'loading' | 'complete' | 'cancelled'>('idle');
@@ -503,6 +505,7 @@ export function DnssecPage() {
       setError(parsed.error.message);
       return;
     }
+    domainThread.setDomain(parsed.value);
     activeRun.current?.cancel();
     const run = new DnsQueryRun();
     activeRun.current = run;

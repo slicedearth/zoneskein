@@ -80,9 +80,14 @@ async function mockDns(page: Page): Promise<void> {
 const STATIC_ROUTES = [
   '/',
   '/lookup/',
+  '/map/',
+  '/delegation/',
   '/dnssec/',
+  '/protocol/',
   '/spf/',
+  '/mail/',
   '/zone-lint/',
+  '/zone-exchange/',
   '/studio/',
   '/diff/',
   '/workspace/',
@@ -135,6 +140,83 @@ test('lookup decodes a mocked DNS wire answer', async ({ page }) => {
   await expect(page.getByText('192.0.2.25', { exact: true })).toBeVisible();
   await page.getByText('Protocol details', { exact: true }).click();
   await expect(page.getByText('56 bytes')).toBeVisible();
+});
+
+test('evidence map renders an explorable graph from bounded DNS observations', async ({
+  page,
+}) => {
+  await mockDns(page);
+  await page.goto('/map/');
+  await page.getByLabel('DNS name').fill('example.com');
+  await page.getByRole('button', { name: 'Build evidence map' }).click();
+
+  await expect(page.getByText(/nodes and .* relationships mapped/u)).toBeVisible();
+  const graph = page.locator('svg.evidence-graph');
+  await expect(graph).toBeVisible();
+  const addressNode = graph.getByRole('button', { name: /record: A .*192\.0\.2\.25/u });
+  await addressNode.focus();
+  await page.keyboard.press('Enter');
+  await expect(addressNode).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('heading', { name: /A .*192\.0\.2\.25/u })).toBeVisible();
+  await page.getByRole('button', { name: 'Reset view' }).click();
+  await page.getByText(/Accessible evidence tables/u).click();
+  await expect(page.getByRole('region', { name: 'Evidence graph data' })).toBeVisible();
+});
+
+test('protocol lab decodes an ECH configuration entirely locally', async ({ page }) => {
+  await page.goto('/protocol/');
+  await page.getByRole('button', { name: 'ECH decoder' }).click();
+  await page
+    .getByLabel('ECHConfigList values')
+    .fill('ACL+DQAeACAAAqq7AAQAAQABQA5wdWJsaWMuZXhhbXBsZQAA');
+  await page.getByRole('button', { name: 'Decode ECH' }).click();
+
+  await expect(page.getByRole('heading', { name: 'ECH configurations' })).toBeVisible();
+  await expect(page.getByText('public.example', { exact: true })).toBeVisible();
+  await expect(page.getByText('KDF 1 / AEAD 1', { exact: true })).toBeVisible();
+});
+
+test('mail lab checks transport policy entirely locally', async ({ page }) => {
+  await page.goto('/mail/');
+  await page.getByRole('button', { name: 'Transport policy' }).click();
+  await page
+    .getByLabel('MTA-STS policy')
+    .fill('version: STSv1\nmode: enforce\nmx: mail.example.com\nmax_age: 604800');
+  await page.getByLabel('Published MX hosts').fill('mail.example.com');
+  await page.getByLabel('TLS-RPT TXT value').fill('v=TLSRPTv1; rua=mailto:reports@example.com');
+  await page.getByRole('button', { name: 'Check transport policy' }).click();
+
+  await expect(page.getByRole('heading', { name: 'Mail transport policy' })).toBeVisible();
+  const tlsPanel = page.locator('article.result-panel').filter({
+    has: page.getByRole('heading', { name: 'TLS-RPT' }),
+  });
+  await expect(tlsPanel.locator('.status-badge')).toContainText('syntax valid');
+  await expect(page.locator('.diagnostic-list .status-badge')).toContainText('covered');
+});
+
+test('delegation lab models a DNSSEC lifecycle without a network request', async ({ page }) => {
+  await page.goto('/delegation/');
+  await page.getByRole('button', { name: 'DNSSEC lifecycle' }).click();
+  await page
+    .getByLabel('DNSSEC and delegation records')
+    .fill('$ORIGIN example.com.\n@ 3600 IN DNSKEY 257 3 13 AQIDBAUGBwg=');
+  await page.getByRole('button', { name: 'Model lifecycle' }).click();
+
+  await expect(page.getByRole('heading', { name: 'DNSSEC lifecycle' })).toBeVisible();
+  await expect(page.getByText('KSK', { exact: true })).toBeVisible();
+  await page.getByText('Derived SHA-256 and SHA-384 DS candidates').click();
+  await expect(page.getByRole('region', { name: 'Derived DS candidates' })).toBeVisible();
+});
+
+test('zone exchange safely previews a local service template', async ({ page }) => {
+  await page.goto('/zone-exchange/');
+  await page.getByRole('button', { name: 'Service template' }).click();
+  await page.getByRole('button', { name: 'Load safe example' }).click();
+  await page.getByRole('button', { name: 'Preview records' }).click();
+
+  await expect(page.getByRole('heading', { name: 'Instantiated record plan' })).toBeVisible();
+  await expect(page.getByText('service.example / website', { exact: true })).toBeVisible();
+  await expect(page.locator('pre.record-value')).toContainText('192.0.2.10');
 });
 
 test('a DNS run can be cancelled while the request is pending', async ({ page }) => {

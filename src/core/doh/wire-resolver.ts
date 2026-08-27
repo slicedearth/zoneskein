@@ -31,6 +31,7 @@ function cacheKey(
     question.type,
     options.checkingDisabled ? 'cd1' : 'cd0',
     options.dnssecOk ? 'do1' : 'do0',
+    options.recursionDesired === false ? 'rd0' : 'rd1',
   ].join('|');
 }
 

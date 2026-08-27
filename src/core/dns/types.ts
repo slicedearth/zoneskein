@@ -18,9 +18,15 @@ export const DNS_RECORD_TYPES = [
   'ZONEMD',
   'HTTPS',
   'SVCB',
+  'CDS',
+  'CDNSKEY',
+  'CSYNC',
+  'DSYNC',
 ] as const;
 
-export type DnsRecordType = (typeof DNS_RECORD_TYPES)[number];
+export type KnownDnsRecordType = (typeof DNS_RECORD_TYPES)[number];
+export type GenericDnsRecordType = `TYPE${number}`;
+export type DnsRecordType = KnownDnsRecordType | GenericDnsRecordType;
 export type DnsSection = 'answer' | 'authority' | 'additional';
 
 export interface ValidatedDnsName {
@@ -39,6 +45,7 @@ export interface DnsQuestion {
 export interface DnsQueryOptions {
   readonly checkingDisabled: boolean;
   readonly dnssecOk: boolean;
+  readonly recursionDesired?: boolean;
   readonly signal?: AbortSignal;
 }
 
