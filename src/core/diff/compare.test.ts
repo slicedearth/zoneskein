@@ -125,6 +125,17 @@ describe('semantic DNS change comparison', () => {
     expect(report.changes[0]?.owner).toBe('a\\046b.example.com.');
   });
 
+  it('does not reinterpret empty labels in malformed relative targets', () => {
+    const report = compare(
+      'www 300 IN CNAME missing..target',
+      'www 300 IN CNAME missing.target',
+    );
+
+    expect(report.changes).toEqual([
+      expect.objectContaining({ category: 'value-changed', type: 'CNAME' }),
+    ]);
+  });
+
   it('returns no partial change set when either parsed input is incomplete', () => {
     const oversized = Array.from(
       { length: ZONE_ANALYSIS_LIMITS.records + 1 },

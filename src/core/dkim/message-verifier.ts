@@ -393,11 +393,82 @@ export function canonicaliseDkimHeader(
   return `${header.name.toLowerCase()}:${value}\r\n`;
 }
 
+function skipDkimFws(value: string, start: number, end: number): number {
+  let index = start;
+  while (index < end) {
+    const character = value[index];
+    if (character === ' ' || character === '\t') {
+      index += 1;
+      continue;
+    }
+    if (
+      character === '\r' &&
+      value[index + 1] === '\n' &&
+      (value[index + 2] === ' ' || value[index + 2] === '\t')
+    ) {
+      index += 3;
+      continue;
+    }
+    break;
+  }
+  return index;
+}
+
+function signatureValueEnd(value: string, start: number, end: number): number {
+  let index = start;
+  while (index < end) {
+    const codeUnit = value.charCodeAt(index);
+    const base64Character =
+      (codeUnit >= 0x41 && codeUnit <= 0x5a) ||
+      (codeUnit >= 0x61 && codeUnit <= 0x7a) ||
+      (codeUnit >= 0x30 && codeUnit <= 0x39) ||
+      codeUnit === 0x2b ||
+      codeUnit === 0x2f ||
+      codeUnit === 0x3d;
+    if (base64Character || value[index] === ' ' || value[index] === '\t') {
+      index += 1;
+      continue;
+    }
+    if (
+      value[index] === '\r' &&
+      value[index + 1] === '\n' &&
+      (value[index + 2] === ' ' || value[index + 2] === '\t')
+    ) {
+      index += 3;
+      continue;
+    }
+    break;
+  }
+  return index;
+}
+
+function signatureValueRange(
+  value: string,
+): { readonly end: number; readonly start: number } | null {
+  let segmentStart = 0;
+  while (segmentStart <= value.length) {
+    const separator = value.indexOf(';', segmentStart);
+    const segmentEnd = separator < 0 ? value.length : separator;
+    let index = skipDkimFws(value, segmentStart, segmentEnd);
+    if (value[index] === 'b') {
+      index = skipDkimFws(value, index + 1, segmentEnd);
+      if (value[index] === '=') {
+        const start = index + 1;
+        return { end: signatureValueEnd(value, start, segmentEnd), start };
+      }
+    }
+    if (separator < 0) break;
+    segmentStart = separator + 1;
+  }
+  return null;
+}
+
 function withoutSignatureValue(header: DkimMessageHeader): DkimMessageHeader {
-  const value = header.value.replace(
-    /((?:^|;)(?:[ \t]|\r\n[ \t]+)*b(?:[ \t]|\r\n[ \t]+)*=)(?:[A-Za-z0-9+/=]|[ \t]|\r\n[ \t]+)*/u,
-    '$1',
-  );
+  const range = signatureValueRange(header.value);
+  const value =
+    range === null
+      ? header.value
+      : `${header.value.slice(0, range.start)}${header.value.slice(range.end)}`;
   const colon = header.raw.indexOf(':');
   const raw = `${header.raw.slice(0, colon + 1)}${value}`;
   return { name: header.name, raw, value };

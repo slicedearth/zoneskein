@@ -1,4 +1,5 @@
 [
+  ".github/codeql-config.yml",
   ".github/dependabot.yml",
   ".github/workflows/browser-stress.yml",
   ".github/workflows/codeql.yml",
@@ -50,6 +51,7 @@
   "scripts/generate-favicon.ts",
   "scripts/icann-root-ca.pem",
   "scripts/live-smoke.ts",
+  "scripts/run-codeql.ts",
   "scripts/source-archive.ts",
   "scripts/verify-build.ts",
   "src/App.test.tsx",
@@ -234,6 +236,7 @@
   "src/test/fixtures/dns/responses-v1.json",
   "src/test/setup.ts",
   "src/vite-env.d.ts",
+  "tests/build/local-codeql.test.ts",
   "tests/build/source-archive.test.ts",
   "tests/e2e/accessibility.spec.ts",
   "tests/e2e/app.spec.ts",
