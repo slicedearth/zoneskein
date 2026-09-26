@@ -33,7 +33,7 @@ ZoneSkein’s original source is AGPL-3.0-only. The packages below are separate 
 | `idb`                                             |           8.0.3 | ISC          | <https://github.com/jakearchibald/idb>                                                         | Explicitly enabled IndexedDB snapshots     |
 | `html-entities`                                   |           2.6.0 | MIT          | <https://github.com/mdevils/html-entities>                                                     | Transitive Markdown entity codec           |
 | `ipaddr.js`                                       |           2.5.0 | MIT          | <https://github.com/whitequark/ipaddr.js>                                                      | IPv4 and IPv6 parsing and validation       |
-| `marked`                                          | 17.0.6, 18.0.12 | MIT          | <https://github.com/markedjs/marked>                                                           | Document rendering and export safety tests |
+| `marked`                                          | 17.0.6, 18.0.13 | MIT          | <https://github.com/markedjs/marked>                                                           | Document rendering and export safety tests |
 | `marked-react`                                    |           4.0.0 | MIT          | <https://github.com/sibiraj-s/marked-react>                                                    | Semantic public-document rendering         |
 | `pvtsutils`                                       |           1.3.6 | MIT          | <https://github.com/PeculiarVentures/pvtsutils>                                                | Transitive ASN.1 byte utilities            |
 | `pvutils`                                         |           1.2.0 | MIT          | <https://github.com/PeculiarVentures/pvutils>                                                  | Transitive ASN.1 utilities                 |
@@ -44,7 +44,7 @@ ZoneSkein’s original source is AGPL-3.0-only. The packages below are separate 
 | `tslib`                                           |           2.8.1 | 0BSD         | <https://github.com/microsoft/tslib>                                                           | Transitive TypeScript runtime helpers      |
 | `vite`                                            |           8.3.0 | MIT          | <https://github.com/vitejs/vite>                                                               | Generated module-preload helper            |
 | `xmlchars`                                        |           2.2.0 | MIT          | <https://github.com/lddubeau/xmlchars>                                                         | Transitive XML character tables            |
-| `rolldown`                                        |           1.2.4 | MIT          | <https://github.com/rolldown/rolldown>                                                         | Generated module runtime helpers           |
+| `rolldown`                                        |           1.2.6 | MIT          | <https://github.com/rolldown/rolldown>                                                         | Generated module runtime helpers           |
 
 ## Licence texts
 
