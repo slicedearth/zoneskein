@@ -2,7 +2,8 @@ import { encode } from '@dnsquery/dns-packet';
 import { describe, expect, it, vi } from 'vitest';
 
 import { validateDnsName } from '../dns/names';
-import { DnsQueryError } from '../dns/types';
+import { DnsQueryError, type DnsRecordType } from '../dns/types';
+import { parseGenericRecordType } from '../dns/record-types';
 import { DnsMemoryCache } from './cache';
 import { resolverById } from './resolvers';
 import { Semaphore } from './semaphore';
@@ -73,8 +74,53 @@ function testDependencies(fetchMock: typeof fetch) {
 }
 
 describe('wire DoH resolver', () => {
+  it.each(['1', 'TYPE1', 'A', '66', 'TYPE66', 'DSYNC', 'TYPE65400'])(
+    'matches %s by its actual wire type code',
+    async (input) => {
+      const generic = parseGenericRecordType(input);
+      const type = generic.ok ? generic.type : (input as DnsRecordType);
+      const code = generic.ok ? generic.typeCode : input === 'A' ? 1 : 66;
+      const body = encode({
+        type: 'response',
+        id: 0,
+        flags: 0x8180,
+        questions: [{ name: 'example.com.', type: 'A', class: 'IN' }],
+      });
+      body[body.length - 4] = code >>> 8;
+      body[body.length - 3] = code & 0xff;
+      const mock = vi.fn<typeof fetch>().mockImplementation(() =>
+        Promise.resolve(
+          new Response(Uint8Array.from(body).buffer, {
+            headers: { 'Content-Type': 'application/dns-message' },
+          }),
+        ),
+      );
+      const resolver = new WireDnsResolver(resolverById('google'), testDependencies(mock));
+      const result = await resolver.query(
+        { ...question(), type },
+        { checkingDisabled: false, dnssecOk: false },
+      );
+      expect(result.message.questions[0]?.type).toBe(
+        code === 1 ? 'A' : code === 66 ? 'DSYNC' : 'TYPE65400',
+      );
+      expect(mock).toHaveBeenCalledOnce();
+    },
+  );
+
+  it('still rejects a genuine numeric question mismatch', async () => {
+    const mock = vi.fn<typeof fetch>().mockResolvedValue(answerResponse());
+    const resolver = new WireDnsResolver(resolverById('google'), testDependencies(mock));
+    await expect(
+      resolver.query(
+        { ...question(), type: 'TYPE66' },
+        { checkingDisabled: false, dnssecOk: false },
+      ),
+    ).rejects.toMatchObject({ code: 'invalid-response' });
+  });
   it('uses fixed browser-compatible GET wire requests and TTL cache', async () => {
-    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(answerResponse());
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockImplementation(() => Promise.resolve(answerResponse()));
     const resolver = new WireDnsResolver(resolverById('google'), testDependencies(fetchMock));
     const options = { checkingDisabled: false, dnssecOk: true };
 
@@ -91,6 +137,24 @@ describe('wire DoH resolver', () => {
     expect(init).toEqual(
       expect.objectContaining({ credentials: 'omit', method: 'GET', redirect: 'error' }),
     );
+  });
+
+  it('keeps recursive and recursion-disabled questions in separate cache entries', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockImplementation(() => Promise.resolve(answerResponse()));
+    const resolver = new WireDnsResolver(resolverById('google'), testDependencies(fetchMock));
+    const options = { checkingDisabled: false, dnssecOk: true };
+
+    await expect(resolver.query(question(), options)).resolves.toMatchObject({ cache: 'miss' });
+    await expect(
+      resolver.query(question(), { ...options, recursionDesired: false }),
+    ).resolves.toMatchObject({ cache: 'miss' });
+    await expect(resolver.query(question(), options)).resolves.toMatchObject({ cache: 'hit' });
+    await expect(
+      resolver.query(question(), { ...options, recursionDesired: false }),
+    ).resolves.toMatchObject({ cache: 'hit' });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('uses a same-origin POST for the explicit Quad9 compatibility relay', async () => {

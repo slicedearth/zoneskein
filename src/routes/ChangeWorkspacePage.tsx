@@ -20,6 +20,13 @@ import {
   type DecodedChangeWorkspace,
 } from '../core/project';
 import { escapeTechnicalText } from '../core/technical-text';
+import {
+  WORKSPACE_EXAMPLES,
+  workspaceExampleFile,
+  type WorkspaceExampleId,
+} from '../core/project/examples';
+import { workspaceValidationReport } from '../core/project/report';
+import { RequestLifetime } from '../core/request-lifetime';
 
 export interface ChangeWorkspaceChangeLabInput {
   readonly current: string;
@@ -212,6 +219,9 @@ export function ChangeWorkspacePage({
   const [error, setError] = useState(initial.error);
   const [status, setStatus] = useState('');
   const [importBusy, setImportBusy] = useState(false);
+  const [pendingImport, setPendingImport] = useState<DecodedChangeWorkspace | null>(null);
+  const [exampleId, setExampleId] = useState<WorkspaceExampleId>('origins');
+  const [recomputedInSession, setRecomputedInSession] = useState(false);
   const [quarantined, setQuarantined] = useState<DecodedChangeWorkspace | null>(null);
   const [mismatchAcknowledged, setMismatchAcknowledged] = useState(false);
   const [integrity, setIntegrity] = useState<ChangeWorkspaceIntegrityProvenance>(() =>
@@ -219,29 +229,48 @@ export function ChangeWorkspacePage({
       ? initialActiveWorkspace.integrity
       : { state: 'not-checked' },
   );
-  const importSequence = useRef(0);
+  const lifetime = useRef(new RequestLifetime());
   const objectUrls = useRef(new Set<string>());
+  const importInput = useRef<HTMLInputElement>(null);
+  const summaryHeading = useRef<HTMLHeadingElement>(null);
+  const nextFocus = useRef<'summary' | 'import' | null>(null);
 
-  useEffect(
-    () => () => {
-      for (const url of objectUrls.current) URL.revokeObjectURL(url);
-      objectUrls.current.clear();
-    },
-    [],
-  );
+  useEffect(() => {
+    if (nextFocus.current === 'summary') summaryHeading.current?.focus();
+    if (nextFocus.current === 'import') importInput.current?.focus();
+    nextFocus.current = null;
+  }, [workspace, importBusy, pendingImport, quarantined]);
+
+  useEffect(() => {
+    const requests = lifetime.current;
+    const urls = objectUrls.current;
+    requests.enter();
+    return () => {
+      requests.leave();
+      for (const url of urls) URL.revokeObjectURL(url);
+      urls.clear();
+    };
+  }, []);
+
+  function isCurrent(sequence: number): boolean {
+    return lifetime.current.isCurrent(sequence);
+  }
 
   function activateWorkspace(
     next: ChangeWorkspace,
     announcement: string,
     nextIntegrity: ChangeWorkspaceIntegrityProvenance = integrity,
   ) {
-    importSequence.current += 1;
+    if (!lifetime.current.active) return;
+    lifetime.current.invalidate();
     setImportBusy(false);
     setWorkspace(next);
+    setRecomputedInSession(false);
     setDraft(draftFrom(next));
     setError('');
     setStatus(announcement);
     setQuarantined(null);
+    setPendingImport(null);
     setMismatchAcknowledged(false);
     setIntegrity(nextIntegrity);
     onActiveWorkspaceChange?.({ integrity: nextIntegrity, workspace: next });
@@ -259,6 +288,57 @@ export function ChangeWorkspacePage({
 
   function updateDraft<Key extends keyof WorkspaceDraft>(key: Key, value: WorkspaceDraft[Key]) {
     setDraft((current) => (current === null ? current : { ...current, [key]: value }));
+  }
+
+  const hasUnappliedEdits =
+    workspace !== null &&
+    draft !== null &&
+    JSON.stringify(draft) !== JSON.stringify(draftFrom(workspace));
+
+  function cancelImport() {
+    lifetime.current.invalidate();
+    setImportBusy(false);
+    setPendingImport(null);
+    setQuarantined(null);
+    setMismatchAcknowledged(false);
+    setError('');
+    setStatus('Import cancelled. The active workspace and unapplied edits were retained.');
+  }
+
+  function acceptImport() {
+    if (pendingImport?.integrity.status !== 'match') return;
+    nextFocus.current = 'summary';
+    activateWorkspace(
+      pendingImport.workspace,
+      'Workspace imported after strict schema and digest validation. Stored analysis is supplied historical data until local reanalysis.',
+      { digest: pendingImport.integrity.digest, state: 'digest-match' },
+    );
+  }
+
+  async function loadExample() {
+    cancelImport();
+    const sequence = lifetime.current.capture();
+    setImportBusy(true);
+    try {
+      const file = await workspaceExampleFile(exampleId);
+      if (!isCurrent(sequence)) return;
+      const decoded = await decodeChangeWorkspace(new TextEncoder().encode(file));
+      if (!isCurrent(sequence)) return;
+      if (!decoded.ok) {
+        setError(codecMessage(decoded.error));
+        return;
+      }
+      if (decoded.value.integrity.status === 'mismatch') setQuarantined(decoded.value);
+      else setPendingImport(decoded.value);
+      setStatus(
+        'Synthetic example prepared locally. Review it before replacement; no resolver was contacted.',
+      );
+    } catch (cause) {
+      if (isCurrent(sequence))
+        setError(cause instanceof Error ? cause.message : 'Example could not be prepared.');
+    } finally {
+      if (isCurrent(sequence)) setImportBusy(false);
+    }
   }
 
   function applyEdits() {
@@ -290,6 +370,7 @@ export function ChangeWorkspacePage({
       ...(title === workspace.title ? {} : { title }),
     };
     if (Object.keys(patch).length === 0) {
+      setDraft(draftFrom(workspace));
       setError('');
       setStatus('No workspace edits were waiting to be applied.');
       return;
@@ -333,6 +414,7 @@ export function ChangeWorkspacePage({
         : 'Analysis remains partial. Review the stated incomplete reasons.',
       afterLocalMutation(integrity),
     );
+    setRecomputedInSession(true);
   }
 
   async function importFile(event: React.ChangeEvent<HTMLInputElement>) {
@@ -340,20 +422,23 @@ export function ChangeWorkspacePage({
     const file = input.files?.[0];
     input.value = '';
     if (file === undefined) return;
-    const sequence = importSequence.current + 1;
-    importSequence.current = sequence;
+    const sequence = lifetime.current.invalidate();
     setError('');
     setStatus('');
     setQuarantined(null);
     setMismatchAcknowledged(false);
+    setPendingImport(null);
+    setImportBusy(false);
     if (file.size > CHANGE_WORKSPACE_LIMITS.fileOctets) {
       setError(`Workspace file is too large. The limit is ${FILE_LIMIT_LABEL}.`);
       return;
     }
     setImportBusy(true);
     try {
-      const decoded = await decodeChangeWorkspace(new Uint8Array(await file.arrayBuffer()));
-      if (sequence !== importSequence.current) return;
+      const bytes = await file.arrayBuffer();
+      if (!isCurrent(sequence)) return;
+      const decoded = await decodeChangeWorkspace(new Uint8Array(bytes));
+      if (!isCurrent(sequence)) return;
       if (!decoded.ok) {
         setError(codecMessage(decoded.error));
         return;
@@ -365,24 +450,24 @@ export function ChangeWorkspacePage({
         );
         return;
       }
-      activateWorkspace(
-        decoded.value.workspace,
-        'Workspace imported after strict schema and digest validation. Stored analysis is supplied historical data until local reanalysis.',
-        { digest: decoded.value.integrity.digest, state: 'digest-match' },
+      setPendingImport(decoded.value);
+      setStatus(
+        'Import validated. Review and explicitly replace the active workspace, or cancel.',
       );
     } catch (cause) {
-      if (sequence === importSequence.current) {
+      if (isCurrent(sequence)) {
         setError(
           cause instanceof Error ? cause.message : 'The workspace file could not be read.',
         );
       }
     } finally {
-      if (sequence === importSequence.current) setImportBusy(false);
+      if (isCurrent(sequence)) setImportBusy(false);
     }
   }
 
   function acceptMismatch() {
     if (quarantined?.integrity.status !== 'mismatch' || !mismatchAcknowledged) return;
+    nextFocus.current = 'summary';
     activateWorkspace(
       quarantined.workspace,
       'Altered workspace accepted with a persistent warning.',
@@ -394,30 +479,44 @@ export function ChangeWorkspacePage({
     );
   }
 
-  async function exportWorkspace() {
+  async function exportWorkspace(report = false) {
     if (workspace === null) return;
-    const sequence = importSequence.current;
+    const sequence = lifetime.current.capture();
     setError('');
     const encoded = await encodeChangeWorkspace(workspace);
-    if (sequence !== importSequence.current) return;
+    if (!isCurrent(sequence)) return;
     if (!encoded.ok) {
       setError(codecMessage(encoded.error));
       return;
     }
     const url = URL.createObjectURL(
-      new Blob([encoded.value], { type: 'application/json;charset=utf-8' }),
+      new Blob(
+        [
+          report
+            ? workspaceValidationReport(
+                workspace,
+                encoded.value,
+                integrity,
+                recomputedInSession,
+              )
+            : encoded.value,
+        ],
+        { type: 'application/json;charset=utf-8' },
+      ),
     );
     objectUrls.current.add(url);
     try {
       const link = document.createElement('a');
-      link.download = filename(workspace.title);
+      link.download = report
+        ? filename(workspace.title).replace('.zoneskein.json', '.validation.json')
+        : filename(workspace.title);
       link.href = url;
       link.rel = 'noopener';
       document.body.append(link);
       link.click();
       link.remove();
       setStatus(
-        `Workspace exported as ${link.download} with a fresh internally consistent digest.${
+        `${report ? 'Validation report' : 'Workspace'} exported as ${link.download} with a fresh internally consistent digest.${
           integrity.state === 'mismatch-accepted'
             ? ' The active session still retains its accepted-mismatch provenance.'
             : ''
@@ -477,6 +576,37 @@ export function ChangeWorkspacePage({
         automatically.
       </ToolIntro>
 
+      <details className="method-note">
+        <summary>Try a synthetic offline example</summary>
+        <div className="field-group">
+          <label htmlFor="workspace-example">Example scenario</label>
+          <select
+            id="workspace-example"
+            value={exampleId}
+            onChange={(event) => setExampleId(event.currentTarget.value as WorkspaceExampleId)}
+          >
+            {WORKSPACE_EXAMPLES.map((example) => (
+              <option key={example.id} value={example.id}>
+                {example.title}
+              </option>
+            ))}
+          </select>
+        </div>
+        <p>{WORKSPACE_EXAMPLES.find((example) => example.id === exampleId)?.expected}</p>
+        <p>
+          Cancel to keep your current work, or use New workspace afterwards to reset. Examples
+          stay in memory.
+        </p>
+        <button
+          className="quiet-button"
+          type="button"
+          disabled={importBusy}
+          onClick={() => void loadExample()}
+        >
+          Prepare offline example
+        </button>
+      </details>
+
       <article className="method-note workspace-boundary-note">
         <h2>Local, unencrypted, and not authenticated</h2>
         <p>
@@ -508,6 +638,7 @@ export function ChangeWorkspacePage({
 
       <form
         className="workbench-form workspace-form"
+        aria-busy={importBusy}
         onSubmit={(event) => event.preventDefault()}
       >
         <div className="field-group">
@@ -523,6 +654,7 @@ export function ChangeWorkspacePage({
           <label htmlFor="workspace-file">Import workspace file</label>
           <input
             id="workspace-file"
+            ref={importInput}
             type="file"
             accept=".json,application/json"
             disabled={importBusy}
@@ -675,6 +807,9 @@ export function ChangeWorkspacePage({
             className="quiet-button"
             type="button"
             disabled={
+              hasUnappliedEdits ||
+              importBusy ||
+              pendingImport !== null ||
               workspace.current.status === 'unavailable' ||
               workspace.intended.status === 'unavailable'
             }
@@ -682,14 +817,30 @@ export function ChangeWorkspacePage({
           >
             Reanalyse
           </button>
-          <button className="quiet-button" type="button" onClick={() => void exportWorkspace()}>
+          <button
+            className="quiet-button"
+            type="button"
+            disabled={hasUnappliedEdits || importBusy || pendingImport !== null}
+            onClick={() => void exportWorkspace()}
+          >
             Export JSON
+          </button>
+          <button
+            className="quiet-button"
+            type="button"
+            disabled={hasUnappliedEdits || importBusy || pendingImport !== null}
+            onClick={() => void exportWorkspace(true)}
+          >
+            Export validation report
           </button>
           {onOpenChangeLab === undefined ? null : (
             <button
               className="quiet-button"
               type="button"
               disabled={
+                hasUnappliedEdits ||
+                importBusy ||
+                pendingImport !== null ||
                 workspace.current.status === 'unavailable' ||
                 workspace.intended.status === 'unavailable'
               }
@@ -716,6 +867,38 @@ export function ChangeWorkspacePage({
           </button>
         </div>
       </form>
+
+      {hasUnappliedEdits ? (
+        <p className="snapshot-warning" role="status">
+          Unapplied edits. Apply them before analysing, exporting or opening Change Lab.
+        </p>
+      ) : null}
+      {pendingImport === null ? null : (
+        <article className="result-panel" aria-labelledby="replacement-title">
+          <h2 id="replacement-title">Import ready for review</h2>
+          <p>
+            Replace the active workspace with “
+            {escapeTechnicalText(pendingImport.workspace.title)}”? This discards the active
+            workspace and any unapplied edits in this tab. The matching digest establishes
+            internal consistency, not authorship.
+          </p>
+          <button className="primary-button" type="button" onClick={acceptImport}>
+            Replace active workspace
+          </button>
+        </article>
+      )}
+      {importBusy || pendingImport !== null || quarantined !== null ? (
+        <button
+          className="quiet-button"
+          type="button"
+          onClick={() => {
+            nextFocus.current = 'import';
+            cancelImport();
+          }}
+        >
+          Cancel import
+        </button>
+      ) : null}
 
       <div className="run-status" role="status" aria-live="polite" aria-atomic="true">
         {importBusy ? 'Reading and validating the selected local file…' : status}
@@ -755,7 +938,7 @@ export function ChangeWorkspacePage({
         <div className="section-heading">
           <div>
             <p className="eyebrow">Active in-memory workspace</p>
-            <h2 id="workspace-summary-title">
+            <h2 id="workspace-summary-title" ref={summaryHeading} tabIndex={-1}>
               <bdi className="technical-value" dir="ltr">
                 {escapeTechnicalText(workspace.title)}
               </bdi>
@@ -896,7 +1079,7 @@ export function ChangeWorkspacePage({
               role="region"
               aria-label="Analysed workspace changes"
             >
-              <table>
+              <table className="change-records-table">
                 <caption>Changes retained in this workspace</caption>
                 <thead>
                   <tr>

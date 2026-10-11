@@ -6,6 +6,8 @@ SPF is tokenised before parsing. The AST preserves source order, original text, 
 
 Every consumer uses the same fail-closed character grammar: a policy may contain printable ASCII and ordinary spaces only. Tabs, line breaks, non-breaking spaces, other Unicode separators, and control characters are errors rather than alternative token separators.
 
+An explicit colon requires a non-empty argument. Bare `a`, `mx` and `ptr` retain their defined defaults, while `a:`, `mx:`, `ptr:`, `all:` and empty targets before CIDR suffixes are errors in every consumer.
+
 Supported mechanisms are `all`, `include`, `a`, `mx`, `ptr`, `ip4`, `ip6`, and `exists`. Supported modifiers are `redirect` and `exp`.
 
 ## Budget analysis
@@ -46,6 +48,8 @@ A successful snapshot provides:
 - generated time, earliest source expiry, and conservative recheck time;
 - estimated response size and warnings near 450 characters or beyond 512 bytes;
 - JSON and Markdown evidence.
+
+TXT strings concatenate without inserted separators. The shared byte-bounded splitter preserves every character, including spaces at split boundaries; an offline BIND parse and canonical-encoding gate must reproduce the intended value and chunk boundaries before output is offered.
 
 Every result is labelled “Point-in-time SPF snapshot — provider address ranges may change.” Flattening can reduce receiver evaluation lookups, but transfers maintenance responsibility from the provider’s live policy to the domain operator’s snapshot.
 

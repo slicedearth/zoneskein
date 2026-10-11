@@ -60,10 +60,11 @@ describe('DNS change planning', () => {
   it('preserves malformed empty labels in unresolved target findings', () => {
     const report = plan('', 'www 300 IN CNAME missing..target');
     const targetFinding = report.findings.find(
-      (item) => item.code === 'internal-target-not-in-snapshot',
+      (item) => item.code === 'target-name-unresolved',
     );
 
-    expect(targetFinding?.message).toContain('missing..target.example.com.');
+    expect(targetFinding?.message).toContain('missing..target');
+    expect(targetFinding?.message).toContain('membership remain unknown');
     expect(targetFinding?.message).not.toContain('missing.target.example.com.');
   });
 
@@ -115,7 +116,7 @@ describe('DNS change planning', () => {
     const source = (count: number) =>
       Array.from(
         { length: count },
-        (_, index) => `record-${String(index)} IN TYPE${String(index)} value`,
+        (_, index) => `record-${String(index)} IN TYPE${String(index + 1)} value`,
       ).join('\n');
     const exactSource = source(ZONE_ANALYSIS_LIMITS.findings);
     const exactBefore = parseZoneSnippet(exactSource, { origin: 'example.com' });

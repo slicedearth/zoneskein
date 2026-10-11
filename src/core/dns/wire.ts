@@ -685,7 +685,9 @@ function negativeCacheTtl(
 }
 
 export function encodeDnsQuery(question: DnsQuestion, options: DnsQueryOptions): Uint8Array {
-  const flags = RECURSION_DESIRED | (options.checkingDisabled ? CHECKING_DISABLED : 0);
+  const flags =
+    (options.recursionDesired === false ? 0 : RECURSION_DESIRED) |
+    (options.checkingDisabled ? CHECKING_DISABLED : 0);
   const clientSubnet = {
     code: 'CLIENT_SUBNET',
     family: 1,

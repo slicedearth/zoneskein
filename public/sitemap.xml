@@ -4,12 +4,16 @@
   <url><loc>https://www.zoneskein.com/about/</loc></url>
   <url><loc>https://www.zoneskein.com/caa/</loc></url>
   <url><loc>https://www.zoneskein.com/diff/</loc></url>
+  <url><loc>https://www.zoneskein.com/delegation/</loc></url>
   <url><loc>https://www.zoneskein.com/dkim/</loc></url>
   <url><loc>https://www.zoneskein.com/dmarc/</loc></url>
   <url><loc>https://www.zoneskein.com/dnssec/</loc></url>
   <url><loc>https://www.zoneskein.com/lookup/</loc></url>
+  <url><loc>https://www.zoneskein.com/map/</loc></url>
+  <url><loc>https://www.zoneskein.com/mail/</loc></url>
   <url><loc>https://www.zoneskein.com/licence/</loc></url>
   <url><loc>https://www.zoneskein.com/privacy/</loc></url>
+  <url><loc>https://www.zoneskein.com/protocol/</loc></url>
   <url><loc>https://www.zoneskein.com/security/</loc></url>
   <url><loc>https://www.zoneskein.com/source/</loc></url>
   <url><loc>https://www.zoneskein.com/snapshots/</loc></url>
@@ -19,5 +23,6 @@
   <url><loc>https://www.zoneskein.com/third-party-notices/</loc></url>
   <url><loc>https://www.zoneskein.com/trademarks/</loc></url>
   <url><loc>https://www.zoneskein.com/workspace/</loc></url>
+  <url><loc>https://www.zoneskein.com/zone-exchange/</loc></url>
   <url><loc>https://www.zoneskein.com/zone-lint/</loc></url>
 </urlset>

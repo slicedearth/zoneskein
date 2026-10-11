@@ -1,10 +1,10 @@
 # Privacy
 
-Last reviewed: 26 August 2026
+Last reviewed: 27 August 2026
 
 ## Summary
 
-ZoneSkein is static-first. Its only server-side application component is an automatic Netlify compatibility relay used only after a qualifying direct Quad9 failure. The delivered browser application necessarily holds active inputs and results in page memory.
+ZoneSkein is static-first. Its only ZoneSkein server-side application component is an automatic Netlify compatibility relay used only after a qualifying direct Quad9 failure. The optional Delegation Lab calls Globalping’s external measurement API directly from the browser after explicit consent. The delivered browser application necessarily holds active inputs and results in page memory.
 
 ## Live DNS questions
 
@@ -34,11 +34,21 @@ Netlify receives ordinary requests for ZoneSkein pages and static assets. In Qua
 
 When ZoneSkein is served on `zoneskein.com`, Cloudflare operates the authoritative DNS for the hostname and can process hostname-resolution metadata under its own policies. The verified deployment keeps Netlify-facing records in DNS-only mode, so Cloudflare does not proxy ZoneSkein page, asset, or relay HTTP traffic.
 
+## Delegated measurements
+
+Delegation Lab does not use the ZoneSkein relay. When a visitor consents and starts an external-vantage run, the browser sends a fixed HTTPS request directly to `https://api.globalping.io/v1/measurements`. The request contains the chosen DNS name, record type, IP version, UDP or TCP protocol, trace choice, requested location, probe count, and an intended authoritative resolver name or address when one was supplied. The service receives ordinary browser connection metadata, chooses the requested bounded sample of probes, and returns probe location, network, ASN, timing, resolver, DNS answer, status, and raw-output fields. Globalping and participating probe operators may process measurement data under [Globalping’s terms and privacy policy](https://globalping.io/terms). ZoneSkein does not control their logging, retention, blocking, probe availability, or continued API access.
+
+The interface requires a separate consent checkbox for this path. Each run uses at most three probes, polls only its returned opaque measurement identifier, stops after a bounded window, omits browser credentials and referrer information, and accepts at most 1 MiB for each API response. The browser stores only recent run timestamps under `zoneskein:globalping-runs:v1` to apply a six-run rolling hourly limit. It does not store the measured DNS name, location, intended resolver, answers, measurement identifier, or probe details in that ledger. Browser-storage denial can weaken this client-side limit; the service retains its own controls.
+
+External probes send the requested DNS traffic from their own networks to the selected recursive or authoritative server. This can disclose the requested name and record type to the measurement service, probe operator, resolver, authoritative operator, and their infrastructure providers. Use this feature only for lawful, authorised, interactive diagnostics. A bounded sample cannot establish worldwide propagation or an authoritative ground truth.
+
 ## Email and sender inputs
 
 SPF sender mode accepts a client IP address, complete MAIL FROM identity, HELO/EHLO domain, and optional receiver name. These values remain in page memory and are not saved or shared automatically. SPF macros can place the mailbox local part, supplied IP address, HELO/EHLO name, or receiver name into DNS question labels. The selected resolver can read and log those derived questions. Copying the full evaluation explicitly places those inputs and results on the clipboard; use synthetic inputs unless the resolver and clipboard destination are authorised to receive the real values. For a pass, the separate DMARC hand-off contains the authenticated SPF identity domain, whether that identity came from MAIL FROM or from HELO for a null reverse path, the result, capture time, fixed resolver identifier, and schema metadata. For every non-pass result, it omits the unauthenticated domain and identity source. The hand-off always excludes the mailbox local part, client IP, receiver input, policy text, and evaluation trace.
 
 DKIM message mode reads pasted message text or `.eml` bytes locally. Raw bytes, headers, addresses, and body content remain in page memory and are never sent to Netlify, a resolver, IndexedDB, or a share link. Only derived `selector._domainkey.signing-domain` TXT questions leave the browser. Copied verification JSON excludes the raw message, uploaded filename, message addresses, and body. It redacts any DKIM AUID local-part but can retain signing metadata and the AUID and signing domains. The separate DMARC hand-off is narrower: it contains only unique passing production signing domains, capture times, reconstructed-line-ending caveats, fixed resolver identifiers, and schema metadata. It excludes selectors, identities, key records, signatures, headers, body hashes, filenames, diagnostics, and message content.
+
+Mail Lab reads DMARC aggregate XML, TLS report JSON, gzip and ZIP report archives, X.509 certificates, BIMI records and SVG source, ARC headers, and MTA-STS or TLS reporting policy locally. It does not fetch a URL named by a BIMI record, contact an SMTP server, upload the input, or persist it automatically. Parsed reports can contain domain names, IP addresses, organisation identifiers, email addresses, delivery counts, failure details, and infrastructure metadata. Certificate and BIMI inputs can likewise describe operational systems or brands. Those values remain in page memory unless the visitor copies output or provides the same data to another tool or recipient.
 
 DMARC alignment mode accepts domains and claimed prior authentication results, not a raw message. Those inputs remain in page memory and are not saved or shared automatically. A hand-off from the SPF or DKIM route remains in current application memory until it is replaced, cleared, edited, or the page is reloaded. A visitor can explicitly copy or paste the same minimal JSON through the clipboard; the import is UTF-8, size, nesting, duplicate-key, exact-schema, timestamp, resolver, result, domain, uniqueness, and count checked before use. The selected resolver receives the DNS boundary questions derived from the supplied domains. Imported resolver identifiers are displayed as inert provenance and never select or create a network destination.
 
@@ -46,7 +56,7 @@ DMARC alignment mode accepts domains and claimed prior authentication results, n
 
 Query history is not persisted by default. Normal DNS responses use a bounded in-memory TTL cache that disappears with the page session.
 
-To coordinate abuse controls across tabs, ZoneSkein uses an origin-wide browser reservation lock where available and stores a bounded rate-limit ledger in local storage. Replay-resistant cross-tab messages update in-memory state but do not overwrite that canonical ledger. Browsers without origin-wide locks retain a best-effort cross-tab fallback. The ledger contains only random request identifiers, timestamps, per-resolver buckets, and temporary cooldown expiry times. It contains no DNS names, record types, answers, pasted content, or report data. Request events cover a rolling one-minute window; any resolver cooldown is capped at 15 minutes, and stale state is rejected.
+To coordinate abuse controls across tabs, ZoneSkein uses an origin-wide browser reservation lock where available and stores a bounded rate-limit ledger in local storage. Replay-resistant cross-tab messages update in-memory state but do not overwrite that canonical ledger. Browsers without origin-wide locks retain a best-effort cross-tab fallback. The DNS ledger contains only random request identifiers, timestamps, per-resolver buckets, and temporary cooldown expiry times. It contains no DNS names, record types, answers, pasted content, or report data. Request events cover a rolling one-minute window; any resolver cooldown is capped at 15 minutes, and stale state is rejected. Delegation Lab separately stores only recent external-run timestamps as described above.
 
 Local snapshots are a separate, explicit opt-in feature:
 
@@ -58,7 +68,7 @@ Local snapshots are a separate, explicit opt-in feature:
 - snapshots remain until explicitly deleted, the feature is disabled and erased, browser storage is cleared, or the oldest snapshot is evicted at the 100-report limit;
 - disabling local snapshots first records an origin-wide erasure marker, invalidates the active storage generation, and blocks every new save, import, or deletion before clearing and deleting IndexedDB; the interface reports blocked or failed deletion, keeps storage disabled until a failed erasure is retried, and claims erasure only after the browser confirms it.
 
-ZoneSkein uses no cookies. It does not use local storage for query history or DNS content; local storage holds only snapshot control state and the bounded anonymous rate-limit ledger described above.
+ZoneSkein uses no cookies. It does not use local storage for query history or DNS content; local storage holds only snapshot control state and the bounded anonymous rate-limit ledgers described above.
 
 ## Change Workspace files
 
@@ -74,6 +84,8 @@ Fragments are not secret storage. The contents may remain in browser history, cl
 
 ## Pasted data
 
-Zone snippets, proposed changes, Record Studio working sets, raw messages, and sender or alignment inputs stay in the browser. A Record Studio working set enters IndexedDB only after an explicit snapshot action. The DKIM message, SPF sender, and DMARC alignment pages provide no snapshot or share action for their sensitive inputs. Their minimal mail-authentication hand-off remains memory-only unless the visitor explicitly copies it to the clipboard. Untrusted DNS and pasted text are rendered as text, never as HTML.
+Zone snippets and bundles, service templates, portable configuration drafts, proposed changes, Record Studio working sets, raw messages, mail reports, certificates, BIMI SVG, ARC headers, and sender or alignment inputs stay in the browser. A Record Studio working set enters IndexedDB only after an explicit snapshot action. The DKIM message, SPF sender, DMARC alignment, Mail Lab, and Zone Exchange pages provide no snapshot or share action for their sensitive inputs. Their active data remains memory-only unless the visitor explicitly copies or downloads it. Untrusted DNS and pasted text are rendered as text, never as HTML; supplied SVG is parsed as inert text and is never inserted into the document.
+
+A successfully validated domain can be shared between related routes through current React memory. This convenience state is replaced only by a later validated domain and disappears when the application reloads. It is not written to local storage, IndexedDB, a URL, or an export merely because the visitor changes routes.
 
 Only enter, query, import, copy, save, or export personal, customer, employee, message, or internal infrastructure information when you are authorised to process it and disclose it to the selected resolver, intermediary, clipboard destination, storage location, or recipient. Prefer synthetic data for demonstrations. The separate [hosted service terms](TERMS.md) describe acceptable use; they do not restrict the AGPL rights in copies of the software.

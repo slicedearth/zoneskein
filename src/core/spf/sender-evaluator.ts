@@ -2,7 +2,7 @@ import { processStrictIpAddress, type ProcessedIpAddress } from '../dns/ip';
 import { validateDnsName } from '../dns/names';
 import { DnsQueryError } from '../dns/types';
 import { spfLookupShapeError } from './limits';
-import { parseSpfRecord } from './parser';
+import { parseSpfMechanismSyntax, parseSpfRecord } from './parser';
 import { validateMailFromLocalPart } from './sender-input';
 import type {
   SpfDnsClient,
@@ -590,6 +590,7 @@ function parseNetworkMechanism(name: 'ip4' | 'ip6', tail: string): ParsedMechani
 }
 
 function parseRawMechanism(mechanism: SpfMechanism): ParsedMechanism | null {
+  if (parseSpfMechanismSyntax(mechanism.original) === null) return null;
   const original = /^[+\-~?]/u.test(mechanism.original)
     ? mechanism.original.slice(1)
     : mechanism.original;

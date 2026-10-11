@@ -1,6 +1,8 @@
 import { mergeCidr, normalizeCidr, parseCidr } from 'cidr-tools';
 
 import { parseStrictIpAddress } from '../dns/ip';
+import { chunkTxtValue } from '../zone/authoring';
+import { verifyBindRecord } from '../zone/export-conformance';
 import { analyseSpf } from './evaluator';
 import { MAX_SPF_DNS_MESSAGE_BYTES, SPF_WORK_LIMITS } from './limits';
 import type {
@@ -78,22 +80,6 @@ function normalizedNetwork(address: string, mechanism: SpfMechanism): string {
   const parsed = parseStrictIpAddress(bare);
   if (parsed === null) throw new Error('Address is not a strict IP literal.');
   return normalizeCidr(`${parsed.toNormalizedString()}/${String(prefixFor(mechanism, bare))}`);
-}
-
-function chunkSpf(value: string): readonly string[] {
-  const chunks: string[] = [];
-  let current = '';
-  for (const token of value.split(' ')) {
-    if (encoder.encode(token).length > 255) throw new Error('An SPF token exceeds 255 octets.');
-    const candidate = current === '' ? token : `${current} ${token}`;
-    if (encoder.encode(candidate).length <= 255) current = candidate;
-    else {
-      chunks.push(current);
-      current = token;
-    }
-  }
-  if (current !== '') chunks.push(current);
-  return chunks;
 }
 
 function wireNameLength(name: string): number {
@@ -425,7 +411,7 @@ export async function flattenSpf(
     );
     return { analysis, snapshot: unsafeSnapshot() };
   }
-  const chunks = chunkSpf(value);
+  const chunks = chunkTxtValue(value);
   const estimatedResponseBytes = estimateSpfResponseBytes(analysis.rootDomain, chunks);
   if (estimatedResponseBytes > MAX_SPF_DNS_MESSAGE_BYTES) {
     blockers.add(
@@ -460,6 +446,16 @@ export async function flattenSpf(
   }
 
   const bindRecord = `${analysis.rootDomain}. IN TXT (${chunks.map((chunk) => `"${chunk}"`).join(' ')})`;
+  const conformanceError = verifyBindRecord(bindRecord, {
+    owner: `${analysis.rootDomain}.`,
+    type: 'TXT',
+    txtValue: value,
+    txtChunks: chunks,
+  });
+  if (conformanceError !== null) {
+    blockers.add(conformanceError);
+    return { analysis, snapshot: unsafeSnapshot() };
+  }
   if (encoder.encode(bindRecord).length > SPF_WORK_LIMITS.outputOctets) {
     blockers.add(
       `The generated master-file record exceeds the ${String(SPF_WORK_LIMITS.outputOctets)}-octet output safety bound.`,

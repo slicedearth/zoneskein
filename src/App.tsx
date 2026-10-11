@@ -28,13 +28,25 @@ const DmarcPage = lazy(() =>
 const DnssecPage = lazy(() =>
   import('./routes/DnssecPage').then((module) => ({ default: module.DnssecPage })),
 );
+const DelegationPage = lazy(() =>
+  import('./routes/DelegationPage').then((module) => ({ default: module.DelegationPage })),
+);
+const EvidenceMapPage = lazy(() =>
+  import('./routes/EvidenceMapPage').then((module) => ({ default: module.EvidenceMapPage })),
+);
 const LookupPage = lazy(() =>
   import('./routes/LookupPage').then((module) => ({ default: module.LookupPage })),
+);
+const MailLabPage = lazy(() =>
+  import('./routes/MailLabPage').then((module) => ({ default: module.MailLabPage })),
 );
 const PublicDocumentPage = lazy(() =>
   import('./routes/PublicDocumentPage').then((module) => ({
     default: module.PublicDocumentPage,
   })),
+);
+const ProtocolLabPage = lazy(() =>
+  import('./routes/ProtocolLabPage').then((module) => ({ default: module.ProtocolLabPage })),
 );
 const SourceChecksumPage = lazy(() =>
   import('./routes/PublicDocumentPage').then((module) => ({
@@ -53,6 +65,9 @@ const SnapshotsPage = lazy(() =>
 const ZoneLintPage = lazy(() =>
   import('./routes/ZoneLintPage').then((module) => ({ default: module.ZoneLintPage })),
 );
+const ZoneExchangePage = lazy(() =>
+  import('./routes/ZoneExchangePage').then((module) => ({ default: module.ZoneExchangePage })),
+);
 
 type Theme = 'light' | 'dark';
 
@@ -63,6 +78,10 @@ interface NavigationLink {
 
 const inspectLinks = [
   { path: 'lookup/', label: 'Lookup' },
+  { path: 'map/', label: 'Skein Map' },
+  { path: 'delegation/', label: 'Delegation Lab' },
+  { path: 'protocol/', label: 'Protocol Lab' },
+  { path: 'mail/', label: 'Mail Lab' },
   { path: 'dnssec/', label: 'DNSSEC' },
   { path: 'spf/', label: 'SPF' },
   { path: 'dmarc/', label: 'DMARC' },
@@ -72,6 +91,7 @@ const inspectLinks = [
 
 const prepareLinks = [
   { path: 'zone-lint/', label: 'Zone Lint' },
+  { path: 'zone-exchange/', label: 'Zone Exchange' },
   { path: 'studio/', label: 'Record Studio' },
   { path: 'diff/', label: 'Change Lab' },
   { path: 'workspace/', label: 'Change Workspace' },
@@ -390,10 +410,20 @@ export function App() {
             />
           ) : route === 'zone-lint' ? (
             <ZoneLintPage />
+          ) : route === 'zone-exchange' ? (
+            <ZoneExchangePage />
           ) : route === 'spf' ? (
             <SpfPage onUseForDmarc={openDmarcWithEvidence} />
           ) : route === 'dnssec' ? (
             <DnssecPage />
+          ) : route === 'protocol' ? (
+            <ProtocolLabPage />
+          ) : route === 'delegation' ? (
+            <DelegationPage />
+          ) : route === 'map' ? (
+            <EvidenceMapPage />
+          ) : route === 'mail' ? (
+            <MailLabPage />
           ) : route === 'lookup' ? (
             <LookupPage />
           ) : route === '' ? (
@@ -454,6 +484,7 @@ export function App() {
               <div className="secondary-tools" aria-label="Additional tools">
                 <span>Pick up another thread</span>
                 <a href={href('lookup/')}>Record explorer</a>
+                <a href={href('map/')}>Skein Map</a>
                 <a href={href('studio/')}>Record Studio</a>
                 <a href={href('workspace/')}>Change Workspace</a>
                 <a href={href('dmarc/')}>DMARC</a>

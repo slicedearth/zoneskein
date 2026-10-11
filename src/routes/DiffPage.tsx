@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 
 import { CopyButton } from '../components/CopyButton';
+import { compareRecordConfidence } from '../core/zone/record-semantics';
 import { SnapshotButton } from '../components/SnapshotButton';
 import { StatusBadge } from '../components/StatusBadge';
 import { ToolIntro } from '../components/ToolIntro';
@@ -1150,7 +1151,7 @@ export function DiffPage({ initialInput, onCreateWorkspace }: DiffPageProps = {}
                 role="region"
                 aria-label="Classified DNS changes"
               >
-                <table>
+                <table className="change-records-table">
                   <caption>Classified DNS changes</caption>
                   <thead>
                     <tr>
@@ -1198,6 +1199,20 @@ export function DiffPage({ initialInput, onCreateWorkspace }: DiffPageProps = {}
                             {escapeTechnicalText(change.explanation)}
                           </bdi>
                           {change.disruptive ? ' Potentially disruptive.' : ''}
+                          {change.before === undefined || change.after === undefined ? null : (
+                            <p className="field-help">
+                              Equality evidence:{' '}
+                              {compareRecordConfidence(
+                                change.before,
+                                change.after,
+                              ).state.replaceAll('-', ' ')}
+                              .
+                              {compareRecordConfidence(change.before, change.after)
+                                .txtChunksDiffer
+                                ? ' TXT character-string boundaries differ; concatenation is not wire equality.'
+                                : ''}
+                            </p>
+                          )}
                           {display.plan.impacts[index] === undefined ? null : (
                             <details className="inline-details">
                               <summary>Impact and rollback</summary>

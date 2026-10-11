@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { RFC_9934_ECH_CONFIG } from '../../test/ech-fixture';
 
 import { authorRecord, chunkTxtValue, type RecordAuthoringDraft } from './authoring';
 import { lintZoneSnippet } from './lint';
@@ -126,14 +127,14 @@ describe('DNS record authoring', () => {
   it('canonicalises SvcParam keys, ordering, and mandatory references', () => {
     const result = authorRecord(
       draft('HTTPS', {
-        parameters: 'port=443\nkey1=h2,h3\nmandatory=port,key1\nech=AAT+DQAA',
+        parameters: `port=443\nkey1=h2,h3\nmandatory=port,key1\nech=${RFC_9934_ECH_CONFIG}`,
         priority: '1',
         target: '.',
       }),
     );
 
     expect(result).toMatchObject({
-      rdata: '1 . mandatory="alpn,port" alpn="h2,h3" port="443" ech="AAT+DQAA"',
+      rdata: `1 . mandatory="alpn,port" alpn="h2,h3" port="443" ech="${RFC_9934_ECH_CONFIG}"`,
       valid: true,
     });
     expect(lintZoneSnippet(result.bind ?? '').diagnostics).not.toEqual(

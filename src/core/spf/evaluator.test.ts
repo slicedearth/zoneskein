@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { parseZoneSnippet } from '../zone/parser';
+
 import { analyseSpf } from './evaluator';
 import { flattenSpf } from './flatten';
 import type { SpfDnsClient, SpfLookupResult, SpfLookupType, SpfMxRecord } from './types';
@@ -51,6 +53,42 @@ class FixtureDns implements SpfDnsClient {
 }
 
 describe('SPF dependency analysis', () => {
+  it('preserves every SPF byte through multi-string BIND output', async () => {
+    const policy = `v=spf1 ${Array.from({ length: 32 }, (_, index) => `ip4:198.51.${String(index)}.1/32`).join(' ')} -all`;
+    const { snapshot } = await flattenSpf(
+      'example.test',
+      new FixtureDns({
+        'example.test|TXT': answer([policy]),
+      }),
+      OBSERVED_AT,
+    );
+    expect(snapshot.safe).toBe(true);
+    expect(snapshot.chunks.join('')).toBe(snapshot.value);
+    expect(
+      snapshot.chunks.every((chunk) => new TextEncoder().encode(chunk).length <= 255),
+    ).toBe(true);
+    expect(
+      parseZoneSnippet(snapshot.bindRecord ?? '')
+        .records[0]?.rdata.map((token) => token.value)
+        .join(''),
+    ).toBe(snapshot.value);
+  });
+
+  it.each(['a:', 'mx:', 'ptr:', 'all:', 'a:/24', 'a://64'])(
+    'rejects explicit empty targets even when DNS succeeds: %s',
+    async (term) => {
+      const dns = new FixtureDns({
+        'example.test|TXT': answer([`v=spf1 ${term} -all`]),
+        'example.test|A': answer(['192.0.2.1']),
+        'example.test|AAAA': answer(['2001:db8::1']),
+        'example.test|MX': mxAnswer([{ exchange: 'example.test', preference: 10 }]),
+      });
+      const { analysis, snapshot } = await flattenSpf('example.test', dns, OBSERVED_AT);
+      expect(analysis.diagnostics.some((item) => item.severity === 'error')).toBe(true);
+      expect(snapshot.safe).toBe(false);
+      expect(snapshot.networks).toEqual([]);
+    },
+  );
   it('tracks a nested include and redirect path without confusing terms with DNS requests', async () => {
     const dns = new FixtureDns({
       'a.test|A': answer(['192.0.2.1']),

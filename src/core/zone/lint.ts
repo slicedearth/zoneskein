@@ -363,6 +363,31 @@ function lintRecord(record: ZoneRecord, options: ZoneParseOptions): readonly Zon
       );
   }
 
+  if (/^TYPE\d{1,5}$/u.test(record.type)) {
+    const length = record.rdata[1];
+    const hexadecimal = record.rdata
+      .slice(2)
+      .map((token) => token.value)
+      .join('');
+    const octets = hexadecimalOctets(hexadecimal);
+    if (
+      record.rdata[0]?.value !== '#' ||
+      length === undefined ||
+      !/^\d+$/u.test(length.value) ||
+      Number(length.value) > 65_535 ||
+      octets === null ||
+      octets !== Number(length.value)
+    )
+      diagnostics.push(
+        item(
+          record,
+          'generic-rdata-malformed',
+          'error',
+          'RFC 3597 generic data requires \\# followed by an octet count and exactly that many hexadecimal octets.',
+        ),
+      );
+  }
+
   if (record.type === 'A' || record.type === 'AAAA') {
     const address = record.rdata[0];
     if (

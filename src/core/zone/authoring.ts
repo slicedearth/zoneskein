@@ -5,6 +5,8 @@ import {
   isDeprecatedSha1DnssecAlgorithm,
 } from '../dnssec/algorithm-policy';
 import { parseTtl } from './parser';
+import { intendedRdataTokens, verifyBindRecord } from './export-conformance';
+import type { ZoneToken } from './types';
 import { canonicalSvcbKey, decodeBase64, isValidEchConfigList, svcbKeyNumber } from './svcb';
 
 export type AuthoringRecordType =
@@ -190,7 +192,7 @@ function splitParameterLines(value: string): readonly string[] {
 function svcbParameters(
   source: string,
   diagnostics: RecordAuthoringDiagnostic[],
-): readonly string[] {
+): readonly { readonly rendered: string; readonly intended: ZoneToken }[] {
   const lines = splitParameterLines(source);
   const seen = new Set<string>();
   const values: {
@@ -345,11 +347,27 @@ function svcbParameters(
       if (right.keyNumber !== null) return 1;
       return left.key.localeCompare(right.key);
     })
-    .map((entry) =>
-      entry.renderedValue === undefined
-        ? entry.key
-        : `${entry.key}=${quote(entry.renderedValue)}`,
-    );
+    .map((entry) => {
+      const value = entry.renderedValue;
+      // Numeric/list SvcParams disallow escapes. Other values retain intended octets
+      // independently of the presentation quoting used for the export.
+      const encoded =
+        value === undefined
+          ? undefined
+          : [0, 3, 4, 6].includes(entry.keyNumber ?? -1)
+            ? `"${value}"`
+            : intendedRdataTokens([{ text: value }])[0]?.raw;
+      return {
+        rendered: value === undefined ? entry.key : `${entry.key}=${quote(value)}`,
+        intended: {
+          line: 1,
+          column: 1,
+          quoted: false,
+          raw: encoded === undefined ? entry.key : `${entry.key}=${encoded}`,
+          value: value === undefined ? entry.key : `${entry.key}=${value}`,
+        },
+      };
+    });
 }
 
 function field(draft: RecordAuthoringDraft, name: string): string {
@@ -378,7 +396,11 @@ function requiredInteger(
 function makeRdata(
   draft: RecordAuthoringDraft,
   diagnostics: RecordAuthoringDiagnostic[],
-): { readonly rdata: string; readonly txtChunks?: readonly string[] } | null {
+): {
+  readonly rdata: string;
+  readonly expectedRdata: readonly ZoneToken[];
+  readonly txtChunks?: readonly string[];
+} | null {
   const target = (name = 'target', options: { readonly allowRoot?: boolean } = {}) =>
     zoneName(field(draft, name), name, diagnostics, options);
   if (draft.type === 'A' || draft.type === 'AAAA') {
@@ -388,22 +410,33 @@ function makeRdata(
       'address',
       diagnostics,
     );
-    return value === null ? null : { rdata: value };
+    return value === null
+      ? null
+      : { rdata: value, expectedRdata: intendedRdataTokens([value]) };
   }
   if (draft.type === 'CNAME' || draft.type === 'NS' || draft.type === 'PTR') {
     const value = target();
-    return value === null ? null : { rdata: value };
+    return value === null
+      ? null
+      : { rdata: value, expectedRdata: intendedRdataTokens([value]) };
   }
   if (draft.type === 'TXT') {
     const chunks = chunkTxtValue(draft.fields['value'] ?? '');
-    return { rdata: chunks.map(quote).join(' '), txtChunks: chunks };
+    return {
+      rdata: chunks.map(quote).join(' '),
+      txtChunks: chunks,
+      expectedRdata: intendedRdataTokens(chunks.map((text) => ({ text }))),
+    };
   }
   if (draft.type === 'MX') {
     const preference = requiredInteger(draft, 'preference', 0, 65_535, diagnostics);
     const value = target();
     return preference === null || value === null
       ? null
-      : { rdata: `${String(preference)} ${value}` };
+      : {
+          rdata: `${String(preference)} ${value}`,
+          expectedRdata: intendedRdataTokens([preference, value]),
+        };
   }
   if (draft.type === 'SRV') {
     const priority = requiredInteger(draft, 'priority', 0, 65_535, diagnostics);
@@ -412,7 +445,10 @@ function makeRdata(
     const value = target('target', { allowRoot: true });
     return priority === null || weight === null || port === null || value === null
       ? null
-      : { rdata: `${String(priority)} ${String(weight)} ${String(port)} ${value}` };
+      : {
+          rdata: `${String(priority)} ${String(weight)} ${String(port)} ${value}`,
+          expectedRdata: intendedRdataTokens([priority, weight, port, value]),
+        };
   }
   if (draft.type === 'CAA') {
     const flags = requiredInteger(draft, 'flags', 0, 255, diagnostics);
@@ -432,7 +468,14 @@ function makeRdata(
       );
     return flags === null || !/^[a-z0-9]{1,15}$/u.test(tag)
       ? null
-      : { rdata: `${String(flags)} ${tag} ${quote(draft.fields['value'] ?? '')}` };
+      : {
+          rdata: `${String(flags)} ${tag} ${quote(draft.fields['value'] ?? '')}`,
+          expectedRdata: intendedRdataTokens([
+            flags,
+            tag,
+            { text: draft.fields['value'] ?? '' },
+          ]),
+        };
   }
   if (draft.type === 'SOA') {
     const primary = zoneName(field(draft, 'primary'), 'primary', diagnostics);
@@ -450,6 +493,7 @@ function makeRdata(
       return null;
     return {
       rdata: `${primary} ${contact} ${String(serial)} ${timings.map(String).join(' ')}`,
+      expectedRdata: intendedRdataTokens([primary, contact, serial, ...timings.map(String)]),
     };
   }
   if (draft.type === 'TLSA') {
@@ -464,7 +508,10 @@ function makeRdata(
     );
     return usage === null || selector === null || matching === null || association === null
       ? null
-      : { rdata: `${String(usage)} ${String(selector)} ${String(matching)} ${association}` };
+      : {
+          rdata: `${String(usage)} ${String(selector)} ${String(matching)} ${association}`,
+          expectedRdata: intendedRdataTokens([usage, selector, matching, association]),
+        };
   }
   if (draft.type === 'DS') {
     const keyTag = requiredInteger(draft, 'keyTag', 0, 65_535, diagnostics);
@@ -500,7 +547,10 @@ function makeRdata(
     const digest = hex(field(draft, 'digest'), 'digest', diagnostics, expected);
     return keyTag === null || algorithm === null || digestType === null || digest === null
       ? null
-      : { rdata: `${String(keyTag)} ${String(algorithm)} ${String(digestType)} ${digest}` };
+      : {
+          rdata: `${String(keyTag)} ${String(algorithm)} ${String(digestType)} ${digest}`,
+          expectedRdata: intendedRdataTokens([keyTag, algorithm, digestType, digest]),
+        };
   }
   if (draft.type === 'DNSKEY') {
     const flags = requiredInteger(draft, 'flags', 0, 65_535, diagnostics);
@@ -521,7 +571,10 @@ function makeRdata(
       );
     return flags === null || protocol !== 3 || algorithm === null || publicKey === null
       ? null
-      : { rdata: `${String(flags)} 3 ${String(algorithm)} ${publicKey}` };
+      : {
+          rdata: `${String(flags)} 3 ${String(algorithm)} ${publicKey}`,
+          expectedRdata: intendedRdataTokens([flags, 3, algorithm, publicKey]),
+        };
   }
   if (draft.type === 'SSHFP') {
     const algorithm = requiredInteger(draft, 'algorithm', 1, 6, diagnostics);
@@ -534,7 +587,10 @@ function makeRdata(
     );
     return algorithm === null || fingerprintType === null || fingerprint === null
       ? null
-      : { rdata: `${String(algorithm)} ${String(fingerprintType)} ${fingerprint}` };
+      : {
+          rdata: `${String(algorithm)} ${String(fingerprintType)} ${fingerprint}`,
+          expectedRdata: intendedRdataTokens([algorithm, fingerprintType, fingerprint]),
+        };
   }
   if (draft.type === 'URI') {
     const priority = requiredInteger(draft, 'priority', 0, 65_535, diagnostics);
@@ -550,7 +606,10 @@ function makeRdata(
       weight === null ||
       diagnostics.some((item) => item.field === 'target' && item.severity === 'error')
       ? null
-      : { rdata: `${String(priority)} ${String(weight)} ${quote(uri)}` };
+      : {
+          rdata: `${String(priority)} ${String(weight)} ${quote(uri)}`,
+          expectedRdata: intendedRdataTokens([priority, weight, { text: uri }]),
+        };
   }
   if (draft.type === 'NAPTR') {
     const order = requiredInteger(draft, 'order', 0, 65_535, diagnostics);
@@ -562,6 +621,14 @@ function makeRdata(
       ? null
       : {
           rdata: `${String(order)} ${String(preference)} ${quote(draft.fields['flags'] ?? '')} ${quote(draft.fields['service'] ?? '')} ${quote(draft.fields['regexp'] ?? '')} ${replacement}`,
+          expectedRdata: intendedRdataTokens([
+            order,
+            preference,
+            ...['flags', 'service', 'regexp'].map((name) => ({
+              text: draft.fields[name] ?? '',
+            })),
+            replacement,
+          ]),
         };
   }
   const priority = requiredInteger(draft, 'priority', 0, 65_535, diagnostics);
@@ -586,7 +653,11 @@ function makeRdata(
   return priority === null || value === null
     ? null
     : {
-        rdata: `${String(priority)} ${value}${parameters.length === 0 ? '' : ` ${parameters.join(' ')}`}`,
+        rdata: `${String(priority)} ${value}${parameters.length === 0 ? '' : ` ${parameters.map((parameter) => parameter.rendered).join(' ')}`}`,
+        expectedRdata: [
+          ...intendedRdataTokens([priority, value]),
+          ...parameters.map((parameter) => parameter.intended),
+        ],
       };
 }
 
@@ -597,12 +668,31 @@ export function authorRecord(draft: RecordAuthoringDraft): AuthoredRecord {
   if (ttl === null)
     diagnostics.push(diagnostic('ttl-invalid', 'ttl', 'TTL must be a valid DNS TTL value.'));
   const result = makeRdata(draft, diagnostics);
-  const valid =
+  let valid =
     owner !== null &&
     ttl !== null &&
     result !== null &&
     !diagnostics.some((item) => item.severity === 'error');
-  const bind = valid ? `${owner} ${String(ttl)} IN ${draft.type} ${result.rdata}` : undefined;
+  let bind =
+    valid && result !== null && owner !== null
+      ? `${owner} ${String(ttl)} IN ${draft.type} ${result.rdata}`
+      : undefined;
+  if (bind !== undefined && owner !== null && ttl !== null && result !== null) {
+    const failure = verifyBindRecord(bind, {
+      owner,
+      ttl,
+      type: draft.type,
+      rdata: result.expectedRdata,
+      ...(draft.type === 'TXT'
+        ? { txtValue: draft.fields['value'] ?? '', txtChunks: result.txtChunks ?? [] }
+        : {}),
+    });
+    if (failure !== null) {
+      diagnostics.push(diagnostic('export-conformance', 'record', failure));
+      valid = false;
+      bind = undefined;
+    }
+  }
   return {
     ...(bind === undefined ? {} : { bind }),
     diagnostics,

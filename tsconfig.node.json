@@ -28,6 +28,7 @@
     "netlify/functions/**/*.ts",
     "scripts/**/*.ts",
     "src/seo.ts",
+    "src/test/ech-fixture.ts",
     "tests/build/**/*.ts",
     "tests/e2e",
     "tests/functions/**/*.ts"

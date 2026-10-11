@@ -28,10 +28,14 @@ Start with a name, then follow the strands through live answers, trust chains, m
 
 - **Record explorer:** query A, AAAA, CNAME, MX, NS, TXT, SOA, CAA, SRV, PTR, DS, DNSKEY, RRSIG, NSEC, NSEC3, TLSA, ZONEMD, HTTPS, and SVCB records. Compare fixed Google Public DNS, Cloudflare 1.1.1.1, and Quad9 resolvers side by side, then export plain, BIND, JSON, or Markdown evidence.
 - **Exact resolver evidence:** inspect DNS message sizes, EDNS Extended DNS Error explanations, RFC 2308 negative-cache TTLs, normalised record fields, and PTR conversion. Queries use RFC 8484 wire-format DNS-over-HTTPS, zero-prefix EDNS Client Subnet signalling, and RFC 8467 padding to a 128-octet block.
+- **Skein Map:** turn ten bounded record questions into an interactive D3 evidence graph with keyboard-accessible tables, resolver provenance, capture times, TTLs, named dependencies, and explicit loose ends. Comparison mode separates answer, response-code, TTL, authenticated-data, extended-error, unavailable, and incomplete differences across the three resolvers without claiming which observation is correct.
+- **Delegation Lab:** trace a name or test intended authoritative servers from up to three explicitly requested external vantage points. The browser talks directly to one fixed measurement API after consent, applies a six-run-per-hour local limit, and keeps every result point-in-time and source-labelled. A separate local lifecycle model checks DNSKEY, DS, CDS, and CDNSKEY material, recognises standard deletion signals, structurally interprets CSYNC and DSYNC records, and explains common rollover stages.
 - **Independent DNSSEC validation:** follow authenticated DS and DNSKEY chains from bundled IANA root trust anchors through positive and negative selected answers, wildcard proofs, and bounded CNAME, DNAME, SVCB, or HTTPS alias continuation. Validation supports SHA-1, SHA-256, and SHA-384 DS matching; browser-native RSA, ECDSA, and Ed25519 verification; bounded Ed448 verification through an independently reviewed primitive; and explicit NSEC3 Opt-Out uncertainty.
+- **Protocol Lab:** query safe registered or numeric resource-record types, inspect exact wire evidence, retain unknown RFC 3597 RDATA, request resolver information with recursion disabled, and decode ECH configuration lists from HTTPS or SVCB records locally.
 - **SPF analysis:** parse policies with an ordered lexer, map recursive `include` and `redirect` dependencies, expand A and MX paths, detect cycles, and account for the ten-term and void-lookup limits. Guarded point-in-time snapshots retain provenance.
 - **Sender-context SPF evaluation:** test a supplied SMTP client IP, MAIL FROM identity, HELO/EHLO domain, and optional receiver name with ordered mechanism evaluation, bounded macro expansion and DNS work, publisher explanations, and a replayable evidence trace.
 - **Mail and issuance policy:** trace RFC 9989 DMARC DNS Tree Walk discovery, conditional identifier alignment, and RFC 9990 or RFC 9991 external-reporting authorisation. Inspect DKIM selector keys, verify bounded RSA-SHA256 or Ed25519-SHA256 signatures from pasted text or byte-preserving `.eml` files, and analyse or author inherited CAA policy for web, wildcard, and S/MIME issuance.
+- **Mail Lab:** open bounded DMARC aggregate and TLS report files locally from XML, JSON, gzip, or ZIP; inspect and author MTA-STS and TLS reporting policy; match a supplied certificate against TLSA associations; and review BIMI or ARC structure without treating structural checks as cryptographic verification.
 
 ### Prepare the next change
 
@@ -40,6 +44,7 @@ Start with a name, then follow the strands through live answers, trust chains, m
 - **Record Studio:** author A, AAAA, CAA, CNAME, DNSKEY, DS, HTTPS, MX, NAPTR, NS, PTR, SOA, SRV, SSHFP, SVCB, TLSA, TXT, and URI records locally. Diagnostics, safe TXT chunks, BIND and JSON output, a deduplicated bounded working set, and local linting help catch loose records before publication. The studio never publishes DNS.
 - **Change Lab:** compare unordered RRsets semantically, separate TTL-only and presentation-only changes, surface bounded risk findings, calculate preparation deadlines and rollback cache horizons, and build staged rollout guidance. It neither publishes records nor assigns a universal propagation-complete time.
 - **Change Workspace:** carry bounded current and intended zone states, explicit incomplete states, structured analysis, rollout and rollback guidance, and historical resolver evidence between Record Studio and Change Lab. Portable files use SHA-256 internal-consistency checks, remain local, and never turn retained resolver endpoints into network targets.
+- **Zone Exchange:** expand bounded local `$INCLUDE` and `$GENERATE` bundles with line provenance, rehearse common service-template records, and create conservative portable configuration drafts. Unsupported or provider-specific behaviour is diagnosed and omitted instead of translated by guesswork; nothing signs in to or changes a DNS provider.
 
 ### Keep evidence on your terms
 
@@ -47,6 +52,7 @@ Start with a name, then follow the strands through live answers, trust chains, m
 - Persistent storage is off by default. Manual, bounded IndexedDB snapshots are available only after the visitor enables them.
 - Share links are created only on request and store their payload in the URL fragment rather than sending it to the hosting server.
 - Passing SPF and DKIM results can move into DMARC assessment through a bounded in-memory hand-off or strict minimal JSON. The transfer excludes mailbox local parts, client addresses, raw messages, selectors, policy text, and trace data.
+- A validated domain can follow the visitor between related tools in current application memory. It is not placed in storage, a URL, or a network request until the visitor starts a relevant live action.
 
 ## Privacy with clear boundaries
 
@@ -57,6 +63,8 @@ Google and Cloudflare send questions directly from the browser to the selected r
 Quad9 no longer accepts DNS-over-HTTPS over HTTP/1.1. A browser, VPN, enterprise inspection product, or network proxy that downgrades the connection can therefore make its direct path unavailable even while the other resolvers work. The single **Quad9** option tries direct browser DNS-over-HTTPS with the first question in each run. A qualifying transport, timeout, or HTTP failure switches that run once to **Quad9 (compatibility mode)**; concurrent questions wait for this decision, so an unavailable direct path cannot create a retry burst. Compatibility mode sends a bounded DNS wire POST body to `/api/doh/quad9`, and the sole Netlify Function forwards it to `https://dns.quad9.net/dns-query` through a fixed Node.js HTTP/2 client. Netlify can then observe the DNS question and ordinary connection metadata. The interface and exports identify the path actually used. The relay uses no request query string, cookies, credentials, application logging, or server-side response cache. Google and Cloudflare evidence remains independent, and no recursive answer is presented as authoritative or globally representative.
 
 SPF sender mode can place parts of a supplied mailbox, IP address, HELO/EHLO name, or receiver name into resolver-visible DNS questions when a policy uses macros. DKIM message mode keeps the raw message in page memory and sends only derived selector TXT questions. The optional DMARC hand-off retains only the authenticated domain, result provenance, capture time, and reconstruction caveat required for later alignment assessment; copying it places that minimal JSON on the clipboard. Use real personal, customer, employee, sender, or message data only when authorised. Prefer synthetic values for demonstrations.
+
+Delegation Lab is the other optional external path. After explicit consent, the browser sends the chosen DNS name, record type, protocol, location request, probe count, and any intended authoritative server directly to the fixed measurement service. That service and the selected probes can observe the requested question and ordinary connection or measurement metadata under their own policies. Mail reports, certificates, BIMI input, zone bundles, templates, and portable exports remain local unless the visitor deliberately copies or downloads them.
 
 Queries are not persisted by default. A bounded anonymous rate-limit ledger stores only opaque request identifiers, timestamps, resolver buckets, and cooldown expiries in local storage; it contains no questions, answers, names, or pasted content. The snapshot opt-in preference contains no domain name. Fragment-only share data is not sent to the hosting server, although browser history and link recipients can still see it.
 
@@ -73,6 +81,7 @@ DNS tools can create real load. Normal browser use is deliberately bounded by:
 - a token bucket with a four-request burst and two requests per second per resolver;
 - a rolling limit of 120 requests per minute and resolver, coordinated across tabs with origin-wide reservation locks where available, replay-resistant events, and a bounded anonymous local ledger;
 - a Netlify-enforced limit of 120 requests per minute per source IP address and site domain for Quad9 compatibility traffic;
+- no more than three external probes per Delegation Lab run and six external measurement runs per rolling hour in the browser;
 - a first-in-first-out queue capped at 256 waiting requests per resolver, with complete cancellation cleanup;
 - an 80-unique-question budget for each user-initiated run;
 - in-flight deduplication and TTL-aware memory caching;
@@ -151,10 +160,12 @@ See [the deployment guide](docs/DEPLOYMENT.md) for the complete procedure.
 ZoneSkein shows its loose ends rather than smoothing them over:
 
 - recursive answers are point-in-time observations, not authoritative answers or proof of global propagation;
+- an external-vantage sample is still bounded and cannot establish worldwide propagation, while disagreement between resolvers or probes does not identify the cause or the correct answer;
 - DNSSEC validates supported delegation, positive, NODATA, NXDOMAIN, wildcard, and alias-continuation proof paths from bundled IANA root trust anchors at one common instant. It is still a bounded selected-type validator rather than a general recursive resolver, and an NSEC3 Opt-Out interval cannot authenticate whether a covered delegation exists;
 - SPF flattening is a work- and cardinality-bounded snapshot tied to absolute source expiries. It is withheld whenever preserving the effective pass set would require guessing, sender context, invalid protocol paths, or partial evidence;
 - the zone parser is a practical subset, not a complete BIND or provider-specific parser. Complete-zone digest mode stops when that subset cannot encode a record exactly and never infers that a snippet is complete;
-- DMARC policy publication does not prove alignment. Alignment mode evaluates supplied prior SPF and DKIM authentication results; DKIM message mode verifies supported signatures but does not establish DMARC alignment, ARC handling, reputation, or delivery; CAA publication does not guarantee issuance.
+- Zone Exchange exports only a conservative common record subset and never represents a draft as provider-ready without review;
+- DMARC policy publication does not prove alignment. Alignment mode evaluates supplied prior SPF and DKIM authentication results; DKIM message mode verifies supported signatures but does not establish DMARC alignment, ARC handling, reputation, or delivery; local report, BIMI and ARC inspection does not reproduce a receiver’s processing; CAA publication does not guarantee issuance.
 
 Read [LIMITATIONS.md](LIMITATIONS.md), [the DNSSEC model](docs/DNSSEC-MODEL.md), and [the SPF flattening model](docs/SPF-FLATTENING-MODEL.md) before relying on the output operationally.
 

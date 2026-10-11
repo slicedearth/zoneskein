@@ -1,5 +1,6 @@
-import { normaliseStrictIpAddress } from '../dns/ip';
-import { parseTtl, ZONE_ANALYSIS_LIMITS } from '../zone/parser';
+import { canonicalMasterName } from '../zone/master-name';
+import { ZONE_ANALYSIS_LIMITS } from '../zone/parser';
+import { canonicalRdataKey, opaqueRecordKey, recordTarget } from '../zone/record-semantics';
 import type { ZoneDocument, ZoneRecord } from '../zone/types';
 import type { DiffReport, DnsChange } from './types';
 
@@ -16,73 +17,39 @@ interface RecordQueue {
   readonly records: IndexedRecord[];
 }
 
-function absoluteTarget(value: string, origin: string | undefined): string {
-  if (value === '@') return origin ?? '@';
-  if (value.endsWith('.')) return value.toLowerCase();
-  return origin === undefined ? value.toLowerCase() : `${value.toLowerCase()}.${origin}`;
-}
-
-function normalizedAddress(value: string): string {
-  return normaliseStrictIpAddress(value) ?? value.toLowerCase();
-}
-
-function semanticTtl(value: string): string {
-  const seconds = parseTtl(value);
-  return seconds === null ? value.toLowerCase() : String(seconds);
-}
-
 function semanticRdata(record: ZoneRecord, origin: string | undefined): string {
   const values = record.rdata.map((token) => token.value);
-  const rawValues = record.rdata.map((token) => token.raw);
   if (record.type === 'TXT') return values.join('');
-  if (record.type === 'A' || record.type === 'AAAA') return normalizedAddress(values[0] ?? '');
-  if (record.type === 'MX') {
-    return `${String(Number(values[0] ?? 0))} ${absoluteTarget(rawValues[1] ?? '', origin)}`;
-  }
-  if (record.type === 'SRV') {
-    return [
-      String(Number(values[0] ?? 0)),
-      String(Number(values[1] ?? 0)),
-      String(Number(values[2] ?? 0)),
-      absoluteTarget(rawValues[3] ?? '', origin),
-    ].join(' ');
-  }
+  // Keep the established application-level CAA tag and TXT equivalence contracts.
+  if (record.type === 'CAA' && canonicalRdataKey(record, origin) !== null)
+    return JSON.stringify([Number(values[0]), values[1]?.toLowerCase(), ...values.slice(2)]);
   if (
-    record.type === 'CNAME' ||
-    record.type === 'DNAME' ||
-    record.type === 'NS' ||
-    record.type === 'PTR'
+    ['A', 'AAAA', 'MX', 'SRV', 'CNAME', 'DNAME', 'NS', 'PTR', 'SOA', 'NAPTR'].includes(
+      record.type,
+    )
   ) {
-    return absoluteTarget(rawValues[0] ?? '', origin);
+    const canonical = canonicalRdataKey(record, origin);
+    if (canonical !== null) return `wire:${canonical}`;
   }
-  if (record.type === 'SOA') {
-    return [
-      absoluteTarget(rawValues[0] ?? '', origin),
-      absoluteTarget(rawValues[1] ?? '', origin),
-      String(Number(values[2] ?? 0)),
-      ...values.slice(3).map(semanticTtl),
-    ].join(' ');
-  }
-  if (record.type === 'CAA') {
-    return [
-      String(Number(values[0] ?? 0)),
-      (values[1] ?? '').toLowerCase(),
-      ...values.slice(2),
-    ].join(' ');
-  }
-  return values.join(' ').replaceAll(/\s+/gu, ' ').trim();
+  return `opaque:${opaqueRecordKey(record)}`;
 }
 
 function indexed(document: ZoneDocument): IndexedRecord[] {
   return document.records.map((record, index) => {
     const semantic = semanticRdata(record, document.origin);
-    const separator = semantic.indexOf(' ');
     return {
       index,
       ...(record.type === 'MX'
-        ? { mxExchange: separator < 0 ? '' : semantic.slice(separator + 1) }
+        ? {
+            mxExchange:
+              recordTarget(record, 1, document.origin)?.absolute ?? opaqueRecordKey(record),
+          }
         : {}),
-      pair: `${record.owner}|${record.type}`,
+      pair: JSON.stringify([
+        canonicalMasterName(record.owner)?.absolute ?? record.owner,
+        record.className,
+        record.type,
+      ]),
       record,
       semantic,
     };

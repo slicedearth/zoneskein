@@ -135,7 +135,7 @@ describe('application shell', () => {
 
     expect(activeLink).toHaveAttribute('aria-current', 'page');
     expect(activeLink.closest('details')).not.toHaveAttribute('open');
-    expect(within(navigation).getAllByRole('link')).toHaveLength(12);
+    expect(within(navigation).getAllByRole('link')).toHaveLength(17);
   });
 
   it('updates the document title for known and unknown routes', async () => {

@@ -855,6 +855,22 @@ function encodeRdata(record: ZoneRecord, origin: string | undefined): EncodeResu
   return failure(`Record type ${record.type} has no supported canonical encoder.`);
 }
 
+/** The same bounded RDATA encoder used by digesting, comparison and export checks. */
+export function canonicalRecordRdata(
+  record: ZoneRecord,
+  fallbackOrigin?: string,
+): EncodeResult {
+  if (
+    record.rdata.length > 32_768 ||
+    record.rdata.reduce((total, token) => total + token.raw.length, 0) > 262_144
+  )
+    return failure('Record exceeds the canonical encoding input bound.');
+  const result = encodeRdata(record, record.origin ?? fallbackOrigin);
+  return result.ok && result.bytes.length > MAX_RDATA_OCTETS
+    ? failure('Record exceeds the DNS RDATA limit.')
+    : result;
+}
+
 function compareNames(left: CanonicalMasterName, right: CanonicalMasterName): number {
   const length = Math.max(left.labels.length, right.labels.length);
   for (let offset = 1; offset <= length; offset += 1) {

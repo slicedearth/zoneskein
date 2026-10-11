@@ -23,7 +23,7 @@ const root = resolve(import.meta.dirname, '..');
 const output = join(root, 'dist');
 const functionsDirectory = join(root, 'netlify', 'functions');
 const MAX_FILES = 160;
-const MAX_TOTAL_OCTETS = 6 * 1024 * 1024;
+const MAX_TOTAL_OCTETS = 7 * 1024 * 1024;
 const MAX_SINGLE_ASSET_OCTETS = 512 * 1024;
 const MAX_FUNCTION_SOURCE_OCTETS = 64 * 1024;
 const MAX_SOURCE_ARCHIVE_OCTETS = 5 * 1024 * 1024;
@@ -339,15 +339,23 @@ await Promise.all([
   verifyJpeg('public/social-card.jpg', 1200, 630, 256 * 1024),
 ]);
 
-const [html, headers, redirects, resolverSource, netlifyConfig, relaySource] =
-  await Promise.all([
-    readFile(join(output, 'index.html'), 'utf8'),
-    readFile(join(output, '_headers'), 'utf8'),
-    readFile(join(output, '_redirects'), 'utf8'),
-    readFile(join(root, 'src/core/doh/resolvers.ts'), 'utf8'),
-    readFile(join(root, 'netlify.toml'), 'utf8'),
-    quad9RelaySource(),
-  ]);
+const [
+  html,
+  headers,
+  redirects,
+  resolverSource,
+  measurementSource,
+  netlifyConfig,
+  relaySource,
+] = await Promise.all([
+  readFile(join(output, 'index.html'), 'utf8'),
+  readFile(join(output, '_headers'), 'utf8'),
+  readFile(join(output, '_redirects'), 'utf8'),
+  readFile(join(root, 'src/core/doh/resolvers.ts'), 'utf8'),
+  readFile(join(root, 'src/core/measurement/globalping.ts'), 'utf8'),
+  readFile(join(root, 'netlify.toml'), 'utf8'),
+  quad9RelaySource(),
+]);
 
 if (
   !/<link\b(?=[^>]*\brel="icon")(?=[^>]*\bhref="\/favicon\.ico")(?=[^>]*\btype="image\/x-icon")[^>]*>/u.test(
@@ -483,7 +491,18 @@ const resolverOrigins = new Set(
     .map((endpoint) => new URL(endpoint).origin),
 );
 if (resolverOrigins.size !== 3) fail('expected exactly three fixed resolver origins.');
-const expectedConnections = new Set(["'self'", ...resolverOrigins]);
+const measurementUrls = measurementSource.match(/https?:\/\/[^'"\s`)]+/gu) ?? [];
+if (
+  measurementUrls.length !== 1 ||
+  measurementUrls[0] !== 'https://api.globalping.io/v1/measurements'
+) {
+  fail('external measurement source does not contain exactly one fixed API URL.');
+}
+const expectedConnections = new Set([
+  "'self'",
+  ...resolverOrigins,
+  new URL(measurementUrls[0]).origin,
+]);
 const structuredDataHash = `'sha256-${createHash('sha256')
   .update(STRUCTURED_DATA_JSON)
   .digest('base64')}'`;

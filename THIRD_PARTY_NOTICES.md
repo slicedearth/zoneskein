@@ -1,5 +1,27 @@
 # Third-party notices
 
+## RFC-derived protocol test data
+
+The SHA-1 and SHA-256 DS numeric examples also reproduce published test data from [RFC 4034 section 5.4](https://www.rfc-editor.org/rfc/rfc4034.html#section-5.4) and [RFC 4509 section 2.3](https://www.rfc-editor.org/rfc/rfc4509.html#section-2.3). Their original notices are Copyright (C) The Internet Society (2005) and Copyright (C) The Internet Society (2006), respectively. These older documents retain their original BCP 78 rights and warranty disclaimers; they are not relabelled as project-authored data or covered by a later publication date.
+
+The DNSSEC and ZONEMD test corpus contains data derived from [RFC 5702](https://www.rfc-editor.org/rfc/rfc5702), [RFC 6605](https://www.rfc-editor.org/rfc/rfc6605), [RFC 8080](https://www.rfc-editor.org/rfc/rfc8080) and [RFC 8976](https://www.rfc-editor.org/rfc/rfc8976). Independently generated DNSKEY signatures are identified in their test source and are not represented as published RFC signatures. See `docs/VERIFICATION.md` for the corpus inventory.
+
+The ECH decoder corpus reproduces only the public ECHCONFIG value from [RFC 9934 section 3, Figure 1](https://www.rfc-editor.org/rfc/rfc9934.html#section-3). No private-key material is included. Its original notice is Copyright (c) 2026 IETF Trust and the document authors.
+
+Copyright (c) 2009, 2012, 2017, 2021, 2026 IETF Trust and the persons identified as authors of the code. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
+
+- Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
+- Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
+- Neither the name of Internet Society, IETF or IETF Trust, nor the names of specific contributors, may be used to endorse or promote products derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+These are the IETF Trust's [Code Component terms](https://trustee.ietf.org/documents/trust-legal-provisions/tlp-5/). Older RFC notices call this the Simplified BSD Licence; the Trust identifies the unchanged text as Revised BSD.
+
+## Runtime packages and emitted helpers
+
 ZoneSkein’s original source is AGPL-3.0-only. The packages below are separate works and retain their own licences. The browser runtime dependency tree was reviewed at the versions locked for ZoneSkein 0.1.0. Vite and Rolldown are development dependencies, but their generated runtime helpers are distributed in the built browser artefacts, so their notices are included here as well.
 
 | Package                                           |         Version | Licence      | Source                                                                                         | Purpose                                    |
@@ -7,23 +29,44 @@ ZoneSkein’s original source is AGPL-3.0-only. The packages below are separate 
 | `@fontsource-variable/atkinson-hyperlegible-next` |           5.3.0 | OFL-1.1      | <https://github.com/fontsource/font-files/tree/main/fonts/variable/atkinson-hyperlegible-next> | Self-hosted interface typography           |
 | `@fontsource-variable/bricolage-grotesque`        |           5.3.0 | OFL-1.1      | <https://github.com/fontsource/font-files/tree/main/fonts/variable/bricolage-grotesque>        | Self-hosted display typography             |
 | `@dnsquery/dns-packet`                            |           6.1.1 | MIT          | <https://github.com/dnsquery/dns-packet>                                                       | DNS wire-message encoding and decoding     |
-| `@noble/curves`                                   |           2.3.0 | MIT          | <https://github.com/paulmillr/noble-curves>                                                    | Ed448 DNSSEC signature verification        |
-| `@noble/hashes`                                   |           2.3.0 | MIT          | <https://github.com/paulmillr/noble-hashes>                                                    | Transitive SHAKE256 for Ed448              |
+| `@noble/curves`                                   |           2.4.0 | MIT          | <https://github.com/paulmillr/noble-curves>                                                    | Ed448 DNSSEC signature verification        |
+| `@noble/hashes`                                   |           2.4.0 | MIT          | <https://github.com/paulmillr/noble-hashes>                                                    | Transitive SHAKE256 for Ed448              |
+| `@peculiar/asn1-schema`                           |           2.9.4 | MIT          | <https://github.com/PeculiarVentures/asn1-schema/tree/master/packages/schema>                  | ASN.1 schema parsing and serialisation     |
+| `@peculiar/asn1-x509`                             |           2.9.4 | MIT          | <https://github.com/PeculiarVentures/asn1-schema/tree/master/packages/x509>                    | X.509 certificate structures               |
+| `@peculiar/utils`                                 |           2.0.3 | MIT          | <https://github.com/PeculiarVentures/pvtsutils>                                                | Transitive bounded byte utilities          |
 | `@leichtgewicht/ip-codec`                         |           2.0.5 | MIT          | <https://github.com/martinheidegger/ip-codec>                                                  | Transitive IP wire codec                   |
+| `asn1js`                                          |          3.0.10 | BSD-3-Clause | <https://github.com/PeculiarVentures/ASN1.js>                                                  | Transitive ASN.1 runtime                   |
 | `utf8-codec`                                      |           1.0.0 | MIT          | <https://github.com/martinheidegger/utf8-codec>                                                | Transitive UTF-8 wire codec                |
 | `cidr-tools`                                      |          13.0.1 | BSD-2-Clause | <https://github.com/silverwind/cidr-tools>                                                     | Safe CIDR normalisation and coalescing     |
 | `cidr-regex`                                      |           7.1.0 | BSD-2-Clause | <https://github.com/silverwind/cidr-regex>                                                     | Transitive strict CIDR validation          |
 | `ip-bigint`                                       |          10.0.1 | BSD-2-Clause | <https://github.com/silverwind/ip-bigint>                                                      | Transitive integer CIDR operations         |
+| `d3-color`                                        |           3.1.0 | ISC          | <https://github.com/d3/d3-color>                                                               | Transitive graph colour interpolation      |
+| `d3-dispatch`                                     |           3.0.1 | ISC          | <https://github.com/d3/d3-dispatch>                                                            | Transitive graph event dispatch            |
+| `d3-drag`                                         |           3.0.0 | ISC          | <https://github.com/d3/d3-drag>                                                                | Evidence-graph node dragging               |
+| `d3-ease`                                         |           3.0.1 | BSD-3-Clause | <https://github.com/d3/d3-ease>                                                                | Transitive graph transition easing         |
+| `d3-force`                                        |           3.0.0 | ISC          | <https://github.com/d3/d3-force>                                                               | Evidence-graph force layout                |
+| `d3-interpolate`                                  |           3.0.1 | ISC          | <https://github.com/d3/d3-interpolate>                                                         | Transitive graph interpolation             |
+| `d3-quadtree`                                     |           3.0.1 | ISC          | <https://github.com/d3/d3-quadtree>                                                            | Transitive force-layout spatial index      |
+| `d3-selection`                                    |           3.0.0 | ISC          | <https://github.com/d3/d3-selection>                                                           | Evidence-graph SVG interaction             |
+| `d3-timer`                                        |           3.0.1 | ISC          | <https://github.com/d3/d3-timer>                                                               | Transitive graph scheduling                |
+| `d3-transition`                                   |           3.0.1 | ISC          | <https://github.com/d3/d3-transition>                                                          | Transitive zoom transition support         |
+| `d3-zoom`                                         |           3.0.0 | ISC          | <https://github.com/d3/d3-zoom>                                                                | Evidence-graph pan and zoom                |
+| `fflate`                                          |           0.8.3 | MIT          | <https://github.com/101arrowz/fflate>                                                          | Bounded local report archive expansion     |
 | `idb`                                             |           8.0.3 | ISC          | <https://github.com/jakearchibald/idb>                                                         | Explicitly enabled IndexedDB snapshots     |
 | `html-entities`                                   |           2.6.0 | MIT          | <https://github.com/mdevils/html-entities>                                                     | Transitive Markdown entity codec           |
 | `ipaddr.js`                                       |           2.5.0 | MIT          | <https://github.com/whitequark/ipaddr.js>                                                      | IPv4 and IPv6 parsing and validation       |
-| `marked`                                          | 17.0.6, 18.0.11 | MIT          | <https://github.com/markedjs/marked>                                                           | Document rendering and export safety tests |
+| `marked`                                          | 17.0.6, 18.0.13 | MIT          | <https://github.com/markedjs/marked>                                                           | Document rendering and export safety tests |
 | `marked-react`                                    |           4.0.0 | MIT          | <https://github.com/sibiraj-s/marked-react>                                                    | Semantic public-document rendering         |
-| `react`                                           |          19.2.8 | MIT          | <https://github.com/facebook/react>                                                            | User interface runtime                     |
-| `react-dom`                                       |          19.2.8 | MIT          | <https://github.com/facebook/react>                                                            | Browser rendering                          |
-| `scheduler`                                       |          0.27.0 | MIT          | <https://github.com/facebook/react>                                                            | Transitive React scheduling runtime        |
-| `vite`                                            |           8.2.2 | MIT          | <https://github.com/vitejs/vite>                                                               | Generated module-preload helper            |
-| `rolldown`                                        |           1.2.4 | MIT          | <https://github.com/rolldown/rolldown>                                                         | Generated module runtime helpers           |
+| `pvtsutils`                                       |           1.3.6 | MIT          | <https://github.com/PeculiarVentures/pvtsutils>                                                | Transitive ASN.1 byte utilities            |
+| `pvutils`                                         |           1.2.0 | MIT          | <https://github.com/PeculiarVentures/pvutils>                                                  | Transitive ASN.1 utilities                 |
+| `react`                                           |          19.3.0 | MIT          | <https://github.com/facebook/react>                                                            | User interface runtime                     |
+| `react-dom`                                       |          19.3.0 | MIT          | <https://github.com/facebook/react>                                                            | Browser rendering                          |
+| `saxes`                                           |           6.0.0 | ISC          | <https://github.com/lddubeau/saxes>                                                            | Streaming XML and SVG parsing              |
+| `scheduler`                                       |          0.28.0 | MIT          | <https://github.com/facebook/react>                                                            | Transitive React scheduling runtime        |
+| `tslib`                                           |           2.8.1 | 0BSD         | <https://github.com/microsoft/tslib>                                                           | Transitive TypeScript runtime helpers      |
+| `vite`                                            |           8.3.0 | MIT          | <https://github.com/vitejs/vite>                                                               | Generated module-preload helper            |
+| `xmlchars`                                        |           2.2.0 | MIT          | <https://github.com/lddubeau/xmlchars>                                                         | Transitive XML character tables            |
+| `rolldown`                                        |           1.2.6 | MIT          | <https://github.com/rolldown/rolldown>                                                         | Generated module runtime helpers           |
 
 ## Licence texts
 
@@ -257,6 +300,349 @@ LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
 ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+### `@peculiar/asn1-schema` and `@peculiar/asn1-x509`
+
+These packages ship byte-identical `LICENSE` files, reproduced once below.
+
+```text
+MIT License
+
+Copyright (c) 2020
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### `@peculiar/utils`
+
+```text
+MIT License
+
+Copyright (c) 2017-2026 Peculiar Ventures, LLC
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### `asn1js`
+
+```text
+Copyright (c) 2014, GMO GlobalSign
+Copyright (c) 2015-2022, Peculiar Ventures
+All rights reserved.
+
+Author 2014-2019, Yury Strozhevsky
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+* Redistributions of source code must retain the above copyright notice, this
+  list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright notice, this
+  list of conditions and the following disclaimer in the documentation and/or
+  other materials provided with the distribution.
+
+* Neither the name of the copyright holder nor the names of its
+  contributors may be used to endorse or promote products derived from
+  this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+### D3 graph modules except `d3-color` and `d3-ease`
+
+`d3-dispatch`, `d3-drag`, `d3-force`, `d3-interpolate`, `d3-quadtree`,
+`d3-selection`, `d3-timer`, `d3-transition`, and `d3-zoom` ship byte-identical
+`LICENSE` files, reproduced once below.
+
+```text
+Copyright 2010-2021 Mike Bostock
+
+Permission to use, copy, modify, and/or distribute this software for any purpose
+with or without fee is hereby granted, provided that the above copyright notice
+and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS
+OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
+THIS SOFTWARE.
+```
+
+### `d3-color`
+
+```text
+Copyright 2010-2022 Mike Bostock
+
+Permission to use, copy, modify, and/or distribute this software for any purpose
+with or without fee is hereby granted, provided that the above copyright notice
+and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS
+OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
+THIS SOFTWARE.
+```
+
+### `d3-ease`
+
+```text
+Copyright 2010-2021 Mike Bostock
+Copyright 2001 Robert Penner
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+* Redistributions of source code must retain the above copyright notice, this
+  list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright notice,
+  this list of conditions and the following disclaimer in the documentation
+  and/or other materials provided with the distribution.
+
+* Neither the name of the author nor the names of contributors may be used to
+  endorse or promote products derived from this software without specific prior
+  written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+### `fflate`
+
+```text
+MIT License
+
+Copyright (c) 2026 Arjun Barrett
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### `pvtsutils`
+
+```text
+MIT License
+
+Copyright (c) 2017-2024 Peculiar Ventures, LLC
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### `pvutils`
+
+```text
+MIT License
+
+Copyright (c) 2016-2019, Peculiar Ventures
+All rights reserved.
+
+Author 2016-2019, Yury Strozhevsky
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### `saxes`
+
+The v6.0.0 source release includes the following notices for `saxes`, the
+parser from which it was forked, and a helper retained in old commits.
+
+```text
+The ISC License
+
+Copyright (c) Contributors
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
+IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+The ISC License
+
+Copyright (c) Isaac Z. Schlueter and Contributors
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
+IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+Copyright Mathias Bynens <https://mathiasbynens.be/>
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
+
+### `tslib`
+
+```text
+Copyright (c) Microsoft Corporation.
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
+IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+```
+
+### `xmlchars`
+
+```text
+Copyright Louis-Dominique Dubeau and contributors to xmlchars
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
 ### `idb`
