@@ -8,6 +8,8 @@ import {
   realpathSync,
 } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
+import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 
 import react from '@vitejs/plugin-react';
 import { defineConfig, type Plugin } from 'vite';
@@ -16,7 +18,7 @@ import { renderSeoHead, replaceSeoHead, SEO_ROUTES, seoRoute } from './src/seo.t
 
 const repositoryRoot = realpathSync(import.meta.dirname);
 
-function publicDocumentSource(fileName: string): string {
+function repositoryFileBytes(fileName: string): Buffer {
   const path = resolve(repositoryRoot, fileName);
   const fromRoot = relative(repositoryRoot, path);
   if (fromRoot === '' || fromRoot === '..' || fromRoot.startsWith(`..${sep}`)) {
@@ -36,14 +38,18 @@ function publicDocumentSource(fileName: string): string {
   const descriptor = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
   try {
     const size = fstatSync(descriptor).size;
-    const source = readFileSync(descriptor, 'utf8');
-    if (Buffer.byteLength(source) !== size) {
+    const source = readFileSync(descriptor);
+    if (source.length !== size) {
       throw new Error(`Public document ${fileName} changed while it was read.`);
     }
     return source;
   } finally {
     closeSync(descriptor);
   }
+}
+
+function publicDocumentSource(fileName: string): string {
+  return repositoryFileBytes(fileName).toString('utf8');
 }
 
 function publicDocuments(): Plugin {
@@ -69,6 +75,40 @@ function publicDocuments(): Plugin {
     },
     name: 'zoneskein-public-documents',
   };
+}
+
+function buildProvenance() {
+  const paths: unknown = JSON.parse(publicDocumentSource('SOURCE_FILES.json'));
+  if (!Array.isArray(paths) || !paths.every((path): path is string => typeof path === 'string'))
+    throw new Error('The source inventory must be a string array.');
+  const hash = createHash('sha256');
+  for (const path of paths) {
+    // Binary assets must be fingerprinted as bytes, not decoded text.
+    const content = repositoryFileBytes(path);
+    hash.update(JSON.stringify([path, content.length]));
+    hash.update(content);
+  }
+  let revision: string | null = null;
+  let modified: boolean | null = null;
+  try {
+    const head = execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: repositoryRoot,
+      encoding: 'utf8',
+      timeout: 5_000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+    if (/^[a-f0-9]{40}$/u.test(head)) revision = head;
+    modified =
+      execFileSync('git', ['status', '--porcelain', '--untracked-files=normal'], {
+        cwd: repositoryRoot,
+        encoding: 'utf8',
+        timeout: 5_000,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }).trim() !== '';
+  } catch {
+    /* Extracted corresponding-source archives do not contain Git metadata. */
+  }
+  return { modified, revision, sourceSha256: hash.digest('hex') };
 }
 
 function routeMetadataPages(): Plugin {
@@ -126,6 +166,7 @@ function developmentStyleCompatibility(): Plugin {
 }
 
 export default defineConfig({
+  define: { __ZONESKEIN_BUILD__: JSON.stringify(buildProvenance()) },
   root: repositoryRoot,
   build: {
     outDir: 'dist',

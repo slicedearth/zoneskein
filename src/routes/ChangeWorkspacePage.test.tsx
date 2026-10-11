@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { StrictMode, useState } from 'react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -98,10 +98,14 @@ function buffer(text: string): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
 }
 
-function localFile(text: string, name = 'workspace.zoneskein.json'): File {
+function localFile(
+  text: string,
+  name = 'workspace.zoneskein.json',
+  read?: () => Promise<ArrayBuffer>,
+): File {
   const bytes = buffer(text);
   return {
-    arrayBuffer: vi.fn(() => Promise.resolve(bytes)),
+    arrayBuffer: read ?? vi.fn(() => Promise.resolve(bytes)),
     name,
     size: bytes.byteLength,
   } as unknown as File;
@@ -113,7 +117,121 @@ function chooseFile(file: File): void {
   });
 }
 
+function deferredBuffer() {
+  let resolve: (value: ArrayBuffer) => void = () => undefined;
+  const promise = new Promise<ArrayBuffer>((accept) => {
+    resolve = accept;
+  });
+  return { promise, resolve };
+}
+
 describe('local Change Workspace', () => {
+  it('clears the pending indicator when edits normalise to the existing workspace', () => {
+    render(<ChangeWorkspacePage initialWorkspace={workspace()} />);
+    fireEvent.change(screen.getByLabelText('Workspace title'), {
+      target: { value: '  Address rollout  ' },
+    });
+    expect(screen.getByRole('button', { name: 'Export JSON' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Apply edits' }));
+    expect(screen.getByLabelText('Workspace title')).toHaveValue('Address rollout');
+    expect(screen.getByRole('button', { name: 'Export JSON' })).toBeEnabled();
+  });
+
+  it('retains unapplied edits when a pending replacement is cancelled', async () => {
+    const callback = vi.fn();
+    render(
+      <StrictMode>
+        <ChangeWorkspacePage initialWorkspace={workspace()} onWorkspaceChange={callback} />
+      </StrictMode>,
+    );
+    fireEvent.change(screen.getByLabelText('Workspace title'), {
+      target: { value: 'Unapplied title' },
+    });
+    expect(screen.getByRole('button', { name: 'Export JSON' })).toBeDisabled();
+    chooseFile(localFile(await serialised(workspace('Replacement'))));
+    await screen.findByRole('button', { name: 'Replace active workspace' });
+    expect(callback).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel import' }));
+    expect(screen.getByLabelText('Import workspace file')).toHaveFocus();
+    expect(screen.getByLabelText('Workspace title')).toHaveValue('Unapplied title');
+    expect(screen.getByRole('heading', { name: 'Address rollout' })).toBeVisible();
+    expect(callback).not.toHaveBeenCalled();
+  });
+
+  it.each(['read', 'digest'] as const)(
+    'ignores a deferred import %s after navigation to a newer workspace',
+    async (phase) => {
+      const imported = await serialised(workspace('Old import'));
+      const digestHex = (JSON.parse(imported) as { integrity: { digest: string } }).integrity
+        .digest;
+      const correctDigest = Uint8Array.from(digestHex.match(/../gu) ?? [], (hex) =>
+        Number.parseInt(hex, 16),
+      ).buffer;
+      const pending = deferredBuffer();
+      if (phase === 'digest')
+        vi.stubGlobal('crypto', {
+          randomUUID: () => uuid(8),
+          subtle: { digest: vi.fn(() => pending.promise) },
+        });
+      const onWorkspaceChange = vi.fn();
+      const onActiveWorkspaceChange = vi.fn();
+      const view = render(
+        <StrictMode>
+          <ChangeWorkspacePage
+            initialWorkspace={workspace()}
+            onWorkspaceChange={onWorkspaceChange}
+            onActiveWorkspaceChange={onActiveWorkspaceChange}
+          />
+        </StrictMode>,
+      );
+      chooseFile(
+        phase === 'read'
+          ? localFile(imported, 'pending.json', () => pending.promise)
+          : localFile(imported),
+      );
+      await act(async () => {
+        await Promise.resolve();
+      });
+      view.unmount();
+      render(<ChangeWorkspacePage initialWorkspace={workspace('Newer workspace')} />);
+      await act(async () => {
+        pending.resolve(phase === 'read' ? buffer(imported) : correctDigest);
+        await pending.promise;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      });
+      expect(onWorkspaceChange).not.toHaveBeenCalled();
+      expect(onActiveWorkspaceChange).not.toHaveBeenCalled();
+      expect(screen.getByRole('heading', { name: 'Newer workspace' })).toBeVisible();
+    },
+  );
+
+  it.each(['Export JSON', 'Export validation report'])(
+    'does not download a deferred %s after unmount',
+    async (buttonName) => {
+      const pending = deferredBuffer();
+      vi.stubGlobal('crypto', {
+        randomUUID: () => uuid(8),
+        subtle: { digest: () => pending.promise },
+      });
+      const click = vi
+        .spyOn(HTMLAnchorElement.prototype, 'click')
+        .mockImplementation(() => undefined);
+      const view = render(
+        <StrictMode>
+          <ChangeWorkspacePage initialWorkspace={workspace()} />
+        </StrictMode>,
+      );
+      fireEvent.click(screen.getByRole('button', { name: buttonName }));
+      view.unmount();
+      await act(async () => {
+        pending.resolve(new Uint8Array(32).buffer);
+        await pending.promise;
+      });
+      expect(click).not.toHaveBeenCalled();
+      expect(createObjectUrl).not.toHaveBeenCalled();
+    },
+  );
+
   beforeEach(() => {
     createObjectUrl.mockClear();
     revokeObjectUrl.mockClear();
@@ -148,11 +266,13 @@ describe('local Change Workspace', () => {
     );
 
     chooseFile(localFile(await serialised(imported)));
+    fireEvent.click(await screen.findByRole('button', { name: 'Replace active workspace' }));
 
     expect(
       await screen.findByText(/Workspace imported after strict schema and digest validation/iu),
     ).toBeVisible();
     expect(screen.getByRole('heading', { name: 'Validated import' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Validated import' })).toHaveFocus();
     expect(screen.getByText(/^SHA-256 internally consistent:/u)).toBeVisible();
     expect(screen.getByText(/exported JSON is not encrypted/iu)).toBeVisible();
     expect(screen.getByText(/stored analysis supplied with or captured into/iu)).toBeVisible();
@@ -281,6 +401,7 @@ describe('local Change Workspace', () => {
     render(<ChangeWorkspacePage initialWorkspace={workspace()} />);
 
     chooseFile(localFile(await serialised(workspaceWithEndpoint())));
+    fireEvent.click(await screen.findByRole('button', { name: 'Replace active workspace' }));
 
     const endpoint = await screen.findByText(
       'https://attacker.example.test/dns-query?next=javascript%3Aalert%281%29',

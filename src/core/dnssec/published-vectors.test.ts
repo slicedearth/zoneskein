@@ -47,7 +47,7 @@ interface PublishedSignatureVector {
  * is identical and validators must retain SHA-1 compatibility.
  *
  * The RFC examples sign A or MX records, while this validator deliberately
- * canonicalises only DNSSEC infrastructure RRsets. The DNSKEY signatures below
+ * also canonicalises DNSSEC infrastructure RRsets. The DNSKEY signatures below
  * were therefore generated once, independently of the application, with Node.js
  * 26.4.0 node:crypto backed by OpenSSL 3.6.3. An RFC 4034 wire encoder assembled
  * each complete signed-data value; RSA used PKCS#1 v1.5, ECDSA used IEEE P1363

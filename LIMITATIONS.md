@@ -60,9 +60,13 @@ Service-template preview validates and instantiates the supported common record 
 
 Change Lab normalisation treats ordinary RRset ordering as non-semantic and recognises selected name and numeric fields. Its risk and timing guidance is derived only from supplied or selected records. Unselected RR types, provider behaviour, application dependencies, and recursive-cache state remain outside its evidence, so it cannot assign a universal propagation-complete time.
 
+Relative targets use each record's active origin, independently of the zone apex used for in-zone checks. Quoted data retains its whitespace and token boundaries. Equality evidence distinguishes canonical-wire equality, known SPF application equivalence, opaque-data equality and unsupported semantics without changing the existing change categories. TXT concatenation equivalence does not imply identical wire strings or establish an unknown application's interpretation.
+
 Change Workspace carries bounded current and intended BIND-style text, explicit complete, partial, or unavailable state, structured Change Lab analysis, and optional historical resolver evidence. It does not discover missing records, poll propagation, publish DNS, persist automatically, or authenticate an author. Import validation checks structure and internal consistency; it does not reproduce or endorse stored analysis, which remains supplied historical data until local reanalysis. A SHA-256 mismatch shows that the content no longer matches the included digest; a match shows internal consistency only because anyone modifying the file can recompute its digest. Imported resolver endpoints are inert provenance and are never queried. Local reanalysis is blocked when either zone state is unavailable and remains partial when an input is partial, so unknown data is never interpreted as an empty zone.
 
 Workspace JSON, snapshots, copied evidence, share fragments, and source-archive checksums are not encryption or signatures. Visitors are responsible for having authority to process the data they enter and for protecting every export and recipient they choose.
+
+Validated imports wait for explicit replacement; cancellation and navigation invalidate pending work. Unapplied edits must be applied before analysis or export. The optional `zoneskein-workspace-validation-report-v1` sidecar binds the workspace digest to a source fingerprint, available Git revision and validation status. It is separate from the unchanged `zoneskein-project-v1` envelope, and identifies supplied/prior analysis versus recomputation in the current session. Neither report authenticates an author.
 
 ## Mail reports, transport policy, DMARC, DKIM, BIMI, ARC, and CAA
 

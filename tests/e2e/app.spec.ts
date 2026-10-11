@@ -1,5 +1,6 @@
 import { decode, encode, type Answer } from '@dnsquery/dns-packet';
 import { expect, test, type Page, type Route } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
 
 async function allowCors(route: Route): Promise<boolean> {
   if (route.request().method() !== 'OPTIONS') return false;
@@ -287,6 +288,59 @@ test('change comparison builds a risk-aware staged rollout', async ({ page }) =>
   await expect(
     page.getByRole('heading', { name: 'Publish in dependency order' }),
   ).toBeVisible();
+});
+
+test('offline examples require explicit replacement and keep uncertainty visible', async ({
+  page,
+}) => {
+  await page.goto('/workspace/');
+  await page.getByText('Try a synthetic offline example', { exact: true }).click();
+  expect(
+    await page
+      .getByLabel('Example scenario')
+      .evaluate((element) => element.getBoundingClientRect().height),
+  ).toBeGreaterThanOrEqual(44);
+  await page.getByLabel('Example scenario').selectOption('incomplete');
+  await page.getByRole('button', { name: 'Prepare offline example' }).click();
+  await expect(page.getByRole('heading', { name: 'Import ready for review' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Untitled change workspace' })).toBeVisible();
+  await page.getByRole('button', { name: 'Replace active workspace' }).click();
+  await expect(
+    page.getByRole('heading', { name: 'Synthetic: Incomplete resolver evidence' }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'Synthetic: Incomplete resolver evidence' }),
+  ).toBeFocused();
+  await expect(
+    page.locator('.status-badge').filter({ hasText: 'Overall risk unknown' }),
+  ).toBeVisible();
+  await page.getByLabel('Workspace title').fill('Pending local edit');
+  await expect(page.getByRole('button', { name: 'Export JSON', exact: true })).toBeDisabled();
+  await expect(page.getByText(/Unapplied edits\. Apply them/u)).toBeVisible();
+  await page.getByRole('button', { name: 'Apply edits' }).click();
+  await expect(page.getByRole('button', { name: 'Export JSON', exact: true })).toBeEnabled();
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Export validation report' }).click();
+  const reportDownload = await download;
+  expect(reportDownload.suggestedFilename()).toBe(
+    'zoneskein-pending-local-edit.validation.json',
+  );
+  const reportPath = await reportDownload.path();
+  const report: unknown = JSON.parse(await readFile(reportPath, 'utf8'));
+  expect(report).toMatchObject({
+    format: 'zoneskein-workspace-validation-report-v1',
+    workspaceSchema: 'zoneskein-project-v1',
+    build: {
+      revision: expect.stringMatching(/^[a-f0-9]{40}$/u),
+      sourceSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+    },
+    validation: {
+      schema: 'validated',
+      integrity: 'fresh-internal-consistency-digest',
+      authenticity: 'not-established',
+      analysisSource: 'supplied-or-prior-analysis-not-recomputed',
+    },
+  });
 });
 
 test('change workspace keeps unavailable records unknown and edits locally', async ({

@@ -1164,6 +1164,10 @@ footer a:hover {
   color: color-mix(in srgb, var(--muted) 75%, transparent);
 }
 
+#workspace-example {
+  height: 46px;
+}
+
 .compare-control {
   align-self: end;
   min-height: 46px;
@@ -1530,6 +1534,11 @@ table {
 
 .record-table {
   min-width: min(42rem, 100%);
+  table-layout: fixed;
+}
+
+.change-records-table {
+  min-width: 52rem;
   table-layout: fixed;
 }
 
@@ -2086,6 +2095,10 @@ summary {
 
 .diagnostic-list li > span:last-child {
   flex: 1;
+}
+
+.diagnostic-list li > .status-badge {
+  flex: 0 0 auto;
 }
 
 .diagnostic-list li:last-child {

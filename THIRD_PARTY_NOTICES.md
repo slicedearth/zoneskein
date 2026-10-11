@@ -1,5 +1,25 @@
 # Third-party notices
 
+## RFC-derived protocol test data
+
+The SHA-1 and SHA-256 DS numeric examples also reproduce published test data from [RFC 4034 section 5.4](https://www.rfc-editor.org/rfc/rfc4034.html#section-5.4) and [RFC 4509 section 2.3](https://www.rfc-editor.org/rfc/rfc4509.html#section-2.3). Their original notices are Copyright (C) The Internet Society (2005) and Copyright (C) The Internet Society (2006), respectively. These older documents retain their original BCP 78 rights and warranty disclaimers; they are not relabelled as project-authored data or covered by a later publication date.
+
+The DNSSEC and ZONEMD test corpus contains data derived from [RFC 5702](https://www.rfc-editor.org/rfc/rfc5702), [RFC 6605](https://www.rfc-editor.org/rfc/rfc6605), [RFC 8080](https://www.rfc-editor.org/rfc/rfc8080) and [RFC 8976](https://www.rfc-editor.org/rfc/rfc8976). Independently generated DNSKEY signatures are identified in their test source and are not represented as published RFC signatures. See `docs/VERIFICATION.md` for the corpus inventory.
+
+Copyright (c) 2009, 2012, 2017, 2021 IETF Trust and the persons identified as authors of the code. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
+
+- Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
+- Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
+- Neither the name of Internet Society, IETF or IETF Trust, nor the names of specific contributors, may be used to endorse or promote products derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+These are the IETF Trust's [Code Component terms](https://trustee.ietf.org/documents/trust-legal-provisions/tlp-5/). Older RFC notices call this the Simplified BSD Licence; the Trust identifies the unchanged text as Revised BSD.
+
+## Runtime packages and emitted helpers
+
 ZoneSkein’s original source is AGPL-3.0-only. The packages below are separate works and retain their own licences. The browser runtime dependency tree was reviewed at the versions locked for ZoneSkein 0.1.0. Vite and Rolldown are development dependencies, but their generated runtime helpers are distributed in the built browser artefacts, so their notices are included here as well.
 
 | Package                                           |         Version | Licence      | Source                                                                                         | Purpose                                    |

@@ -166,6 +166,19 @@ function mechanism(token: SpfToken, diagnostics: SpfDiagnostic[]): SpfMechanism 
   if (split.error !== undefined)
     diagnostics.push(diagnostic('invalid-cidr', split.error, token));
   const argument = split.base === '' ? undefined : split.base;
+  if (valueAfterName.startsWith(':') && argument === undefined) {
+    diagnostics.push(
+      diagnostic('empty-domain-spec', `${name} has an explicit empty argument.`, token),
+    );
+  }
+  if (
+    (name === 'include' || name === 'exists' || name === 'ip4' || name === 'ip6') &&
+    !valueAfterName.startsWith(':')
+  ) {
+    diagnostics.push(
+      diagnostic('missing-colon', `${name} requires a colon before its argument.`, token),
+    );
+  }
 
   if (
     name !== 'a' &&
@@ -184,7 +197,7 @@ function mechanism(token: SpfToken, diagnostics: SpfDiagnostic[]): SpfMechanism 
       diagnostic('missing-domain-spec', `${name} requires a domain specification.`, token),
     );
   }
-  if (name === 'all' && (argument !== undefined || split.cidr !== undefined)) {
+  if (name === 'all' && valueAfterName !== '') {
     diagnostics.push(
       diagnostic('all-argument', 'all does not accept an argument or CIDR length.', token),
     );
@@ -218,6 +231,17 @@ function mechanism(token: SpfToken, diagnostics: SpfDiagnostic[]): SpfMechanism 
     original: token.text,
     qualifier,
   };
+}
+
+/** Shared syntax gate; sender-specific macro interpretation remains in the sender evaluator. */
+export function parseSpfMechanismSyntax(original: string): SpfMechanism | null {
+  if (original === '' || /[^\x21-\x7e]/u.test(original)) return null;
+  const diagnostics: SpfDiagnostic[] = [];
+  const parsed = mechanism(
+    { text: original, location: { start: 0, end: original.length } },
+    diagnostics,
+  );
+  return diagnostics.some((item) => item.severity === 'error') ? null : parsed;
 }
 
 export function parseSpfRecord(record: string, sourceDomain: string): SpfPolicy {

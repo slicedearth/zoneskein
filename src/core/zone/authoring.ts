@@ -5,6 +5,7 @@ import {
   isDeprecatedSha1DnssecAlgorithm,
 } from '../dnssec/algorithm-policy';
 import { parseTtl } from './parser';
+import { verifyBindRecord } from './export-conformance';
 import { canonicalSvcbKey, decodeBase64, isValidEchConfigList, svcbKeyNumber } from './svcb';
 
 export type AuthoringRecordType =
@@ -597,12 +598,30 @@ export function authorRecord(draft: RecordAuthoringDraft): AuthoredRecord {
   if (ttl === null)
     diagnostics.push(diagnostic('ttl-invalid', 'ttl', 'TTL must be a valid DNS TTL value.'));
   const result = makeRdata(draft, diagnostics);
-  const valid =
+  let valid =
     owner !== null &&
     ttl !== null &&
     result !== null &&
     !diagnostics.some((item) => item.severity === 'error');
-  const bind = valid ? `${owner} ${String(ttl)} IN ${draft.type} ${result.rdata}` : undefined;
+  let bind =
+    valid && result !== null && owner !== null
+      ? `${owner} ${String(ttl)} IN ${draft.type} ${result.rdata}`
+      : undefined;
+  if (bind !== undefined && owner !== null && ttl !== null) {
+    const failure = verifyBindRecord(bind, {
+      owner,
+      ttl,
+      type: draft.type,
+      ...(draft.type === 'TXT'
+        ? { txtValue: draft.fields['value'] ?? '', txtChunks: result?.txtChunks ?? [] }
+        : {}),
+    });
+    if (failure !== null) {
+      diagnostics.push(diagnostic('export-conformance', 'record', failure));
+      valid = false;
+      bind = undefined;
+    }
+  }
   return {
     ...(bind === undefined ? {} : { bind }),
     diagnostics,

@@ -1,5 +1,7 @@
 import { lintZoneSnippet } from '../zone/lint';
+import { canonicalMasterName, masterNameIsAtOrBelow } from '../zone/master-name';
 import { ZONE_ANALYSIS_LIMITS } from '../zone/parser';
+import { recordTarget } from '../zone/record-semantics';
 import type { ZoneDocument, ZoneRecord } from '../zone/types';
 import type {
   ChangeImpact,
@@ -147,22 +149,20 @@ function impact(change: DnsChange, changeIndex: number): ChangeImpact {
   return { changeIndex, reasons, risk, rollback };
 }
 
-function absoluteTarget(value: string, origin: string | undefined): string | null {
-  if (value === '' || value === '.') return null;
-  if (value === '@') return origin ?? null;
-  if (value.endsWith('.')) return value.toLowerCase();
-  return origin === undefined ? null : `${value.toLowerCase()}.${origin}`;
+function targetIndex(record: ZoneRecord): number | null {
+  return record.type === 'CNAME' || record.type === 'NS'
+    ? 0
+    : record.type === 'MX' || record.type === 'HTTPS' || record.type === 'SVCB'
+      ? 1
+      : record.type === 'SRV'
+        ? 3
+        : null;
 }
 
-function target(record: ZoneRecord, origin: string | undefined): string | null {
-  const values = record.rdata.map((token) => token.value);
-  if (record.type === 'CNAME' || record.type === 'NS')
-    return absoluteTarget(values[0] ?? '', origin);
-  if (record.type === 'MX') return absoluteTarget(values[1] ?? '', origin);
-  if (record.type === 'SRV') return absoluteTarget(values[3] ?? '', origin);
-  if (record.type === 'HTTPS' || record.type === 'SVCB')
-    return absoluteTarget(values[1] ?? '', origin);
-  return null;
+function target(record: ZoneRecord, origin: string | undefined) {
+  const index = targetIndex(record);
+  if (index === null || record.rdata[index]?.raw === '.') return null;
+  return recordTarget(record, index, origin);
 }
 
 function serial(document: ZoneDocument): number | null {
@@ -199,19 +199,36 @@ function preflight(
     )
       return findings.incompleteReason ?? 'Change planning exceeded its finding safety limit.';
   }
-  const owners = new Set(after.records.map((record) => record.owner.toLowerCase()));
+  const owners = new Set(
+    after.records.map((record) => canonicalMasterName(record.owner)?.absolute),
+  );
+  const apex = after.origin === undefined ? null : canonicalMasterName(after.origin);
   for (const record of after.records) {
     const dependency = target(record, after.origin);
+    const index = targetIndex(record);
+    const raw = index === null ? undefined : record.rdata[index]?.raw;
+    if (dependency === null && raw !== undefined && raw !== '.') {
+      if (
+        !findings.add({
+          code: 'target-name-unresolved',
+          message: `${record.owner} ${record.type} target ${raw} could not be resolved against origin ${record.origin ?? after.origin ?? '(unknown)'}. Its existence and zone membership remain unknown.`,
+          risk: 'high',
+        })
+      )
+        return (
+          findings.incompleteReason ?? 'Change planning exceeded its finding safety limit.'
+        );
+    }
     if (
       dependency !== null &&
-      after.origin !== undefined &&
-      (dependency === after.origin || dependency.endsWith(`.${after.origin}`)) &&
-      !owners.has(dependency)
+      apex !== null &&
+      masterNameIsAtOrBelow(dependency, apex) &&
+      !owners.has(dependency.absolute)
     )
       if (
         !findings.add({
           code: 'internal-target-not-in-snapshot',
-          message: `${record.owner} ${record.type} points to in-zone target ${dependency}, but the proposed snippet contains no record at that owner. Confirm it exists outside this partial snapshot before publishing.`,
+          message: `${record.owner} ${record.type} points to in-zone target ${dependency.absolute}, but the proposed snippet contains no record at that owner. Confirm it exists outside this partial snapshot before publishing.`,
           risk: record.type === 'CNAME' || record.type === 'MX' ? 'high' : 'moderate',
         })
       )

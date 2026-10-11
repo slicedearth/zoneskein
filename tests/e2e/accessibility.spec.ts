@@ -1,6 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
-import { decode, encode } from '@dnsquery/dns-packet';
+import { decode, encode, type Packet } from '@dnsquery/dns-packet';
 import { expect, test, type Page, type Route } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
 
 const STATIC_ROUTES = [
   '/',
@@ -97,6 +98,191 @@ function summariseViolations(
     )
     .join('\n');
 }
+
+async function auditPopulated(page: Page): Promise<void> {
+  for (const width of [320, 1280]) {
+    await page.setViewportSize({ height: 900, width });
+    for (const colorScheme of ['light', 'dark'] as const) {
+      await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' });
+      const result = await new AxeBuilder({ page })
+        .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
+        .analyze();
+      expect(result.violations, summariseViolations(result.violations)).toEqual([]);
+      expect(
+        await page.evaluate(
+          () =>
+            document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1,
+        ),
+      ).toBe(true);
+    }
+  }
+  await page.emulateMedia({ forcedColors: 'active', reducedMotion: 'reduce' });
+  const controls = page.locator('main summary');
+  if ((await controls.count()) > 0) {
+    await controls.first().focus();
+    await page.keyboard.press('Enter');
+    await expect(controls.first()).toBeFocused();
+  }
+}
+
+test('large Change Lab results preserve keyboard access and populated reflow', async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  await page.goto('/diff/');
+  const records =
+    '$ORIGIN example.test.\nalias 300 IN CNAME missing\n' +
+    Array.from(
+      { length: 160 },
+      (_, i) => `host${String(i)}.example.test. 300 IN A 192.0.2.1`,
+    ).join('\n');
+  await page.getByLabel('Current or earlier snapshot').fill(records);
+  await page
+    .getByLabel('Proposed or later snapshot')
+    .fill(records.replaceAll('192.0.2.1', '192.0.2.2'));
+  await page.getByRole('button', { name: 'Compare snapshots', exact: true }).click();
+  await expect(
+    page.getByRole('region', { name: 'Classified DNS changes' }).locator('tbody tr'),
+  ).toHaveCount(160);
+  await page.getByRole('region', { name: 'Classified DNS changes' }).focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByRole('region', { name: 'Classified DNS changes' })).toBeFocused();
+  await auditPopulated(page);
+  await page.setViewportSize({ height: 900, width: 320 });
+  const table = page.getByRole('region', { name: 'Classified DNS changes' });
+  const size = await table.evaluate((element) => ({
+    available: element.clientWidth,
+    content: element.scrollWidth,
+    cell: element.querySelector('td')?.getBoundingClientRect().width ?? 0,
+  }));
+  expect(size.content).toBeGreaterThan(size.available);
+  expect(size.cell).toBeGreaterThan(120);
+  expect(
+    await page
+      .locator('.diagnostic-list .status-badge')
+      .first()
+      .evaluate((element) => element.getBoundingClientRect().height),
+  ).toBeLessThan(60);
+});
+
+test('an imported quarantine stays accessible and requires keyboard acknowledgement', async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  await page.goto('/workspace/');
+  await page.getByText('Try a synthetic offline example', { exact: true }).click();
+  await page.getByRole('button', { name: 'Prepare offline example' }).click();
+  await page.getByRole('button', { name: 'Replace active workspace' }).click();
+  const pending = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Export JSON', exact: true }).click();
+  const path = await (await pending).path();
+  const content = await readFile(path, 'utf8');
+  const altered = content.replace(
+    'Synthetic: Multi-origin migration',
+    'Synthetic: Altered file',
+  );
+  await page.getByRole('button', { name: 'New workspace' }).click();
+  await page.getByLabel('Import workspace file').setInputFiles({
+    name: 'synthetic.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(altered),
+  });
+  await expect(page.getByRole('heading', { name: 'Digest mismatch quarantine' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Accept altered workspace' })).toBeDisabled();
+  const acknowledgement = page.getByRole('checkbox', {
+    name: /I understand that this file was altered/u,
+  });
+  await acknowledgement.focus();
+  await page.keyboard.press('Space');
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('button', { name: 'Accept altered workspace' })).toBeFocused();
+  await auditPopulated(page);
+  await page.getByRole('button', { name: 'Cancel import' }).click();
+  await expect(page.getByRole('heading', { name: 'Untitled change workspace' })).toBeVisible();
+});
+
+async function mockProtocolEvidence(page: Page, kind: 'spf' | 'dnssec'): Promise<void> {
+  await page.route('**/dns-query*', async (route) => {
+    if (await allowCors(route)) return;
+    const request = route.request();
+    const query = decode(
+      new Uint8Array(
+        request.postDataBuffer() ??
+          Buffer.from(new URL(request.url()).searchParams.get('dns') ?? '', 'base64url'),
+      ),
+    );
+    const question = query.questions?.[0];
+    if (question === undefined) throw new Error('Missing fixture question');
+    const answers =
+      kind === 'spf'
+        ? [
+            {
+              class: 'IN' as const,
+              type: 'TXT' as const,
+              name: question.name,
+              ttl: 300,
+              data: ['v=spf1 a: -all'],
+            },
+          ]
+        : Array.from({ length: 8 }, (_, i) => ({
+            class: 'IN' as const,
+            type: 'DNSKEY' as const,
+            name: '.',
+            ttl: 300,
+            data: {
+              flags: 257,
+              algorithm: 13,
+              key: Buffer.alloc(64, i + 1),
+            },
+          }));
+    await route.fulfill({
+      status: 200,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Content-Type': 'application/dns-message',
+      },
+      body: Buffer.from(
+        // The upstream declaration says DNSKEY.key is a string; its encoder requires bytes.
+        encode({
+          id: query.id,
+          type: 'response',
+          flags: 0x8180,
+          questions: [question],
+          answers,
+        } as unknown as Packet),
+      ),
+    });
+  });
+}
+
+test('SPF syntax errors remain readable and cannot expose a copyable snapshot', async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  await mockProtocolEvidence(page, 'spf');
+  await page.goto('/spf/');
+  await page.getByRole('button', { name: 'Snapshot flattener', exact: true }).click();
+  await page.getByLabel('Domain', { exact: true }).fill('example.test');
+  await page.getByRole('button', { name: 'Build guarded snapshot' }).click();
+  await expect(page.getByRole('heading', { name: 'No safe snapshot generated' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Copy BIND TXT' })).toHaveCount(0);
+  await auditPopulated(page);
+});
+
+test('nested DNSSEC key and transport evidence remains accessible without claiming trust', async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  await mockProtocolEvidence(page, 'dnssec');
+  await page.goto('/dnssec/');
+  await page.getByLabel('Zone or owner name').fill('example.test');
+  await page.getByRole('button', { name: 'Validate DNSSEC', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'DNSSEC DNSKEY records' })).toBeVisible();
+  await expect(
+    page.getByRole('region', { name: 'DNSSEC DNSKEY records' }).locator('tbody tr'),
+  ).toHaveCount(8);
+  await auditPopulated(page);
+});
 
 for (const route of STATIC_ROUTES) {
   test(`${route} has no detectable WCAG A or AA violations`, async ({ page }) => {
