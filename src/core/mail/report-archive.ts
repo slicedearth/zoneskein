@@ -5,7 +5,89 @@ export const MAIL_REPORT_ARCHIVE_LIMITS = Object.freeze({
   entries: 20,
   expandedOctets: 10 * 1024 * 1024,
   entryOctets: 5 * 1024 * 1024,
+  feedOctets: 128,
 });
+
+// RFC 1951: a stored block holds at most 65,535 bytes; a length symbol emits
+// at most 258. Reserve a whole buffered stored block, every newly fed bit as
+// a length symbol, and 64 look-ahead bits. This deliberately overestimates
+// the output of one streaming push, independently of archive size fields.
+export const MAIL_REPORT_MAX_FEED_OUTPUT = 65_535 + (128 * 8 + 64) * 258;
+
+export interface MailArchiveProgress {
+  readonly inputOctets: number;
+  readonly outputOctets: number;
+  readonly retainedOctets: number;
+  readonly largestChunkOctets: number;
+  readonly pushes: number;
+}
+
+export interface MailArchiveOptions {
+  readonly expandedOctets?: number;
+  readonly entryOctets?: number;
+  readonly onProgress?: (progress: MailArchiveProgress) => void;
+}
+
+function limit(value: number | undefined, maximum: number): number {
+  if (value === undefined) return maximum;
+  if (!Number.isSafeInteger(value) || value < 0 || value > maximum)
+    throw new Error(
+      'The archive budget must be a non-negative integer within the safety limit.',
+    );
+  return value;
+}
+
+class ArchiveBudget {
+  readonly expanded: number;
+  readonly entry: number;
+  readonly observer: MailArchiveOptions['onProgress'];
+  inputOctets = 0;
+  outputOctets = 0;
+  retainedOctets = 0;
+  largestChunkOctets = 0;
+  pushes = 0;
+
+  constructor(options: MailArchiveOptions) {
+    this.expanded = limit(options.expandedOctets, MAIL_REPORT_ARCHIVE_LIMITS.expandedOctets);
+    this.entry = limit(options.entryOctets, MAIL_REPORT_ARCHIVE_LIMITS.entryOctets);
+    this.observer = options.onProgress;
+  }
+
+  retain(chunk: Uint8Array, entryTotal: number, entryLimit: number): void {
+    this.outputOctets += chunk.length;
+    this.largestChunkOctets = Math.max(this.largestChunkOctets, chunk.length);
+    if (
+      chunk.length > MAIL_REPORT_MAX_FEED_OUTPUT ||
+      entryTotal > entryLimit ||
+      this.outputOctets > this.expanded
+    )
+      throw new Error('The archive output exceeds the expanded-report safety limit.');
+    this.retainedOctets += chunk.length;
+  }
+
+  feed(stream: { push(chunk: Uint8Array, final: boolean): void }, bytes: Uint8Array): void {
+    for (
+      let offset = 0;
+      offset < bytes.length;
+      offset += MAIL_REPORT_ARCHIVE_LIMITS.feedOctets
+    ) {
+      const end = Math.min(bytes.length, offset + MAIL_REPORT_ARCHIVE_LIMITS.feedOctets);
+      this.inputOctets = end;
+      this.pushes += 1;
+      try {
+        stream.push(bytes.subarray(offset, end), end === bytes.length);
+      } finally {
+        this.observer?.({
+          inputOctets: this.inputOctets,
+          outputOctets: this.outputOctets,
+          retainedOctets: this.retainedOctets,
+          largestChunkOctets: this.largestChunkOctets,
+          pushes: this.pushes,
+        });
+      }
+    }
+  }
+}
 
 export interface MailReportPayload {
   readonly bytes: Uint8Array;
@@ -41,68 +123,48 @@ function safeEntryName(value: string): boolean {
   );
 }
 
-function gunzip(name: string, bytes: Uint8Array): MailReportPayload {
+function gunzip(name: string, bytes: Uint8Array, budget: ArchiveBudget): MailReportPayload {
   const chunks: Uint8Array[] = [];
   let total = 0;
   const stream = new Gunzip((chunk) => {
     total += chunk.length;
-    if (total > MAIL_REPORT_ARCHIVE_LIMITS.expandedOctets)
-      throw new Error('The gzip output exceeds the expanded-report safety limit.');
-    chunks.push(chunk.slice());
+    budget.retain(chunk, total, budget.expanded);
+    chunks.push(chunk);
   });
-  stream.push(bytes, true);
+  budget.feed(stream, bytes);
   return { bytes: joined(chunks, total), name: name.replace(/\.gz$/iu, '') || 'report' };
 }
 
-function unzip(bytes: Uint8Array): readonly MailReportPayload[] {
+function unzip(bytes: Uint8Array, budget: ArchiveBudget): readonly MailReportPayload[] {
   const payloads: MailReportPayload[] = [];
-  let aggregate = 0;
   let discovered = 0;
-  const state: { failure: Error | null } = { failure: null };
   const stream = new Unzip((file) => {
     discovered += 1;
     if (discovered > MAIL_REPORT_ARCHIVE_LIMITS.entries) {
-      state.failure = new Error('The ZIP archive contains too many entries.');
-      return;
+      throw new Error('The ZIP archive contains too many entries.');
     }
     if (!safeEntryName(file.name) || !/\.(?:json|xml)$/iu.test(file.name)) return;
-    if (
-      file.originalSize !== undefined &&
-      file.originalSize > MAIL_REPORT_ARCHIVE_LIMITS.entryOctets
-    ) {
-      state.failure = new Error(
-        `ZIP entry ${file.name} exceeds the expanded-entry safety limit.`,
-      );
-      return;
+    if (file.originalSize !== undefined && file.originalSize > budget.entry) {
+      throw new Error(`ZIP entry ${file.name} exceeds the expanded-entry safety limit.`);
     }
     const chunks: Uint8Array[] = [];
     let total = 0;
     file.ondata = (error, chunk, final) => {
       if (error !== null) {
-        state.failure = new Error(`ZIP entry ${file.name} could not be expanded.`, {
+        throw new Error(`ZIP entry ${file.name} could not be expanded.`, {
           cause: error,
         });
-        return;
       }
       total += chunk.length;
-      aggregate += chunk.length;
-      if (
-        total > MAIL_REPORT_ARCHIVE_LIMITS.entryOctets ||
-        aggregate > MAIL_REPORT_ARCHIVE_LIMITS.expandedOctets
-      ) {
-        state.failure = new Error('The ZIP output exceeds the expanded-report safety limit.');
-        file.terminate();
-        return;
-      }
-      chunks.push(chunk.slice());
+      budget.retain(chunk, total, budget.entry);
+      chunks.push(chunk);
       if (final) payloads.push({ bytes: joined(chunks, total), name: file.name });
     };
     file.start();
   });
   stream.register(UnzipInflate);
   stream.register(UnzipPassThrough);
-  stream.push(bytes, true);
-  if (state.failure instanceof Error) throw state.failure;
+  budget.feed(stream, bytes);
   if (payloads.length === 0)
     throw new Error('The ZIP archive contains no bounded XML or JSON reports.');
   return payloads;
@@ -111,14 +173,18 @@ function unzip(bytes: Uint8Array): readonly MailReportPayload[] {
 export function extractMailReportPayloads(
   name: string,
   source: Uint8Array,
+  options: MailArchiveOptions = {},
 ): readonly MailReportPayload[] {
   if (source.length === 0) throw new Error('The report file is empty.');
   if (source.length > MAIL_REPORT_ARCHIVE_LIMITS.archiveOctets)
     throw new Error('The report file exceeds the compressed-input safety limit.');
+  const budget = new ArchiveBudget(options);
   const lower = name.toLowerCase();
   if (lower.endsWith('.zip') || (source[0] === 0x50 && source[1] === 0x4b))
-    return unzip(source);
+    return unzip(source, budget);
   if (lower.endsWith('.gz') || (source[0] === 0x1f && source[1] === 0x8b))
-    return [gunzip(name, source)];
+    return [gunzip(name, source, budget)];
+  if (source.length > budget.expanded)
+    throw new Error('The report exceeds the expanded-report safety limit.');
   return [{ bytes: source.slice(), name }];
 }

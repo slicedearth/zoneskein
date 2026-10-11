@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { CopyButton } from '../components/CopyButton';
 import { StatusBadge } from '../components/StatusBadge';
@@ -25,10 +25,9 @@ import {
   parseMtaStsPolicy,
   type MtaStsPolicy,
 } from '../core/mail/mta-sts';
-import {
-  extractMailReportPayloads,
-  MAIL_REPORT_ARCHIVE_LIMITS,
-} from '../core/mail/report-archive';
+import { MAIL_REPORT_ARCHIVE_LIMITS } from '../core/mail/report-archive';
+import { extractMailReportPayloadsAsync } from '../core/mail/report-archive-client';
+import { RequestLifetime } from '../core/request-lifetime';
 import {
   parseTlsAggregateJson,
   parseTlsRptRecord,
@@ -269,6 +268,16 @@ function ReportsResults({ reports }: { readonly reports: readonly ParsedReport[]
 }
 
 export function MailLabPage() {
+  const lifetime = useRef(new RequestLifetime());
+  const reportController = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const current = lifetime.current;
+    current.enter();
+    return () => {
+      current.leave();
+      reportController.current?.abort();
+    };
+  }, []);
   const [mode, setMode] = useState<Mode>('reports');
   const [reports, setReports] = useState<readonly ParsedReport[]>([]);
   const [mtaPolicy, setMtaPolicy] = useState('');
@@ -293,7 +302,17 @@ export function MailLabPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
+  function invalidate(): number {
+    const generation = lifetime.current.invalidate();
+    reportController.current?.abort();
+    reportController.current = null;
+    setBusy(false);
+    setError('');
+    return generation;
+  }
+
   function changeMode(value: Mode): void {
+    invalidate();
     setMode(value);
     setError('');
     setReports([]);
@@ -308,6 +327,8 @@ export function MailLabPage() {
     const files = [...(input.files ?? [])];
     input.value = '';
     if (files.length === 0) return;
+    const generation = invalidate();
+    setReports([]);
     if (files.length > 10) {
       setError('Import no more than ten report files at once.');
       return;
@@ -315,16 +336,21 @@ export function MailLabPage() {
     setBusy(true);
     setError('');
     setReports([]);
+    const controller = new AbortController();
+    reportController.current = controller;
     try {
       const parsed: ParsedReport[] = [];
       let expandedOctets = 0;
       for (const file of files) {
         if (file.size > MAIL_REPORT_ARCHIVE_LIMITS.archiveOctets)
           throw new Error(`${file.name} exceeds the compressed-input safety limit.`);
-        const payloads = extractMailReportPayloads(
-          file.name,
-          new Uint8Array(await file.arrayBuffer()),
-        );
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        if (!lifetime.current.isCurrent(generation)) return;
+        const payloads = await extractMailReportPayloadsAsync(file.name, bytes, {
+          signal: controller.signal,
+          expandedOctets: MAIL_REPORT_ARCHIVE_LIMITS.expandedOctets - expandedOctets,
+        });
+        if (!lifetime.current.isCurrent(generation)) return;
         for (const payload of payloads) {
           expandedOctets += payload.bytes.length;
           if (expandedOctets > MAIL_REPORT_ARCHIVE_LIMITS.expandedOctets)
@@ -346,13 +372,17 @@ export function MailLabPage() {
             throw new Error('The imported report bundle exceeds the 20-report limit.');
         }
       }
-      setReports(parsed);
+      if (lifetime.current.isCurrent(generation)) setReports(parsed);
     } catch (cause) {
-      setError(
-        cause instanceof Error ? cause.message : 'The report bundle could not be parsed.',
-      );
+      if (lifetime.current.isCurrent(generation))
+        setError(
+          cause instanceof Error ? cause.message : 'The report bundle could not be parsed.',
+        );
     } finally {
-      setBusy(false);
+      if (lifetime.current.isCurrent(generation)) {
+        reportController.current = null;
+        setBusy(false);
+      }
     }
   }
 
@@ -376,24 +406,28 @@ export function MailLabPage() {
     event: React.SyntheticEvent<HTMLFormElement>,
   ): Promise<void> {
     event.preventDefault();
+    const generation = invalidate();
     setBusy(true);
     setError('');
     setCertificateResult(null);
     try {
       const value = await inspectCertificate(certificate);
-      setCertificateResult({
+      if (!lifetime.current.isCurrent(generation)) return;
+      const result = {
         inspection: value.inspection,
         tlsa:
           tlsa.trim() === ''
             ? null
             : await verifyTlsaAssociation(tlsa, value.der, value.inspection.spki),
-      });
+      };
+      if (lifetime.current.isCurrent(generation)) setCertificateResult(result);
     } catch (cause) {
-      setError(
-        cause instanceof Error ? cause.message : 'The certificate could not be inspected.',
-      );
+      if (lifetime.current.isCurrent(generation))
+        setError(
+          cause instanceof Error ? cause.message : 'The certificate could not be inspected.',
+        );
     } finally {
-      setBusy(false);
+      if (lifetime.current.isCurrent(generation)) setBusy(false);
     }
   }
 
@@ -553,6 +587,7 @@ export function MailLabPage() {
               rows={15}
               value={certificate}
               onChange={(event) => {
+                invalidate();
                 setCertificateResult(null);
                 setCertificate(event.currentTarget.value);
               }}
@@ -570,6 +605,7 @@ export function MailLabPage() {
               id="tlsa-association"
               value={tlsa}
               onChange={(event) => {
+                invalidate();
                 setCertificateResult(null);
                 setTlsa(event.currentTarget.value);
               }}
@@ -666,6 +702,18 @@ export function MailLabPage() {
       <div className="run-status" aria-live="polite">
         {busy ? 'Parsing bounded local input.' : null}
       </div>
+      {busy ? (
+        <button
+          type="button"
+          className="quiet-button"
+          onClick={() => {
+            invalidate();
+            setError('Local operation cancelled.');
+          }}
+        >
+          Cancel local operation
+        </button>
+      ) : null}
       {reports.length === 0 ? null : <ReportsResults reports={reports} />}
       {transportResult === null ? null : (
         <section className="results" aria-labelledby="transport-results-title">

@@ -1,6 +1,7 @@
 import { decode, encode, type Answer } from '@dnsquery/dns-packet';
 import { expect, test, type Page, type Route } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
+import { gzipSync } from 'node:zlib';
 
 async function allowCors(route: Route): Promise<boolean> {
   if (route.request().method() !== 'OPTIONS') return false;
@@ -175,6 +176,48 @@ test('protocol lab decodes an ECH configuration entirely locally', async ({ page
   await expect(page.getByRole('heading', { name: 'ECH configurations' })).toBeVisible();
   await expect(page.getByText('public.example', { exact: true })).toBeVisible();
   await expect(page.getByText('KDF 1 / AEAD 1', { exact: true })).toBeVisible();
+});
+
+test('mail imports a gzip report through a local worker without network disclosure', async ({
+  page,
+}) => {
+  const externalRequests: string[] = [];
+  const failures: string[] = [];
+  page.on('pageerror', (error) => failures.push(error.message));
+  await page.route(/^https:\/\//u, async (route) => {
+    externalRequests.push(route.request().url());
+    await route.abort();
+  });
+  await page.goto('/mail/');
+  const workerStarted = page.waitForEvent('worker');
+  await page.locator('#mail-report-files').setInputFiles({
+    name: 'local-report.json.gz',
+    mimeType: 'application/gzip',
+    buffer: gzipSync(
+      Buffer.from(
+        JSON.stringify({
+          'organization-name': 'Local fixture receiver',
+          'report-id': 'worker-fixture',
+          policies: [
+            {
+              policy: { 'policy-domain': 'example.com', 'policy-type': 'sts' },
+              summary: {
+                'total-successful-session-count': 11,
+                'total-failure-session-count': 2,
+              },
+            },
+          ],
+        }),
+      ),
+    ),
+  });
+  expect((await workerStarted).url()).toContain('/assets/report-archive-worker-');
+  await expect(
+    page.getByRole('heading', { name: 'Delivery evidence', exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText('Local fixture receiver', { exact: true })).toBeVisible();
+  expect(externalRequests).toEqual([]);
+  expect(failures).toEqual([]);
 });
 
 test('mail lab checks transport policy entirely locally', async ({ page }) => {

@@ -1,4 +1,4 @@
-import { gzipSync, strToU8, zipSync } from 'fflate';
+import { gzipSync, strToU8, Zip, ZipDeflate, zipSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
 
 import { inspectArcChain } from './arc';
@@ -6,7 +6,11 @@ import { inspectBimiSvg, parseBimiRecord } from './bimi';
 import { inspectCertificate, verifyTlsaAssociation } from './certificate';
 import { parseDmarcAggregateXml } from './dmarc-aggregate';
 import { authorMtaStsPolicy, mtaStsMxCoverage, parseMtaStsPolicy } from './mta-sts';
-import { extractMailReportPayloads } from './report-archive';
+import {
+  extractMailReportPayloads,
+  MAIL_REPORT_MAX_FEED_OUTPUT,
+  type MailArchiveProgress,
+} from './report-archive';
 import { parseTlsAggregateJson, parseTlsRptRecord } from './tlsrpt';
 
 const DMARC_XML = `<?xml version="1.0"?>
@@ -27,6 +31,78 @@ const DMARC_XML = `<?xml version="1.0"?>
 </feedback>`;
 
 describe('mail evidence parsers', () => {
+  it.each([0, 1, 9] as const)(
+    'stops gzip expansion before consuming a large output at level %s',
+    (level) => {
+      const compressed = gzipSync(new Uint8Array(2 * 1024 * 1024).fill(65), { level });
+      const observations: MailArchiveProgress[] = [];
+      expect(() =>
+        extractMailReportPayloads('report.xml.gz', compressed, {
+          expandedOctets: 1024,
+          onProgress: (value) => observations.push(value),
+        }),
+      ).toThrow(/safety limit/u);
+      const last = observations.at(-1);
+      expect(last?.inputOctets).toBeLessThan(compressed.length);
+      expect(last?.retainedOctets).toBeLessThanOrEqual(1024);
+      expect(last?.outputOctets).toBeLessThanOrEqual(1024 + MAIL_REPORT_MAX_FEED_OUTPUT);
+      expect(last?.largestChunkOctets).toBeLessThanOrEqual(MAIL_REPORT_MAX_FEED_OUTPUT);
+      expect(last?.pushes).toBeLessThanOrEqual(Math.ceil((last?.inputOctets ?? 0) / 128));
+    },
+  );
+
+  it('bounds ZIP data-descriptor output without trusting missing header sizes', () => {
+    const chunks: Uint8Array[] = [];
+    const zip = new Zip((error, chunk) => {
+      if (error !== null) throw error;
+      chunks.push(chunk);
+    });
+    const file = new ZipDeflate('report.xml');
+    zip.add(file);
+    file.push(new Uint8Array(2 * 1024 * 1024).fill(65), true);
+    zip.end();
+    const bytes = new Uint8Array(chunks.reduce((total, chunk) => total + chunk.length, 0));
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.length;
+    }
+    expect((bytes[6] ?? 0) & 8).toBe(8);
+    expect(new DataView(bytes.buffer).getUint32(22, true)).toBe(0);
+    const observations: MailArchiveProgress[] = [];
+    expect(() =>
+      extractMailReportPayloads('report.zip', bytes, {
+        expandedOctets: 2048,
+        entryOctets: 1024,
+        onProgress: (value) => observations.push(value),
+      }),
+    ).toThrow(/expanded|safety limit/u);
+    const last = observations.at(-1);
+    expect(last?.inputOctets).toBeLessThan(bytes.length);
+    expect(last?.retainedOctets).toBeLessThanOrEqual(1024);
+    expect(last?.outputOctets).toBeLessThanOrEqual(1024 + MAIL_REPORT_MAX_FEED_OUTPUT);
+  });
+
+  it('shares a cumulative budget across ZIP entries and honours a remaining bundle budget', () => {
+    const bytes = zipSync({
+      'one.xml': strToU8('a'.repeat(600)),
+      'two.json': strToU8('b'.repeat(600)),
+    });
+    expect(() =>
+      extractMailReportPayloads('report.zip', bytes, { expandedOctets: 1000 }),
+    ).toThrow(/expanded|safety limit/u);
+    expect(() =>
+      extractMailReportPayloads('report.xml', strToU8('abcd'), { expandedOctets: 3 }),
+    ).toThrow(/safety limit/u);
+    expect(
+      new TextDecoder().decode(
+        extractMailReportPayloads('report.xml.gz', gzipSync(strToU8('abcd')), {
+          expandedOctets: 4,
+        })[0]?.bytes,
+      ),
+    ).toBe('abcd');
+  });
+
   it('summarises bounded DMARC aggregate XML and rejects document types', () => {
     const report = parseDmarcAggregateXml(DMARC_XML);
 
