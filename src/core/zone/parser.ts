@@ -385,6 +385,25 @@ function tokens(statement: LogicalStatement, budget: ParseBudget): readonly Zone
   return values;
 }
 
+/** The bounded master-file lexer, shared by parsing and local directive expansion. */
+export function lexZoneStatements(source: string): {
+  readonly diagnostics: readonly ZoneDiagnostic[];
+  readonly statements: readonly (LogicalStatement & {
+    readonly tokens: readonly ZoneToken[];
+  })[];
+} {
+  const budget = new ParseBudget();
+  if (source.length > ZONE_ANALYSIS_LIMITS.characters)
+    budget.exceed('characters', ZONE_ANALYSIS_LIMITS.characters, 1, 1);
+  const result = budget.hasExceeded()
+    ? []
+    : statements(source, budget).map((statement) => ({
+        ...statement,
+        tokens: budget.hasExceeded() ? [] : tokens(statement, budget),
+      }));
+  return { diagnostics: budget.diagnostics, statements: budget.hasExceeded() ? [] : result };
+}
+
 export function parseTtl(value: string): number | null {
   if (/^\d+$/u.test(value)) {
     const seconds = Number(value);

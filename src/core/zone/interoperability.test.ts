@@ -4,8 +4,129 @@ import { expandZoneBundle } from './bundle';
 import { previewDomainConnectTemplate } from './domain-connect';
 import { exportZoneInfrastructure } from './iac';
 import { lintZoneSnippet } from './lint';
+import { parseZoneSnippet } from './parser';
+import { canonicalRecordRdata } from './zonemd';
 
 describe('zone bundle expansion', () => {
+  it('stops a repeated include DAG at one shared work budget without a partial result', () => {
+    const files = Array.from({ length: 12 }, (_, depth) => ({
+      name: `${String(depth)}.zone`,
+      source:
+        depth === 11
+          ? ''
+          : Array.from({ length: 8 }, () => `$INCLUDE ${String(depth + 1)}.zone`).join('\n'),
+    }));
+    const result = expandZoneBundle(files, '0.zone', 'example.com', { workLimit: 64 });
+    expect(result).toMatchObject({ provenance: [], source: '', status: 'invalid' });
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]?.message).toContain('after 64 work steps');
+  });
+
+  it('bounds diagnostics while visiting invalid includes, not after traversal', () => {
+    const result = expandZoneBundle(
+      [{ name: 'main.zone', source: '$INCLUDE absent.zone\n'.repeat(100) }],
+      'main.zone',
+      'example.com',
+      { diagnosticLimit: 3, workLimit: 20 },
+    );
+    expect(result).toMatchObject({ provenance: [], source: '', status: 'invalid' });
+    expect(result.diagnostics).toHaveLength(3);
+    expect(result.diagnostics[2]?.message).toContain('diagnostic safety limit');
+    expect(result.diagnostics.some((item) => item.message.includes('work steps'))).toBe(false);
+  });
+
+  it('restores the caller owner across nested and repeated includes and origin changes', () => {
+    const result = expandZoneBundle(
+      [
+        {
+          name: 'main.zone',
+          source: String.raw`$ORIGIN example.com.
+before\046label 300 IN A 192.0.2.1
+$INCLUDE child.zone child.example.
+ 300 IN TXT "parent"
+$INCLUDE child.zone child.example.
+ 300 IN TXT "parent-again"`,
+        },
+        {
+          name: 'child.zone',
+          source: String.raw` 300 IN TXT "inherited"
+other 300 IN A 192.0.2.2
+$INCLUDE nested.zone
+ 300 IN TXT "child"`,
+        },
+        { name: 'nested.zone', source: '$ORIGIN nested.example.\nlast 300 IN A 192.0.2.3' },
+      ],
+      'main.zone',
+    );
+    const parsed = parseZoneSnippet(result.source);
+    expect(result.status).toBe('complete');
+    expect(parsed.diagnostics).toEqual([]);
+    expect(
+      parsed.records
+        .filter((record) => record.type === 'TXT')
+        .map((record) => [record.owner, record.rdata[0]?.value]),
+    ).toEqual([
+      ['before\\046label.example.com.', 'inherited'],
+      ['other.child.example.', 'child'],
+      ['before\\046label.example.com.', 'parent'],
+      ['before\\046label.example.com.', 'inherited'],
+      ['other.child.example.', 'child'],
+      ['before\\046label.example.com.', 'parent-again'],
+    ]);
+    expect(
+      result.provenance.find(
+        (item) => item.sourceFile === 'main.zone' && item.sourceLine === 4,
+      ),
+    ).toBeDefined();
+  });
+
+  it('preserves generated TXT lexical bytes, character-string boundaries and escaped dollars', () => {
+    const template = String.raw`$ORIGIN example.com.
+$GENERATE 1-2 host$ 300 IN TXT "a;b" "" "two spaces" "\036" "\$" "\092$" plain$`;
+    const result = expandZoneBundle([{ name: 'main.zone', source: template }], 'main.zone');
+    const records = parseZoneSnippet(result.source).records;
+    expect(result.status).toBe('complete');
+    expect(records).toHaveLength(2);
+    for (const [index, record] of records.entries()) {
+      const number = index + 1;
+      const expected = parseZoneSnippet(
+        String.raw`host${number}.example.com. 300 IN TXT "a;b" "" "two spaces" "\036" "$" "\092${number}" plain${number}`,
+      ).records[0];
+      expect(expected).toBeDefined();
+      if (expected === undefined) throw new Error('The reference record did not parse.');
+      expect(canonicalRecordRdata(record)).toEqual(canonicalRecordRdata(expected));
+      expect(record.rdata.map((token) => token.value)).toEqual([
+        'a;b',
+        '',
+        'two spaces',
+        '$',
+        '$',
+        `\\${String(number)}`,
+        `plain${String(number)}`,
+      ]);
+    }
+  });
+
+  it('does not treat continuation lines as inherited records or directives', () => {
+    const result = expandZoneBundle(
+      [
+        {
+          name: 'main.zone',
+          source:
+            '$ORIGIN example.com.\nlong 300 IN TXT ( "one"\n "two" )\n 300 IN TXT "three"',
+        },
+      ],
+      'main.zone',
+    );
+    const parsed = parseZoneSnippet(result.source);
+    expect(result.status).toBe('complete');
+    expect(parsed.records.map((record) => record.owner)).toEqual([
+      'long.example.com.',
+      'long.example.com.',
+    ]);
+    expect(parsed.records[0]?.rdata.map((token) => token.value)).toEqual(['one', 'two']);
+  });
+
   it('expands local includes and bounded generate directives with provenance', () => {
     const result = expandZoneBundle(
       [
