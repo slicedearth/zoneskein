@@ -31,6 +31,69 @@ const DMARC_XML = `<?xml version="1.0"?>
 </feedback>`;
 
 describe('mail evidence parsers', () => {
+  const svg = (body: string, attributes = '') =>
+    `<s:svg xmlns:s="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" baseProfile="tiny-ps" viewBox="0 0 100 100" ${attributes}><s:title>Local fixture</s:title>${body}</s:svg>`;
+
+  it.each([
+    'script',
+    'animate',
+    'animateMotion',
+    'animateTransform',
+    'set',
+    'foreignObject',
+    'image',
+    'a',
+    'unknown',
+  ])('rejects namespace-prefixed active or unsupported SVG element %s', (name) => {
+    expect(inspectBimiSvg(svg(`<s:${name}/>`)).valid).toBe(false);
+  });
+
+  it.each(['fill', 'stroke', 'filter', 'clip-path', 'mask', 'marker-start', 'style'])(
+    'rejects external references in %s and escaped CSS',
+    (attribute) => {
+      expect(
+        inspectBimiSvg(svg(`<s:path ${attribute}="url(https://example.com/resource)"/>`)).valid,
+      ).toBe(false);
+      expect(
+        inspectBimiSvg(svg(`<s:path ${attribute}="u\\72l(https://example.com/resource)"/>`))
+          .valid,
+      ).toBe(false);
+    },
+  );
+
+  it('accepts prefixed static elements and literal local gradient and use references', () => {
+    expect(
+      inspectBimiSvg(
+        svg(
+          '<s:defs><s:linearGradient id="paint"><s:stop offset="0" stop-color="red"/></s:linearGradient><s:path id="shape" d="M0 0h10v10z"/></s:defs><s:use xlink:href="#shape" fill="url(#paint)"/>',
+        ),
+      ).valid,
+    ).toBe(true);
+  });
+
+  it.each([
+    '<path xmlns="urn:foreign"/>',
+    '<s:path xmlns:x="urn:foreign" x:href="#local"/>',
+    '<s:path onload="alert(1)"/>',
+    '<s:use xlink:href="https://example.com/shape"/>',
+    '<?xml-stylesheet href="https://example.com/style.css"?>',
+  ])('rejects unsupported namespaces, events and indirect resources: %s', (body) => {
+    expect(inspectBimiSvg(svg(body)).valid).toBe(false);
+  });
+
+  it('rejects foreign roots, namespace removal and redirected fragment bases', () => {
+    expect(
+      inspectBimiSvg(
+        '<svg xmlns="urn:foreign" baseProfile="tiny-ps" viewBox="0 0 1 1"><title>X</title></svg>',
+      ).valid,
+    ).toBe(false);
+    expect(inspectBimiSvg(svg('<g xmlns=""><script/></g>')).valid).toBe(false);
+    expect(
+      inspectBimiSvg(svg('<s:use xlink:href="#shape"/>', 'xml:base="https://example.com/"'))
+        .valid,
+    ).toBe(false);
+  });
+
   it.each([0, 1, 9] as const)(
     'stops gzip expansion before consuming a large output at level %s',
     (level) => {
@@ -190,6 +253,23 @@ describe('mail evidence parsers', () => {
     expect(parseMtaStsPolicy('version: STSv1\nmode: enforce\nmax_age: 31557601').valid).toBe(
       false,
     );
+  });
+
+  it('matches exactly one non-empty wildcard label in MTA-STS policies', () => {
+    const policy = parseMtaStsPolicy(
+      'version: STSv1\nmode: enforce\nmx: *.example.com\nmx: exact.example.net\nmax_age: 300',
+    );
+    expect(
+      mtaStsMxCoverage(policy, [
+        'mail.example.com',
+        'MAIL.EXAMPLE.COM.',
+        'example.com',
+        '.example.com',
+        'foo.bar.example.com',
+        'exact.EXAMPLE.net.',
+        'other.example.net',
+      ]).map((item) => item.covered),
+    ).toEqual([true, true, false, false, false, true, false]);
   });
 
   it('keeps BIMI inspection static and treats ARC as structural evidence only', () => {

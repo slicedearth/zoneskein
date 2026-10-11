@@ -2,6 +2,7 @@ import { decode, encode, type Answer } from '@dnsquery/dns-packet';
 import { expect, test, type Page, type Route } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { gzipSync } from 'node:zlib';
+import { RFC_9934_ECH_CONFIG } from '../../src/test/ech-fixture';
 
 async function allowCors(route: Route): Promise<boolean> {
   if (route.request().method() !== 'OPTIONS') return false;
@@ -168,14 +169,26 @@ test('evidence map renders an explorable graph from bounded DNS observations', a
 test('protocol lab decodes an ECH configuration entirely locally', async ({ page }) => {
   await page.goto('/protocol/');
   await page.getByRole('button', { name: 'ECH decoder' }).click();
-  await page
-    .getByLabel('ECHConfigList values')
-    .fill('ACL+DQAeACAAAqq7AAQAAQABQA5wdWJsaWMuZXhhbXBsZQAA');
+  await page.getByLabel('ECHConfigList values').fill(RFC_9934_ECH_CONFIG);
   await page.getByRole('button', { name: 'Decode ECH' }).click();
 
   await expect(page.getByRole('heading', { name: 'ECH configurations' })).toBeVisible();
-  await expect(page.getByText('public.example', { exact: true })).toBeVisible();
+  await expect(page.getByText('example.com', { exact: true })).toBeVisible();
+  await expect(page.getByText('231', { exact: true })).toBeVisible();
   await expect(page.getByText('KDF 1 / AEAD 1', { exact: true })).toBeVisible();
+});
+
+test('protocol lab accepts its default numeric type through the wire resolver', async ({
+  page,
+}) => {
+  await mockDns(page);
+  await page.goto('/protocol/');
+  await expect(page.getByLabel('Mnemonic or numeric RR type')).toHaveValue('66');
+  await page.getByLabel('DNS name').fill('example.com');
+  await page.getByRole('button', { name: 'Query data type' }).click();
+  await expect(page.getByRole('heading', { name: 'example.com', exact: true })).toBeVisible();
+  await expect(page.getByText('NOERROR', { exact: true })).toBeVisible();
+  await expect(page.getByRole('alert')).toHaveCount(0);
 });
 
 test('mail imports a gzip report through a local worker without network disclosure', async ({

@@ -7,6 +7,7 @@ import {
   type ResolverDefinition,
 } from '../dns/types';
 import { decodeDnsMessage, encodeDnsQuery, MAX_DNS_MESSAGE_BYTES } from '../dns/wire';
+import { dnsRecordTypeCode } from '../dns/record-types';
 import { DnsMemoryCache } from './cache';
 import { BrowserRateLimiter } from './rate-limit';
 import { Semaphore } from './semaphore';
@@ -28,7 +29,7 @@ function cacheKey(
   return [
     definition.id,
     question.name.absolute,
-    question.type,
+    dnsRecordTypeCode(question.type),
     options.checkingDisabled ? 'cd1' : 'cd0',
     options.dnssecOk ? 'do1' : 'do0',
     options.recursionDesired === false ? 'rd0' : 'rd1',
@@ -329,7 +330,8 @@ export class WireDnsResolver implements DnsResolver {
         decodedQuestion?.class.toUpperCase() !== 'IN' ||
         !equalWireName(decodedQuestion.canonicalNameWire, expectedQuestionWire) ||
         !sameDnsName(decodedQuestion.name, question.name.absolute) ||
-        decodedQuestion.type !== question.type ||
+        dnsRecordTypeCode(question.type) === null ||
+        dnsRecordTypeCode(decodedQuestion.type) !== dnsRecordTypeCode(question.type) ||
         message.flags.truncated
       ) {
         throw new DnsQueryError(

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { compressionFixture } from '../../test/dns-compression-fixture';
 import type { DnsResponse, ResolverId } from '../dns/types';
 import { compareDnsGraphObservations } from './resolver-comparison';
 
@@ -104,6 +105,77 @@ function observation(value: DnsResponse) {
 }
 
 describe('resolver comparison', () => {
+  it.each([2, 5, 6, 15] as const)(
+    'compares type %s independently of compression layout and DNS case',
+    (type) => {
+      const observations = (['literal', 'question-pointer', 'owner-pointer'] as const).map(
+        (layout, index) =>
+          observation({
+            ...response(index === 0 ? 'cloudflare' : index === 1 ? 'google' : 'quad9', []),
+            message: compressionFixture(type, layout),
+          }),
+      );
+      expect(compareDnsGraphObservations(observations)[0]?.state).toBe('agreement');
+      const changed = observation({
+        ...response('google', []),
+        message: compressionFixture(type, 'literal', { changed: true }),
+      });
+      expect(
+        compareDnsGraphObservations([...observations, changed])[0]?.differences.map(
+          (item) => item.kind,
+        ),
+      ).toEqual(['answer-data']);
+    },
+  );
+
+  it('compares negative SOA evidence canonically and retains TTL-only differences', () => {
+    const make = (ttl: number, changed = false) =>
+      observation({
+        ...response('google', []),
+        message: compressionFixture(6, 'owner-pointer', { authority: true, changed, ttl }),
+      });
+    const first = observation({
+      ...response('cloudflare', []),
+      message: compressionFixture(6, 'literal', { authority: true }),
+    });
+    expect(compareDnsGraphObservations([first, make(300)])[0]?.state).toBe('agreement');
+    expect(
+      compareDnsGraphObservations([first, make(200)])[0]?.differences.map((item) => item.kind),
+    ).toEqual(['ttl']);
+    expect(
+      compareDnsGraphObservations([first, make(300, true)])[0]?.differences.map(
+        (item) => item.kind,
+      ),
+    ).toEqual(['authority-data']);
+  });
+
+  it.each([
+    [1, 97],
+    [1, 65, 0],
+    [0, 1, 65],
+    [1, 66],
+  ])('keeps TXT case, octets and character-string boundaries exact: %s', (...bytes) => {
+    const make = (raw: readonly number[]) => {
+      const value = response('google', raw);
+      return observation({
+        ...value,
+        message: {
+          ...value.message,
+          answers: value.message.answers.map((record) => ({
+            ...record,
+            type: 'TXT',
+            typeCode: 16,
+          })),
+        },
+      });
+    };
+    expect(
+      compareDnsGraphObservations([make([1, 65]), make(bytes)])[0]?.differences.map(
+        (item) => item.kind,
+      ),
+    ).toEqual(['answer-data']);
+  });
+
   it('separates TTL-only cache-age differences from answer-data differences', () => {
     const result = compareDnsGraphObservations([
       observation(response('cloudflare', [192, 0, 2, 1], { ttl: 300 })),

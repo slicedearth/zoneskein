@@ -21,6 +21,7 @@ import {
   type GlobalpingDnsType,
 } from '../core/measurement/globalping';
 import { escapeTechnicalText, stringifyTechnicalEvidence } from '../core/technical-text';
+import { RequestLifetime } from '../core/request-lifetime';
 
 const DNS_TYPES = [
   'NS',
@@ -323,10 +324,20 @@ export function DelegationPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const controller = useRef<AbortController | null>(null);
+  const lifetime = useRef(new RequestLifetime());
 
-  useEffect(() => () => controller.current?.abort(), []);
+  useEffect(() => {
+    const current = lifetime.current;
+    current.enter();
+    return () => {
+      current.leave();
+      controller.current?.abort();
+      controller.current = null;
+    };
+  }, []);
 
   function clearResult(): void {
+    lifetime.current.invalidate();
     controller.current?.abort();
     controller.current = null;
     setMeasurement(null);
@@ -337,6 +348,8 @@ export function DelegationPage() {
 
   async function runMeasurement(event: React.SyntheticEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+    clearResult();
+    const generation = lifetime.current.capture();
     const name = validateDnsName(target);
     if (!name.ok) {
       setError(name.error.message);
@@ -383,14 +396,16 @@ export function DelegationPage() {
         },
         nextController.signal,
       );
-      if (controller.current !== nextController) return;
+      if (!lifetime.current.isCurrent(generation) || controller.current !== nextController)
+        return;
       setMeasurement(result);
     } catch (cause) {
+      if (!lifetime.current.isCurrent(generation)) return;
       if (nextController.signal.aborted) setError('The external measurement was cancelled.');
       else
         setError(cause instanceof Error ? cause.message : 'The external measurement failed.');
     } finally {
-      if (controller.current === nextController) {
+      if (lifetime.current.isCurrent(generation) && controller.current === nextController) {
         controller.current = null;
         setBusy(false);
       }
@@ -399,15 +414,19 @@ export function DelegationPage() {
 
   async function analyseLifecycle(event: React.SyntheticEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+    clearResult();
+    const generation = lifetime.current.capture();
     setBusy(true);
     setError('');
     setLifecycle(null);
     try {
-      setLifecycle(await analyseDnssecLifecycle(source, origin));
+      const result = await analyseDnssecLifecycle(source, origin);
+      if (lifetime.current.isCurrent(generation)) setLifecycle(result);
     } catch (cause) {
+      if (!lifetime.current.isCurrent(generation)) return;
       setError(cause instanceof Error ? cause.message : 'The lifecycle analysis failed.');
     } finally {
-      setBusy(false);
+      if (lifetime.current.isCurrent(generation)) setBusy(false);
     }
   }
 
@@ -647,7 +666,10 @@ export function DelegationPage() {
               <button
                 className="quiet-button"
                 type="button"
-                onClick={() => controller.current?.abort()}
+                onClick={() => {
+                  clearResult();
+                  setError('The external measurement was cancelled.');
+                }}
               >
                 Cancel
               </button>

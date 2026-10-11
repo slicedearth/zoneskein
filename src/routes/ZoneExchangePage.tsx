@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { CopyButton } from '../components/CopyButton';
 import { StatusBadge } from '../components/StatusBadge';
@@ -16,6 +16,7 @@ import {
 import { exportZoneInfrastructure, type ZoneInfrastructureExports } from '../core/zone/iac';
 import { lintZoneSnippet } from '../core/zone/lint';
 import { escapeTechnicalText } from '../core/technical-text';
+import { RequestLifetime } from '../core/request-lifetime';
 
 type Mode = 'bundle' | 'template' | 'export';
 
@@ -84,8 +85,18 @@ export function ZoneExchangePage() {
   const [exportOrigin, setExportOrigin] = useState('');
   const [exports, setExports] = useState<ZoneInfrastructureExports | null>(null);
   const [error, setError] = useState('');
+  const [reading, setReading] = useState(false);
+  const lifetime = useRef(new RequestLifetime());
+
+  useEffect(() => {
+    const current = lifetime.current;
+    current.enter();
+    return () => current.leave();
+  }, []);
 
   function resetResults(): void {
+    lifetime.current.invalidate();
+    setReading(false);
     setError('');
     setBundleResult(null);
     setTemplateResult(null);
@@ -94,15 +105,23 @@ export function ZoneExchangePage() {
 
   async function selectFiles(list: FileList | null): Promise<void> {
     resetResults();
+    setFiles([]);
+    setEntry('');
     if (list === null || list.length === 0) return;
+    const generation = lifetime.current.capture();
+    setReading(true);
     try {
       const selected = await localFiles(list);
+      if (!lifetime.current.isCurrent(generation)) return;
       setFiles(selected);
       setEntry(selected[0]?.name ?? '');
     } catch (cause) {
+      if (!lifetime.current.isCurrent(generation)) return;
       setFiles([]);
       setEntry('');
       setError(cause instanceof Error ? cause.message : 'The local files could not be read.');
+    } finally {
+      if (lifetime.current.isCurrent(generation)) setReading(false);
     }
   }
 
@@ -164,6 +183,7 @@ export function ZoneExchangePage() {
             type="button"
             aria-pressed={mode === value}
             onClick={() => {
+              resetResults();
               setMode(value);
               setError('');
             }}
@@ -199,10 +219,12 @@ export function ZoneExchangePage() {
                 {...({ webkitdirectory: '' } as React.InputHTMLAttributes<HTMLInputElement>)}
                 onChange={(event) => void selectFiles(event.currentTarget.files)}
               />
-              <span className="field-help">
-                {files.length === 0
-                  ? 'No files selected'
-                  : `${String(files.length)} local file${files.length === 1 ? '' : 's'}`}
+              <span className="field-help" role="status">
+                {reading
+                  ? 'Reading local files…'
+                  : files.length === 0
+                    ? 'No files selected'
+                    : `${String(files.length)} local file${files.length === 1 ? '' : 's'}`}
               </span>
             </div>
           </div>
@@ -230,6 +252,7 @@ export function ZoneExchangePage() {
               id="zone-bundle-origin"
               value={bundleOrigin}
               onChange={(event) => {
+                resetResults();
                 setBundleOrigin(event.currentTarget.value);
                 setBundleResult(null);
               }}
@@ -251,6 +274,7 @@ export function ZoneExchangePage() {
               className="quiet-button"
               type="button"
               onClick={() => {
+                resetResults();
                 setFiles([]);
                 setEntry('');
                 setBundleResult(null);

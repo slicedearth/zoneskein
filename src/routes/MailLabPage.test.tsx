@@ -54,6 +54,36 @@ beforeEach(() => {
 });
 
 describe('Mail Lab request ownership', () => {
+  it('reports rejected prefixed SVG content without rendering it or claiming certification', () => {
+    render(<MailLabPage />);
+    fireEvent.click(screen.getByRole('button', { name: 'BIMI' }));
+    fireEvent.change(screen.getByLabelText('Optional local SVG logo'), {
+      target: {
+        value:
+          '<svg xmlns="http://www.w3.org/2000/svg" xmlns:s="http://www.w3.org/2000/svg" baseProfile="tiny-ps" viewBox="0 0 1 1"><title>X</title><s:script id="untrusted-script">alert(1)</s:script></svg>',
+      },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect BIMI inputs' }));
+    expect(screen.getByText(/Element <s:script> is outside/u)).toBeInTheDocument();
+    expect(screen.getByText('static profile review')).toBeInTheDocument();
+    expect(screen.getByText(/not full profile certification/u)).toBeInTheDocument();
+    expect(document.getElementById('untrusted-script')).toBeNull();
+  });
+
+  it('shows a multi-label MTA-STS wildcard miss as uncovered', () => {
+    render(<MailLabPage />);
+    fireEvent.click(screen.getByRole('button', { name: 'Transport policy' }));
+    fireEvent.change(screen.getByLabelText('MTA-STS policy'), {
+      target: { value: 'version: STSv1\nmode: enforce\nmx: *.example.com\nmax_age: 300' },
+    });
+    fireEvent.change(screen.getByLabelText('Published MX hosts'), {
+      target: { value: 'foo.bar.example.com' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Check transport policy' }));
+    expect(screen.getByText('uncovered', { exact: true })).toBeInTheDocument();
+    expect(screen.queryByText('covered', { exact: true })).not.toBeInTheDocument();
+  });
+
   it.each(['resolve', 'reject'] as const)(
     'ignores an old certificate %s after a newer result',
     async (outcome) => {

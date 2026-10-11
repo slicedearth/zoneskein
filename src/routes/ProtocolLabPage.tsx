@@ -13,6 +13,7 @@ import { DnsQueryRun } from '../core/doh/query-run';
 import { createDnsResolver } from '../core/doh/resolvers';
 import { inspectResinfo, type ResinfoReport } from '../core/protocol/resinfo';
 import { escapeTechnicalText, stringifyTechnicalEvidence } from '../core/technical-text';
+import { RequestLifetime } from '../core/request-lifetime';
 import { decodeEchConfigList, type EchConfigListReport } from '../core/zone/svcb';
 
 type Mode = 'rrtype' | 'ech' | 'resinfo';
@@ -85,11 +86,21 @@ export function ProtocolLabPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const run = useRef<DnsQueryRun | null>(null);
+  const lifetime = useRef(new RequestLifetime());
   const idn = useMemo(() => (name.trim() === '' ? null : validateDnsName(name)), [name]);
 
-  useEffect(() => () => run.current?.cancel(), []);
+  useEffect(() => {
+    const current = lifetime.current;
+    current.enter();
+    return () => {
+      current.leave();
+      run.current?.cancel();
+      run.current = null;
+    };
+  }, []);
 
   function clear(): void {
+    lifetime.current.invalidate();
     run.current?.cancel();
     run.current = null;
     setResponse(null);
@@ -101,6 +112,8 @@ export function ProtocolLabPage() {
 
   async function query(event: React.SyntheticEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+    clear();
+    const generation = lifetime.current.capture();
     const parsedName = validateDnsName(name);
     if (!parsedName.ok) {
       setError(parsedName.error.message);
@@ -126,10 +139,11 @@ export function ProtocolLabPage() {
         { name: parsedName.value, type: recordType.type },
         { checkingDisabled: false, dnssecOk: true, recursionDesired: mode !== 'resinfo' },
       );
-      if (run.current !== nextRun) return;
+      if (!lifetime.current.isCurrent(generation) || run.current !== nextRun) return;
       setResponse(result);
       if (mode === 'resinfo') setResinfo(inspectResinfo(result.message));
     } catch (cause) {
+      if (!lifetime.current.isCurrent(generation)) return;
       if (nextRun.cancelled) setError('The protocol query was cancelled.');
       else
         setError(
@@ -138,7 +152,7 @@ export function ProtocolLabPage() {
             : 'The protocol query failed.',
         );
     } finally {
-      if (run.current === nextRun) {
+      if (lifetime.current.isCurrent(generation) && run.current === nextRun) {
         run.current = null;
         setBusy(false);
       }
@@ -329,7 +343,10 @@ export function ProtocolLabPage() {
               <button
                 className="quiet-button"
                 type="button"
-                onClick={() => run.current?.cancel()}
+                onClick={() => {
+                  clear();
+                  setError('The protocol query was cancelled.');
+                }}
               >
                 Cancel
               </button>
@@ -393,6 +410,14 @@ export function ProtocolLabPage() {
                 >
                   <h4>Version 0x{config.version.toString(16).padStart(4, '0')}</h4>
                   <dl className="metadata-grid">
+                    <div>
+                      <dt>Configuration ID</dt>
+                      <dd>{config.configId ?? 'Unavailable'}</dd>
+                    </div>
+                    <div>
+                      <dt>Known KEM encoding</dt>
+                      <dd>{config.supportedKem ? 'Yes' : 'No'}</dd>
+                    </div>
                     <div>
                       <dt>Supported decode</dt>
                       <dd>{config.supportedVersion ? 'Yes' : 'No'}</dd>

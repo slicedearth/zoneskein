@@ -13,6 +13,12 @@ The deterministic suite uses synthetic data and does not contact DNS resolvers.
 
 RFC-derived test data retains the IETF notices in `THIRD_PARTY_NOTICES.md`. Original synthetic cases use the project licence. Live resolver observations are not substituted for these fixtures.
 
+The ECH corpus uses the immutable public ECHCONFIG from RFC 9934 section 3, Figure 1, including its one-byte configuration ID, X25519 key encoding, cipher suite and public name. Boundary mutations cover truncated fields and unknown versions; they are synthetic negative cases, not additional published vectors. The decoder checks structure and known key encodings, not a TLS handshake or key possession.
+
+Hand-built RFC 1035 message layouts in `src/test/dns-compression-fixture.ts` exercise equal CNAME, NS, MX and SOA data with literal names and different compression-pointer offsets. Resolver comparisons and graph exports keep those names equivalent while preserving opaque TXT octets, case and string boundaries. These messages are original synthetic fixtures, not captured resolver traffic.
+
+Record Studio's export gate compares the parsed output with intended type-aware canonical RDATA captured before rendering. Negative fixtures include syntactically valid but wrong addresses, destinations, numeric fields and opaque strings. Template and `$GENERATE` fixtures use their respective target and lexical rules. Portable infrastructure exports have separate format-specific RRset fixtures; they are not BIND syntax, and the offline suite does not invoke the target configuration tools.
+
 The immutable DNSKEY corpus exercises algorithms 5, 7, 8, 10, 13, 14 and 15; the separate corrected RFC 8080 MX vector exercises algorithm 16. The short RSA keys for algorithms 5, 7 and 8 are rejected under the current key-strength policy, not counted as successful signature validation. Published DS examples cover digest types 1, 2 and 4. Original RFC key material and independently generated DNSKEY signatures remain distinct evidence.
 
 The synthetic proof corpus covers signed delegation chains, wrong-owner/class/section and modified-RRset rejection, exact positive application RRsets, CNAME continuation, exact NSEC/NSEC3 DS denial, NSEC empty non-terminals and DNAME boundaries, NSEC3 Opt-Out uncertainty and shared work-budget exhaustion. It does not turn an unsupported proof, missing evidence or an Opt-Out interval into authenticated existence. These tests do not establish interoperability against every authoritative server, cryptographic implementation or DNSSEC proof form.

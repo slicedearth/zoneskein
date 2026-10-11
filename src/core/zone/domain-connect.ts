@@ -116,7 +116,7 @@ function owner(value: string, domain: string): string | null {
 
 function target(value: string, domain: string): string | null {
   if (value === '@') return domain;
-  return canonicalMasterName(value, domain)?.absolute ?? null;
+  return canonicalMasterName(value, '.')?.absolute ?? null;
 }
 
 function quoted(value: string): string {

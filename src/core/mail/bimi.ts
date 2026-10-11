@@ -84,23 +84,61 @@ export function inspectBimiSvg(source: string): BimiSvgReport {
       valid: false,
       viewBox: null,
     };
-  const forbidden = new Set([
-    'script',
-    'foreignobject',
-    'image',
-    'audio',
-    'video',
-    'iframe',
-    'link',
-    'object',
-    'embed',
-    'style',
-    'animate',
-    'animatemotion',
-    'animatetransform',
-    'set',
+  const svgNamespace = 'http://www.w3.org/2000/svg';
+  const xlinkNamespace = 'http://www.w3.org/1999/xlink';
+  const xmlNamespace = 'http://www.w3.org/XML/1998/namespace';
+  const xmlnsNamespace = 'http://www.w3.org/2000/xmlns/';
+  const staticElements = new Set([
+    'svg',
+    'g',
+    'defs',
+    'desc',
+    'title',
+    'metadata',
+    'path',
+    'rect',
+    'circle',
+    'ellipse',
+    'line',
+    'polyline',
+    'polygon',
+    'text',
+    'tspan',
+    'textArea',
+    'tbreak',
+    'use',
+    'linearGradient',
+    'radialGradient',
+    'stop',
+    'solidColor',
+    'font',
+    'font-face',
+    'font-face-src',
+    'font-face-name',
+    'glyph',
+    'missing-glyph',
+    'hkern',
   ]);
-  const parser = new SaxesParser({ xmlns: false });
+  const presentationReferences = new Set([
+    'style',
+    'fill',
+    'stroke',
+    'filter',
+    'clip-path',
+    'mask',
+    'marker',
+    'marker-start',
+    'marker-mid',
+    'marker-end',
+    'cursor',
+    'color-profile',
+  ]);
+  const diagnose = (message: string) => {
+    if (diagnostics.length >= 511)
+      throw new Error('The SVG exceeds the local diagnostic limit.');
+    diagnostics.push(message);
+  };
+  const parser = new SaxesParser({ xmlns: true });
   let elements = 0;
   let depth = 0;
   const documentState: {
@@ -113,46 +151,55 @@ export function inspectBimiSvg(source: string): BimiSvgReport {
   parser.on('doctype', () => {
     throw new Error('SVG document type declarations are not accepted.');
   });
+  parser.on('processinginstruction', () => {
+    diagnose('Processing instructions are outside the static logo profile.');
+  });
   parser.on('opentag', (tag) => {
     depth += 1;
     elements += 1;
     if (depth > 64 || elements > 10_000)
       throw new Error('The SVG exceeds local structure limits.');
-    const name = tag.name.toLowerCase();
-    if (documentState.root === '') documentState.root = name;
-    if (forbidden.has(name))
-      diagnostics.push(`Element <${name}> is outside the safe static logo profile.`);
+    const name = tag.local;
+    if (documentState.root === '')
+      documentState.root = tag.uri === svgNamespace ? name : tag.name;
+    if (tag.uri !== svgNamespace || !staticElements.has(name))
+      diagnose(`Element <${tag.name}> is outside the static SVG logo profile.`);
     const attributes = tag.attributes;
-    for (const [attributeName, raw] of Object.entries(attributes)) {
-      const attributeValue = typeof raw === 'string' ? raw : String(raw);
-      const lowerName = attributeName.toLowerCase();
-      if (lowerName.startsWith('on'))
-        diagnostics.push(`Event attribute ${attributeName} is not allowed.`);
+    for (const attribute of Object.values(attributes)) {
+      const attributeName = attribute.name;
+      const attributeValue = attribute.value;
+      const lowerName = attribute.local.toLowerCase();
+      if (attribute.uri === xmlnsNamespace) continue;
       if (
-        (lowerName === 'href' || lowerName.endsWith(':href')) &&
-        !attributeValue.startsWith('#')
+        attribute.uri !== '' &&
+        !(attribute.uri === xlinkNamespace && lowerName === 'href') &&
+        !(attribute.uri === xmlNamespace && ['space', 'lang', 'id'].includes(lowerName))
       )
-        diagnostics.push(`External reference ${attributeName} is not allowed.`);
-      if (lowerName === 'style' && /url\s*\(/iu.test(attributeValue))
-        diagnostics.push('CSS url() references are not allowed.');
+        diagnose(`Attribute namespace for ${attributeName} is outside the static profile.`);
+      if (lowerName.startsWith('on'))
+        diagnose(`Event attribute ${attributeName} is not allowed.`);
+      if (lowerName === 'href' && !/^#[A-Za-z_][\w:.-]*$/u.test(attributeValue))
+        diagnose(`External reference ${attributeName} is not allowed.`);
+      if (presentationReferences.has(lowerName)) {
+        // Permit literal local paint references, not CSS escapes, imports or remote URLs.
+        const remaining = attributeValue.replaceAll(
+          /url\(\s*(?:#[A-Za-z_][\w:.-]*|"#[A-Za-z_][\w:.-]*"|'#[A-Za-z_][\w:.-]*')\s*\)/giu,
+          '',
+        );
+        if (/url\s*\(|\\|@|\/\*|(?:https?:|data:|javascript:|\/\/)/iu.test(remaining))
+          diagnose(`External or indirect CSS reference in ${attributeName} is not allowed.`);
+      }
+      if (attribute.uri === xmlNamespace && lowerName === 'base')
+        diagnose('xml:base is not allowed.');
     }
     if (depth === 1) {
-      documentState.viewBox =
-        typeof attributes['viewBox'] === 'string'
-          ? attributes['viewBox']
-          : typeof attributes['viewbox'] === 'string'
-            ? attributes['viewbox']
-            : null;
-      const profile =
-        typeof attributes['baseProfile'] === 'string'
-          ? attributes['baseProfile']
-          : typeof attributes['baseprofile'] === 'string'
-            ? attributes['baseprofile']
-            : '';
-      if (profile !== 'tiny-ps')
-        diagnostics.push('The root SVG should declare baseProfile="tiny-ps".');
+      documentState.viewBox = attributes['viewBox']?.value ?? null;
+      const profile = attributes['baseProfile']?.value ?? '';
+      if (profile !== 'tiny-ps') diagnose('The root SVG should declare baseProfile="tiny-ps".');
+      if (attributes['x'] !== undefined || attributes['y'] !== undefined)
+        diagnose('The root SVG must not contain x or y attributes.');
     }
-    if (name === 'title') {
+    if (tag.uri === svgNamespace && name === 'title') {
       capturingTitle = true;
       titleText = '';
     }
@@ -161,7 +208,7 @@ export function inspectBimiSvg(source: string): BimiSvgReport {
     if (capturingTitle) titleText += value;
   });
   parser.on('closetag', (tag) => {
-    if (tag.name.toLowerCase() === 'title') {
+    if (tag.uri === svgNamespace && tag.local === 'title') {
       capturingTitle = false;
       documentState.title = titleText.trim().slice(0, 512) || null;
     }

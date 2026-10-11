@@ -5,6 +5,7 @@ const MAX_HOPS = 48;
 const MAX_ANSWERS_PER_HOP = 256;
 const MAX_POLL_ATTEMPTS = 64;
 const POLL_INTERVAL_MS = 600;
+export const MEASUREMENT_DEADLINE_MS = 60_000;
 const LOCAL_WINDOW_MS = 60 * 60 * 1000;
 const LOCAL_RUN_LIMIT = 6;
 const LEDGER_KEY = 'zoneskein:globalping-runs:v1';
@@ -91,32 +92,70 @@ function numberValue(value: unknown, minimum: number, maximum: number): number |
     : null;
 }
 
-async function responseBytes(response: Response): Promise<Uint8Array> {
+function abortReason(signal: AbortSignal): Error {
+  return signal.reason instanceof Error || signal.reason instanceof DOMException
+    ? signal.reason
+    : new DOMException('The measurement was cancelled.', 'AbortError');
+}
+
+function withAbort<T>(pending: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(abortReason(signal));
+    if (signal.aborted) abort();
+    else signal.addEventListener('abort', abort, { once: true });
+    pending.then(
+      (value) => {
+        signal.removeEventListener('abort', abort);
+        if (signal.aborted) abort();
+        else resolve(value);
+      },
+      (cause: unknown) => {
+        signal.removeEventListener('abort', abort);
+        reject(
+          signal.aborted
+            ? abortReason(signal)
+            : cause instanceof Error || cause instanceof DOMException
+              ? cause
+              : new Error('The measurement transport failed.', { cause }),
+        );
+      },
+    );
+  });
+}
+
+async function responseBytes(response: Response, signal: AbortSignal): Promise<Uint8Array> {
   const declared = response.headers.get('content-length');
   if (declared !== null && Number(declared) > MAX_RESPONSE_BYTES) {
+    void response.body?.cancel().catch(() => undefined);
     throw new Error('The measurement service response exceeded the local size limit.');
   }
   if (response.body === null) {
-    const bytes = new Uint8Array(await response.arrayBuffer());
+    const bytes = new Uint8Array(await withAbort(response.arrayBuffer(), signal));
     if (bytes.length > MAX_RESPONSE_BYTES)
       throw new Error('The measurement service response exceeded the local size limit.');
     return bytes;
   }
   const reader = response.body.getReader();
+  const cancel = () => {
+    void reader.cancel(abortReason(signal)).catch(() => undefined);
+  };
+  signal.addEventListener('abort', cancel, { once: true });
+  if (signal.aborted) cancel();
   const chunks: Uint8Array[] = [];
   let total = 0;
   try {
     for (;;) {
-      const item = await reader.read();
+      const item = await withAbort(reader.read(), signal);
       if (item.done) break;
       total += item.value.length;
       if (total > MAX_RESPONSE_BYTES) {
-        await reader.cancel();
+        void reader.cancel().catch(() => undefined);
         throw new Error('The measurement service response exceeded the local size limit.');
       }
       chunks.push(item.value);
     }
   } finally {
+    signal.removeEventListener('abort', cancel);
     reader.releaseLock();
   }
   const bytes = new Uint8Array(total);
@@ -128,13 +167,14 @@ async function responseBytes(response: Response): Promise<Uint8Array> {
   return bytes;
 }
 
-async function responseJson(response: Response): Promise<unknown> {
+async function responseJson(response: Response, signal: AbortSignal): Promise<unknown> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(
-      new TextDecoder('utf-8', { fatal: true }).decode(await responseBytes(response)),
+      new TextDecoder('utf-8', { fatal: true }).decode(await responseBytes(response, signal)),
     );
   } catch (cause) {
+    if (signal.aborted) throw abortReason(signal);
     if (cause instanceof Error && cause.message.includes('size limit')) throw cause;
     throw new Error('The measurement service returned malformed JSON.', { cause });
   }
@@ -254,7 +294,7 @@ function decodeMeasurement(
 function delay(signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal.aborted) {
-      reject(new DOMException('The measurement was cancelled.', 'AbortError'));
+      reject(abortReason(signal));
       return;
     }
     const complete = () => {
@@ -265,7 +305,7 @@ function delay(signal: AbortSignal): Promise<void> {
     const abort = () => {
       window.clearTimeout(timeout);
       signal.removeEventListener('abort', abort);
-      reject(new DOMException('The measurement was cancelled.', 'AbortError'));
+      reject(abortReason(signal));
     };
     signal.addEventListener('abort', abort, { once: true });
   });
@@ -309,6 +349,42 @@ export async function runGlobalpingDns(
   signal: AbortSignal,
   fetcher: typeof fetch = fetch,
 ): Promise<GlobalpingDnsMeasurement> {
+  const controller = new AbortController();
+  const abort = () => controller.abort(abortReason(signal));
+  signal.addEventListener('abort', abort, { once: true });
+  if (signal.aborted) abort();
+  const deadline = globalThis.setTimeout(
+    () =>
+      controller.abort(
+        new DOMException('The measurement exceeded its 60-second deadline.', 'TimeoutError'),
+      ),
+    MEASUREMENT_DEADLINE_MS,
+  );
+  const boundedFetch: typeof fetch = (input, init) => {
+    if (controller.signal.aborted) return Promise.reject(abortReason(controller.signal));
+    const pending = fetcher(input, init);
+    // A test transport or late headers may resolve after cancellation; release its body too.
+    void pending.then(
+      (response) => {
+        if (controller.signal.aborted) void response.body?.cancel().catch(() => undefined);
+      },
+      () => undefined,
+    );
+    return withAbort(pending, controller.signal);
+  };
+  try {
+    return await runMeasurement(request, controller.signal, boundedFetch);
+  } finally {
+    globalThis.clearTimeout(deadline);
+    signal.removeEventListener('abort', abort);
+  }
+}
+
+async function runMeasurement(
+  request: GlobalpingDnsRequest,
+  signal: AbortSignal,
+  fetcher: typeof fetch,
+): Promise<GlobalpingDnsMeasurement> {
   const body = {
     inProgressUpdates: false,
     limit: request.probes,
@@ -334,6 +410,7 @@ export async function runGlobalpingDns(
     signal,
   });
   if (createdResponse.status !== 202) {
+    void createdResponse.body?.cancel().catch(() => undefined);
     const retry = createdResponse.headers.get('retry-after');
     throw new Error(
       createdResponse.status === 429
@@ -341,7 +418,7 @@ export async function runGlobalpingDns(
         : `The measurement service rejected the request with HTTP ${String(createdResponse.status)}.`,
     );
   }
-  const created = object(await responseJson(createdResponse));
+  const created = object(await responseJson(createdResponse, signal));
   const id = stringValue(created?.['id'], 128);
   if (id === null || !/^[A-Za-z0-9_-]+$/u.test(id))
     throw new Error('The measurement service did not return a valid measurement identifier.');
@@ -356,11 +433,13 @@ export async function runGlobalpingDns(
       referrerPolicy: 'no-referrer',
       signal,
     });
-    if (!response.ok)
+    if (!response.ok) {
+      void response.body?.cancel().catch(() => undefined);
       throw new Error(
         `The measurement result request failed with HTTP ${String(response.status)}.`,
       );
-    const decoded = decodeMeasurement(await responseJson(response), id);
+    }
+    const decoded = decodeMeasurement(await responseJson(response, signal), id);
     if (decoded.final)
       return {
         completedAt: new Date().toISOString(),

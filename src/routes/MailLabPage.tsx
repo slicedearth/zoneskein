@@ -846,7 +846,7 @@ export function MailLabPage() {
                 bimiResult.record.valid && (bimiResult.svg?.valid ?? true) ? 'pass' : 'warning'
               }
             >
-              compliance check
+              static profile review
             </StatusBadge>
           </div>
           <article className="result-panel">
@@ -863,7 +863,11 @@ export function MailLabPage() {
           </article>
           {bimiResult.svg === null ? null : (
             <article className="result-panel">
-              <h3>SVG Tiny P/S profile</h3>
+              <h3>SVG Tiny P/S static review</h3>
+              <p>
+                This bounded structural review is not full profile certification or proof of
+                logo ownership. The supplied SVG is never rendered.
+              </p>
               <dl className="metadata-grid">
                 <div>
                   <dt>Elements</dt>

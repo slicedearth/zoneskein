@@ -31,7 +31,7 @@ export function extractMailReportPayloadsAsync(
       worker.onerror = null;
       worker.onmessageerror = null;
       worker.terminate();
-      if (result instanceof Error) reject(result);
+      if (result instanceof Error || result instanceof DOMException) reject(result);
       else if (result.ok) resolve(result.payloads);
       else reject(new Error(result.error));
     };

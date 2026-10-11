@@ -1,3 +1,5 @@
+import { validateDnsName } from '../dns/names';
+
 export interface MtaStsPolicy {
   readonly diagnostics: readonly string[];
   readonly maxAge: number | null;
@@ -10,8 +12,10 @@ export interface MtaStsPolicy {
 function matchesMx(host: string, pattern: string): boolean {
   const value = host.toLowerCase().replace(/\.$/u, '');
   const expected = pattern.toLowerCase().replace(/\.$/u, '');
+  if (!validateDnsName(value).ok) return false;
   return expected.startsWith('*.')
-    ? value.endsWith(expected.slice(1)) && value !== expected.slice(2)
+    ? value.endsWith(expected.slice(1)) &&
+        value.split('.').length === expected.split('.').length
     : value === expected;
 }
 

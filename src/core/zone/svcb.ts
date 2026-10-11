@@ -52,19 +52,7 @@ function uint16(bytes: Uint8Array, offset: number): number | null {
 }
 
 export function isValidEchConfigList(value: string): boolean {
-  const bytes = decodeBase64(value);
-  if (bytes === null || bytes.length < 6 || uint16(bytes, 0) !== bytes.length - 2) return false;
-
-  let offset = 2;
-  let configurations = 0;
-  while (offset < bytes.length) {
-    const contentLength = uint16(bytes, offset + 2);
-    if (contentLength === null) return false;
-    offset += 4 + contentLength;
-    if (offset > bytes.length) return false;
-    configurations += 1;
-  }
-  return offset === bytes.length && configurations > 0;
+  return decodeEchConfigList(value).status !== 'invalid';
 }
 
 export interface EchCipherSuite {
@@ -73,6 +61,7 @@ export interface EchCipherSuite {
 }
 
 export interface EchConfigReport {
+  readonly configId: number | null;
   readonly cipherSuites: readonly EchCipherSuite[];
   readonly extensionsOctets: number | null;
   readonly kemId: number | null;
@@ -80,6 +69,7 @@ export interface EchConfigReport {
   readonly publicKeyOctets: number | null;
   readonly publicName: string | null;
   readonly supportedVersion: boolean;
+  readonly supportedKem: boolean;
   readonly version: number;
 }
 
@@ -103,9 +93,34 @@ function vector16(
 function publicName(bytes: Uint8Array): string | null {
   if (bytes.length === 0 || bytes.length > 253) return null;
   const value = String.fromCharCode(...bytes).toLowerCase();
-  return /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/u.test(value) && !value.includes('..')
+  return value
+    .split('.')
+    .every((label) => label.length <= 63 && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/u.test(label))
     ? value
     : null;
+}
+
+function kemKeyEncoding(kem: number, key: Uint8Array): 'valid' | 'invalid' | 'unsupported' {
+  const lengths: Readonly<Record<number, number>> = { 16: 65, 17: 97, 18: 133, 32: 32, 33: 56 };
+  const length = lengths[kem];
+  if (key.length === 0) return 'invalid';
+  if (length === undefined) return 'unsupported';
+  // HPKE's NIST curves use uncompressed SEC1 points. This checks encoding,
+  // not curve membership, key possession, or a successful TLS handshake.
+  return key.length === length && (kem > 18 || key[0] === 4) ? 'valid' : 'invalid';
+}
+
+function validExtensions(bytes: Uint8Array): boolean {
+  let offset = 0;
+  const seen = new Set<number>();
+  while (offset < bytes.length) {
+    const type = uint16(bytes, offset);
+    const data = vector16(bytes, offset + 2, bytes.length);
+    if (type === null || data === null || seen.has(type)) return false;
+    seen.add(type);
+    offset = data.end;
+  }
+  return true;
 }
 
 export function decodeEchConfigList(value: string): EchConfigListReport {
@@ -128,6 +143,13 @@ export function decodeEchConfigList(value: string): EchConfigListReport {
   const configurations: EchConfigReport[] = [];
   let offset = 2;
   while (offset < bytes.length) {
+    if (configurations.length >= 32)
+      return {
+        configurations: [],
+        error: 'ECHConfigList exceeds the 32-configuration work limit.',
+        status: 'invalid',
+        totalOctets: bytes.length,
+      };
     const version = uint16(bytes, offset);
     const length = uint16(bytes, offset + 2);
     if (version === null || length === null || offset + 4 + length > bytes.length)
@@ -142,6 +164,7 @@ export function decodeEchConfigList(value: string): EchConfigListReport {
     offset = end;
     if (version !== 0xfe0d) {
       configurations.push({
+        configId: null,
         cipherSuites: [],
         extensionsOctets: null,
         kemId: null,
@@ -149,17 +172,21 @@ export function decodeEchConfigList(value: string): EchConfigListReport {
         publicKeyOctets: null,
         publicName: null,
         supportedVersion: false,
+        supportedKem: false,
         version,
       });
       continue;
     }
-    const kemId = uint16(bytes, start);
-    const key = vector16(bytes, start + 2, end);
+    const configId = length > 0 ? bytes[start] : undefined;
+    const kemId = length >= 3 ? uint16(bytes, start + 1) : null;
+    const key = vector16(bytes, start + 3, end);
     const suites = key === null ? null : vector16(bytes, key.end, end);
     if (
+      configId === undefined ||
       kemId === null ||
       key === null ||
       suites === null ||
+      kemKeyEncoding(kemId, key.value) === 'invalid' ||
       suites.value.length === 0 ||
       suites.value.length % 4 !== 0
     )
@@ -185,7 +212,7 @@ export function decodeEchConfigList(value: string): EchConfigListReport {
     const nameBytes = bytes.slice(suites.end + 2, suites.end + 2 + nameLength);
     const name = publicName(nameBytes);
     const extensions = vector16(bytes, suites.end + 2 + nameLength, end);
-    if (name === null || extensions?.end !== end)
+    if (name === null || extensions?.end !== end || !validExtensions(extensions.value))
       return {
         configurations,
         error: 'A supported ECHConfig has an invalid public name or extensions vector.',
@@ -201,6 +228,7 @@ export function decodeEchConfigList(value: string): EchConfigListReport {
       cipherSuites.push({ aeadId, kdfId });
     }
     configurations.push({
+      configId,
       cipherSuites,
       extensionsOctets: extensions.value.length,
       kemId,
@@ -208,15 +236,9 @@ export function decodeEchConfigList(value: string): EchConfigListReport {
       publicKeyOctets: key.value.length,
       publicName: name,
       supportedVersion: true,
+      supportedKem: kemKeyEncoding(kemId, key.value) === 'valid',
       version,
     });
-    if (configurations.length > 32)
-      return {
-        configurations: [],
-        error: 'ECHConfigList exceeds the 32-configuration work limit.',
-        status: 'invalid',
-        totalOctets: bytes.length,
-      };
   }
   if (configurations.length === 0)
     return {
@@ -227,7 +249,9 @@ export function decodeEchConfigList(value: string): EchConfigListReport {
     };
   return {
     configurations,
-    status: configurations.some((configuration) => configuration.supportedVersion)
+    status: configurations.some(
+      (configuration) => configuration.supportedVersion && configuration.supportedKem,
+    )
       ? 'valid'
       : 'unsupported',
     totalOctets: bytes.length,

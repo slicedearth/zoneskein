@@ -1,6 +1,7 @@
 import { canonicalMasterName, masterNameEquals } from './master-name';
 import { parseZoneSnippet, ZONE_ANALYSIS_LIMITS } from './parser';
 import { canonicalRecordRdata } from './zonemd';
+import type { ZoneToken } from './types';
 
 export interface ExpectedBindRecord {
   readonly owner: string;
@@ -8,6 +9,22 @@ export interface ExpectedBindRecord {
   readonly ttl?: number;
   readonly txtValue?: string;
   readonly txtChunks?: readonly string[];
+  /** Intended semantic fields, captured before rendering BIND. Required for non-TXT. */
+  readonly rdata?: readonly ZoneToken[];
+}
+
+/** Plain numeric/name fields or literal character-string octets, without parsing emitted BIND. */
+export function intendedRdataTokens(
+  fields: readonly (string | number | { readonly text: string })[],
+): readonly ZoneToken[] {
+  return fields.map((field) => {
+    const quoted = typeof field === 'object';
+    const value = quoted ? field.text : String(field);
+    const raw = quoted
+      ? `"${Array.from(new TextEncoder().encode(value), (byte) => `\\${String(byte).padStart(3, '0')}`).join('')}"`
+      : value;
+    return { column: 1, line: 1, quoted, raw, value };
+  });
 }
 
 /** Offline, fail-closed check of the exact text offered for copying or download. */
@@ -40,6 +57,17 @@ export function verifyBindRecord(bind: string, expected: ExpectedBindRecord): st
     return 'Generated BIND changed the owner, type, class or TTL.';
   const encoded = canonicalRecordRdata(record);
   if (!encoded.ok) return `Generated BIND cannot be encoded exactly: ${encoded.reason}`;
+  if (expected.type !== 'TXT' && expected.rdata === undefined)
+    return 'Intended typed RDATA is required to verify non-TXT output.';
+  if (expected.rdata !== undefined) {
+    const intended = canonicalRecordRdata({ ...record, rdata: expected.rdata });
+    if (!intended.ok) return `Intended RDATA cannot be encoded exactly: ${intended.reason}`;
+    if (
+      encoded.bytes.length !== intended.bytes.length ||
+      encoded.bytes.some((byte, index) => byte !== intended.bytes[index])
+    )
+      return 'Generated BIND changed the intended canonical RDATA.';
+  }
   if (
     expected.txtValue !== undefined &&
     record.rdata.map((token) => token.value).join('') !== expected.txtValue

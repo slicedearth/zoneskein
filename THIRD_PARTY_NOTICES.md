@@ -6,7 +6,9 @@ The SHA-1 and SHA-256 DS numeric examples also reproduce published test data fro
 
 The DNSSEC and ZONEMD test corpus contains data derived from [RFC 5702](https://www.rfc-editor.org/rfc/rfc5702), [RFC 6605](https://www.rfc-editor.org/rfc/rfc6605), [RFC 8080](https://www.rfc-editor.org/rfc/rfc8080) and [RFC 8976](https://www.rfc-editor.org/rfc/rfc8976). Independently generated DNSKEY signatures are identified in their test source and are not represented as published RFC signatures. See `docs/VERIFICATION.md` for the corpus inventory.
 
-Copyright (c) 2009, 2012, 2017, 2021 IETF Trust and the persons identified as authors of the code. All rights reserved.
+The ECH decoder corpus reproduces only the public ECHCONFIG value from [RFC 9934 section 3, Figure 1](https://www.rfc-editor.org/rfc/rfc9934.html#section-3). No private-key material is included. Its original notice is Copyright (c) 2026 IETF Trust and the document authors.
+
+Copyright (c) 2009, 2012, 2017, 2021, 2026 IETF Trust and the persons identified as authors of the code. All rights reserved.
 
 Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
 

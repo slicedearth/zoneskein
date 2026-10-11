@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { compressionFixture } from '../../test/dns-compression-fixture';
 import type { DnsRecord, DnsResponse } from '../dns/types';
 import { buildDnsEvidenceBundle } from './dns-graph';
 
@@ -47,6 +48,54 @@ function response(records: readonly DnsRecord[]): DnsResponse {
 }
 
 describe('buildDnsEvidenceBundle', () => {
+  it('retains case-sensitive and delimiter-bearing TXT bytes without presentation collisions', () => {
+    const chunks = [['Token'], ['token'], ['a|b'], ['a', 'b'], ['ab'], ['', 'ab'], ['ab', '']];
+    const records: DnsRecord[] = chunks.map((parts) => ({
+      class: 'IN',
+      data: parts.map((part) => Uint8Array.from(new TextEncoder().encode(part))),
+      owner: 'example.com',
+      rawRdata: Uint8Array.from(
+        parts.flatMap((part) => [part.length, ...new TextEncoder().encode(part)]),
+      ),
+      section: 'answer',
+      ttl: 300,
+      type: 'TXT',
+      typeCode: 16,
+    }));
+    const build = (values: readonly DnsRecord[]) =>
+      buildDnsEvidenceBundle(
+        'example.com',
+        [{ questionName: 'example.com.', questionType: 'TXT', response: response(values) }],
+        '2026-08-27T00:00:01.000Z',
+      );
+    const bundle = build(records);
+    const nodes = bundle.nodes.filter((node) => node.kind === 'record');
+    expect(nodes).toHaveLength(7);
+    expect(new Set(nodes.map((node) => node.id)).size).toBe(7);
+    expect(nodes.some((node) => node.label.includes('Token'))).toBe(true);
+    expect(nodes.some((node) => node.label.includes('token'))).toBe(true);
+    expect(bundle.links.filter((link) => link.kind === 'publishes')).toHaveLength(7);
+    expect(JSON.parse(JSON.stringify(bundle))).toEqual(bundle);
+    expect(build([...records].reverse())).toEqual(bundle);
+    expect(build([...records, ...records])).toEqual(bundle);
+  });
+
+  it('deduplicates only DNS-name case and compression equivalents', () => {
+    const records = (['literal', 'question-pointer', 'owner-pointer'] as const).flatMap(
+      (layout) => compressionFixture(5, layout).answers,
+    );
+    const build = (values: readonly DnsRecord[]) =>
+      buildDnsEvidenceBundle(
+        'example.com',
+        [{ questionName: 'example.com.', questionType: 'CNAME', response: response(values) }],
+        '2026-08-27T00:00:01.000Z',
+      );
+    const bundle = build(records);
+    expect(bundle.nodes.filter((node) => node.kind === 'record')).toHaveLength(1);
+    expect(bundle.nodes.filter((node) => node.kind === 'target')).toHaveLength(1);
+    expect(build([...records].reverse())).toEqual(bundle);
+  });
+
   it('retains record dependencies and resolver provenance', () => {
     const record: DnsRecord = {
       class: 'IN',

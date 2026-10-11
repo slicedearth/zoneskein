@@ -1,7 +1,7 @@
 import { dnskeyDigest, hex } from './digest';
 import { canEstablishDsTrustPath, canValidateDsDigestType } from './algorithm-policy';
 import { dnskeyKeyTag, dnssecAlgorithmName, digestTypeName } from './records';
-import { canonicalMasterName } from '../zone/master-name';
+import { canonicalMasterName, masterNameEquals } from '../zone/master-name';
 import { parseZoneSnippet } from '../zone/parser';
 import type { ZoneRecord } from '../zone/types';
 
@@ -154,11 +154,18 @@ function cdsDeleteSignal(record: LifecycleDs): boolean {
 
 function sameDs(left: LifecycleDs, right: LifecycleDs): boolean {
   return (
+    sameOwner(left.owner, right.owner) &&
     left.keyTag === right.keyTag &&
     left.algorithm === right.algorithm &&
     left.digestType === right.digestType &&
     left.digest === right.digest
   );
+}
+
+function sameOwner(left: string, right: string): boolean {
+  const a = canonicalMasterName(left);
+  const b = canonicalMasterName(right);
+  return a !== null && b !== null && masterNameEquals(a, b);
 }
 
 function csyncType(value: string): 'A' | 'AAAA' | 'NS' | null {
@@ -465,7 +472,7 @@ export async function analyseDnssecLifecycle(
       else if (!comparableDs.some((derived) => sameDs(ds, derived)))
         findings.push({
           code: 'orphan-ds',
-          message: `Parent DS ${String(ds.keyTag)} does not match a supplied DNSKEY using the same algorithm and digest.`,
+          message: `Parent DS ${String(ds.keyTag)} does not match a supplied DNSKEY at the same owner using the same algorithm and digest.`,
           tone: 'error',
         });
     }
@@ -492,6 +499,7 @@ export async function analyseDnssecLifecycle(
       parsedKeys.some(
         (dnskey) =>
           dnskey.info.sourceType === 'DNSKEY' &&
+          sameOwner(dnskey.info.owner, record.info.owner) &&
           dnskey.rdata.length === record.rdata.length &&
           dnskey.rdata.every((byte, index) => byte === record.rdata[index]),
       ),
@@ -500,13 +508,18 @@ export async function analyseDnssecLifecycle(
     findings.push({
       code: 'cdnskey-divergence',
       message:
-        'A CDNSKEY does not have byte-identical DNSKEY material in the supplied child set.',
+        'A CDNSKEY does not have byte-identical DNSKEY material at the same owner in the supplied child set.',
       tone: 'error',
     });
   if (
     findings.every((finding) => finding.tone !== 'error') &&
     keys.length > 0 &&
-    parentDs.length > 0
+    parentDs.length > 0 &&
+    parentDs.every(
+      (record) =>
+        canValidateDsDigestType(record.digestType) &&
+        comparableDs.some((derived) => sameDs(record, derived)),
+    )
   )
     findings.push({
       code: 'supplied-link-consistent',

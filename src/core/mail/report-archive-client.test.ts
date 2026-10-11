@@ -58,7 +58,13 @@ describe('local archive worker lifecycle', () => {
       const result = extractMailReportPayloadsAsync('report.gz', new Uint8Array([1]), {
         signal: controller.signal,
       });
-      const failed = expect(result).rejects.toThrow();
+      const failed =
+        kind === 'abort'
+          ? expect(result).rejects.toMatchObject({
+              name: 'AbortError',
+              message: 'Report import cancelled.',
+            })
+          : expect(result).rejects.toThrow();
       const worker = LocalWorker.created[0];
       if (kind === 'abort') controller.abort();
       if (kind === 'deadline') await vi.advanceTimersByTimeAsync(MAIL_ARCHIVE_DEADLINE_MS);

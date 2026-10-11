@@ -4,6 +4,46 @@ import { dnskeyDigest, hex } from './digest';
 import { analyseDnssecLifecycle } from './lifecycle';
 
 describe('DNSSEC lifecycle analysis', () => {
+  it('binds DS and child signalling comparisons to the canonical owner', async () => {
+    const key = '257 3 13 AQIDBAUGBwg=';
+    const initial = await analyseDnssecLifecycle(`a.example. 300 IN DNSKEY ${key}`);
+    const ds = initial.derivedDs.find((record) => record.digestType === 2);
+    if (ds === undefined) throw new Error('Expected a derived DS.');
+    const fields = `${String(ds.keyTag)} 13 2 ${ds.digest}`;
+    const wrong = await analyseDnssecLifecycle(
+      `a.example. 300 IN DNSKEY ${key}\nb.example. 300 IN DS ${fields}\nb.example. 300 IN CDNSKEY ${key}\na.example. 300 IN CDS ${fields}`,
+    );
+    expect(wrong.findings.map((item) => item.code)).toEqual(
+      expect.arrayContaining(['orphan-ds', 'cdnskey-divergence', 'cds-parent-divergence']),
+    );
+    expect(wrong.findings.some((item) => item.code === 'supplied-link-consistent')).toBe(false);
+    const correct = await analyseDnssecLifecycle(
+      `a.example. 300 IN DNSKEY ${key}\nA.EXAMPLE. 300 IN DS ${fields}\na.example. 300 IN CDNSKEY ${key}`,
+    );
+    expect(correct.status).toBe('complete');
+    expect(correct.findings).toContainEqual(
+      expect.objectContaining({ code: 'supplied-link-consistent', tone: 'pass' }),
+    );
+  });
+
+  it.each([false, true])(
+    'does not claim universal consistency with an unsupported digest (mixed=%s)',
+    async (mixed) => {
+      const source = 'example. 300 IN DNSKEY 257 3 13 AQIDBAUGBwg=';
+      const initial = await analyseDnssecLifecycle(source);
+      const ds = initial.derivedDs[0];
+      if (ds === undefined) throw new Error('Expected a DS.');
+      const report = await analyseDnssecLifecycle(
+        `${source}\nexample. 300 IN DS ${String(ds.keyTag)} 13 99 AABB${mixed ? `\nexample. 300 IN DS ${String(ds.keyTag)} 13 ${String(ds.digestType)} ${ds.digest}` : ''}`,
+      );
+      expect(report.status).toBe('partial');
+      expect(report.findings.some((item) => item.code === 'unsupported-ds-digest')).toBe(true);
+      expect(report.findings.some((item) => item.code === 'supplied-link-consistent')).toBe(
+        false,
+      );
+    },
+  );
+
   it('derives modern DS candidates and classifies key roles', async () => {
     const report = await analyseDnssecLifecycle(
       '$ORIGIN example.com.\n@ 3600 IN DNSKEY 257 3 13 AQIDBAUGBwg=\n',

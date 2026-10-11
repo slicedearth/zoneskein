@@ -22,6 +22,7 @@ import {
 } from '../core/evidence/resolver-comparison';
 import type { EvidenceBundle } from '../core/evidence/types';
 import { stringifyTechnicalEvidence } from '../core/technical-text';
+import { RequestLifetime } from '../core/request-lifetime';
 
 const MAP_TYPES = [
   'A',
@@ -48,14 +49,24 @@ export function EvidenceMapPage() {
   const [error, setError] = useState('');
   const [state, setState] = useState<RunState>('idle');
   const activeRun = useRef<DnsQueryRun | null>(null);
+  const lifetime = useRef(new RequestLifetime());
   const evidenceJson = useMemo(
     () => (bundle === null ? '' : stringifyTechnicalEvidence(bundle, 2)),
     [bundle],
   );
 
-  useEffect(() => () => activeRun.current?.cancel(), []);
+  useEffect(() => {
+    const current = lifetime.current;
+    current.enter();
+    return () => {
+      current.leave();
+      activeRun.current?.cancel();
+      activeRun.current = null;
+    };
+  }, []);
 
   function invalidate(): void {
+    lifetime.current.invalidate();
     activeRun.current?.cancel();
     activeRun.current = null;
     setBundle(null);
@@ -66,6 +77,8 @@ export function EvidenceMapPage() {
 
   async function mapDomain(event: React.SyntheticEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+    invalidate();
+    const generation = lifetime.current.capture();
     const parsed = validateDnsName(domain);
     if (!parsed.ok) {
       setError(parsed.error.message);
@@ -122,8 +135,10 @@ export function EvidenceMapPage() {
         }),
       ),
     );
-    if (activeRun.current !== run || run.cancelled) {
+    if (!lifetime.current.isCurrent(generation) || activeRun.current !== run) return;
+    if (run.cancelled) {
       setState('cancelled');
+      activeRun.current = null;
       return;
     }
     const next = buildDnsEvidenceBundle(parsed.value.absolute, observations);
@@ -208,7 +223,10 @@ export function EvidenceMapPage() {
             <button
               className="quiet-button"
               type="button"
-              onClick={() => activeRun.current?.cancel()}
+              onClick={() => {
+                invalidate();
+                setState('cancelled');
+              }}
             >
               Cancel
             </button>

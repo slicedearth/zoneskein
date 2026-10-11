@@ -1,5 +1,7 @@
 import { parseRecordView } from '../dns/records';
+import { dnsRecordIdentity } from '../dns/record-identity';
 import type { DnsRecord, DnsResponse } from '../dns/types';
+import { canonicalMasterName } from '../zone/master-name';
 import {
   EVIDENCE_BUNDLE_SCHEMA,
   type EvidenceBundle,
@@ -21,11 +23,11 @@ const MAX_GRAPH_LINKS = 320;
 const MAX_DEPENDENCIES_PER_RECORD = 20;
 
 function normaliseName(value: string): string {
-  return value === '.' ? value : `${value.replace(/\.$/u, '').toLowerCase()}.`;
+  return canonicalMasterName(value, '.')?.absolute ?? value;
 }
 
 function identifier(kind: EvidenceNodeKind, value: string): string {
-  return `${kind}:${value.toLowerCase()}`;
+  return JSON.stringify([kind, value]);
 }
 
 function objectValue(value: unknown): Readonly<Record<string, unknown>> | null {
@@ -85,7 +87,7 @@ function dependencyNames(record: DnsRecord): readonly string[] {
 }
 
 function recordKey(record: DnsRecord, resolverId: string): string {
-  return `${resolverId}|${record.section}|${normaliseName(record.owner)}|${record.type}|${parseRecordView(record).text}`;
+  return JSON.stringify([resolverId, record.section, dnsRecordIdentity(record)]);
 }
 
 function sectionKind(record: DnsRecord): EvidenceNodeKind {
@@ -103,7 +105,12 @@ export function buildDnsEvidenceBundle(
   const incompleteReasons: string[] = [];
 
   const addNode = (node: EvidenceNode): boolean => {
-    if (nodes.has(node.id)) return true;
+    const existing = nodes.get(node.id);
+    if (existing !== undefined) {
+      // Equivalent observations retain a deterministic display representative.
+      if (JSON.stringify(node) < JSON.stringify(existing)) nodes.set(node.id, node);
+      return true;
+    }
     if (nodes.size >= MAX_GRAPH_NODES) return false;
     nodes.set(node.id, node);
     return true;
@@ -114,7 +121,7 @@ export function buildDnsEvidenceBundle(
       incompleteReasons.push('The evidence graph reached its bounded relationship limit.');
       return;
     }
-    links.set(`${link.source}|${link.target}|${link.kind}|${link.label}`, link);
+    links.set(JSON.stringify([link.source, link.target, link.kind, link.label]), link);
   };
 
   const subjectId = identifier('subject', canonicalSubject);
@@ -132,7 +139,11 @@ export function buildDnsEvidenceBundle(
       incompleteReasons.push(reason);
       const uncertaintyId = identifier(
         'uncertainty',
-        `${observation.questionName}|${observation.questionType}|${reason}`,
+        JSON.stringify([
+          normaliseName(observation.questionName),
+          observation.questionType.toUpperCase(),
+          reason,
+        ]),
       );
       if (
         addNode({
@@ -240,12 +251,12 @@ export function buildDnsEvidenceBundle(
     }
   }
 
-  const reasons = [...new Set(incompleteReasons)];
+  const reasons = [...new Set(incompleteReasons)].sort();
   return {
     capturedAt,
     incompleteReasons: reasons,
-    links: [...links.values()],
-    nodes: [...nodes.values()],
+    links: [...links.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, link]) => link),
+    nodes: [...nodes.values()].sort((a, b) => a.id.localeCompare(b.id)),
     schema: EVIDENCE_BUNDLE_SCHEMA,
     status: reasons.length === 0 ? 'complete' : nodes.size > 1 ? 'partial' : 'unavailable',
     subject: canonicalSubject,

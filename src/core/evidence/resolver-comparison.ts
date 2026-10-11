@@ -1,4 +1,5 @@
-import type { DnsRecord, DnsResponse } from '../dns/types';
+import type { DnsResponse } from '../dns/types';
+import { dnsRecordIdentity } from '../dns/record-identity';
 import type { DnsGraphObservation } from './dns-graph';
 
 export type ResolverDifferenceKind =
@@ -32,30 +33,17 @@ export interface ResolverQuestionComparison {
   readonly state: 'agreement' | 'disagreement' | 'incomplete' | 'unavailable';
 }
 
-function hex(value: Uint8Array): string {
-  return [...value].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-function recordIdentity(record: DnsRecord): string {
-  return [
-    record.owner.toLowerCase(),
-    record.class,
-    String(record.typeCode),
-    hex(record.rawRdata),
-  ].join('|');
-}
-
 function answerSet(response: DnsResponse): string {
-  return response.message.answers.map(recordIdentity).sort().join('\n');
+  return response.message.answers.map(dnsRecordIdentity).sort().join('\n');
 }
 
 function authoritySet(response: DnsResponse): string {
-  return response.message.authorities.map(recordIdentity).sort().join('\n');
+  return response.message.authorities.map(dnsRecordIdentity).sort().join('\n');
 }
 
 function ttlSet(response: DnsResponse): string {
   return [...response.message.answers, ...response.message.authorities]
-    .map((record) => `${record.section}|${recordIdentity(record)}|${String(record.ttl)}`)
+    .map((record) => JSON.stringify([record.section, dnsRecordIdentity(record), record.ttl]))
     .sort()
     .join('\n');
 }

@@ -1,4 +1,5 @@
 import type { DnsRecordType, GenericDnsRecordType } from './types';
+import { toType } from '@dnsquery/dns-packet/types.js';
 
 const CUSTOM_WIRE_TYPES: Readonly<Record<string, string>> = {
   CDNSKEY: 'UNKNOWN_60',
@@ -41,6 +42,19 @@ export function wireRecordType(type: DnsRecordType): string {
 
 export function displayRecordType(type: string): string {
   return CUSTOM_DISPLAY_TYPES[type] ?? type.replace('UNKNOWN_', 'TYPE');
+}
+
+/** Numeric identity is stable across mnemonic and RFC 3597 display aliases. */
+export function dnsRecordTypeCode(type: string): number | null {
+  const upper = type.toUpperCase();
+  const generic = /^(?:TYPE|UNKNOWN_)(0|[1-9]\d{0,4})$/u.exec(upper)?.[1];
+  if (generic !== undefined) return Number(generic) <= 65_535 ? Number(generic) : null;
+  try {
+    const value = toType(CUSTOM_WIRE_TYPES[upper] ?? upper);
+    return value > 0 && value <= 65_535 ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 export function parseGenericRecordType(

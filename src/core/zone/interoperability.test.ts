@@ -201,6 +201,48 @@ $GENERATE 1-2 host$ 300 IN TXT "a;b" "" "two spaces" "\036" "\$" "\092$" plain$`
 });
 
 describe('Domain Connect preview', () => {
+  it.each(['CNAME', 'NS', 'MX', 'SRV'])(
+    'resolves %s targets as fully qualified independently of a trailing dot',
+    (type) => {
+      const render = (pointsTo: string, variables = {}) =>
+        previewDomainConnectTemplate(
+          JSON.stringify({
+            providerId: 'provider.example',
+            providerName: 'Fixture',
+            serviceId: 'fixture',
+            serviceName: 'Fixture',
+            records: [
+              {
+                type,
+                host: 'host',
+                name: '@',
+                service: '_sip',
+                protocol: '_tcp',
+                priority: 10,
+                weight: 20,
+                port: 443,
+                ttl: 300,
+                pointsTo,
+                target: pointsTo,
+              },
+            ],
+          }),
+          'user.example',
+          variables,
+        );
+      const without = render('service.example.net');
+      expect(without.status).toBe('ready');
+      expect(without.source).toContain('service.example.net.');
+      expect(without.source).not.toContain('service.example.net.user.example');
+      expect(render('service.example.net.').source).toBe(without.source);
+      expect(render('%destination%', { destination: 'service.example.net' }).source).toBe(
+        without.source,
+      );
+      expect(render('@').source).toContain('user.example.');
+      expect(render('bad..example')).toMatchObject({ source: '', status: 'invalid' });
+    },
+  );
+
   it('validates variables and renders portable DNS records without publishing', () => {
     const result = previewDomainConnectTemplate(
       JSON.stringify({
@@ -220,7 +262,7 @@ describe('Domain Connect preview', () => {
 
     expect(result.status).toBe('ready');
     expect(result.source).toContain('@ 300 IN A 192.0.2.10');
-    expect(result.source).toContain('@ 3600 IN MX 10 mail.example.com.');
+    expect(result.source).toContain('@ 3600 IN MX 10 mail.');
     expect(result.source).toContain('"v=spf1 include:spf.example -all"');
     expect(result.unresolvedVariables).toEqual([]);
   });
@@ -309,6 +351,82 @@ describe('Domain Connect preview', () => {
 });
 
 describe('portable zone exports', () => {
+  it('groups complete same-owner RRsets while retaining mixed types and every value', () => {
+    const document = lintZoneSnippet(
+      '$ORIGIN example.com.\n@ 300 IN A 192.0.2.1\n@ 300 IN A 192.0.2.2\n@ 300 IN MX 10 first.example.\n@ 300 IN MX 20 second.example.\n@ 300 IN TXT "Token=AbC"\n@ 300 IN TXT "Token=abc"',
+    );
+    const result = exportZoneInfrastructure(document);
+    expect(result.supportedRecords).toBe(6);
+    expect(result.omittedRecords).toBe(0);
+    expect(result.octoDns).toBe(
+      [
+        '---',
+        "'':",
+        '  - ttl: 300',
+        '    type: A',
+        '    values:',
+        "      - '192.0.2.1'",
+        "      - '192.0.2.2'",
+        '  - ttl: 300',
+        '    type: MX',
+        '    values:',
+        "      - exchange: 'first.example.'",
+        '        preference: 10',
+        "      - exchange: 'second.example.'",
+        '        preference: 20',
+        '  - ttl: 300',
+        '    type: TXT',
+        '    values:',
+        "      - 'Token=AbC'",
+        "      - 'Token=abc'",
+        '',
+      ].join('\n'),
+    );
+  });
+
+  it('withholds every member of an inconsistent-TTL RRset without choosing a winner', () => {
+    const result = exportZoneInfrastructure(
+      lintZoneSnippet(
+        '$ORIGIN example.com.\n@ 300 IN A 192.0.2.1\n@ 600 IN A 192.0.2.2\nwww 300 IN A 192.0.2.3',
+      ),
+    );
+    expect(result).toMatchObject({ supportedRecords: 1, omittedRecords: 2 });
+    expect(
+      result.diagnostics.filter((item) => item.message.includes('inconsistent TTLs')),
+    ).toHaveLength(2);
+    for (const output of [result.dnsControl, result.octoDns]) {
+      expect(output).not.toContain('192.0.2.1');
+      expect(output).not.toContain('192.0.2.2');
+      expect(output).toContain('192.0.2.3');
+    }
+  });
+
+  it('resolves every supported target using raw tokens and the effective record origin', () => {
+    const result = exportZoneInfrastructure(
+      lintZoneSnippet(String.raw`$ORIGIN example.com.
+@ 300 IN NS ns
+$ORIGIN sub.example.com.
+www 300 IN CNAME mail
+ptr 300 IN PTR @
+@ 300 IN MX 10 mail\046label
+_sip._tcp 300 IN SRV 1 2 443 .
+absolute 300 IN CNAME other.example.net.`),
+    );
+    expect(result.supportedRecords).toBe(6);
+    for (const output of [result.dnsControl, result.octoDns]) {
+      expect(output).toContain('ns.example.com.');
+      expect(output).toContain('mail.sub.example.com.');
+      expect(output).toContain('sub.example.com.');
+      expect(output).toContain('other.example.net.');
+    }
+    expect(result.dnsControl).toContain(
+      'MX("sub", 10, "mail\\\\046label.sub.example.com.", TTL(300))',
+    );
+    expect(result.octoDns).toContain("exchange: 'mail\\046label.sub.example.com.'");
+    expect(result.dnsControl).toContain('SRV("_sip._tcp.sub", 1, 2, 443, ".", TTL(300))');
+    expect(result.octoDns).toContain("target: '.'");
+  });
+
   it('renders a conservative common subset and reports omissions', () => {
     const document = lintZoneSnippet(
       [
