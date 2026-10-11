@@ -187,7 +187,8 @@ test('protocol lab accepts its default numeric type through the wire resolver', 
   await page.getByLabel('DNS name').fill('example.com');
   await page.getByRole('button', { name: 'Query data type' }).click();
   await expect(page.getByRole('heading', { name: 'example.com', exact: true })).toBeVisible();
-  await expect(page.getByText('NOERROR', { exact: true })).toBeVisible();
+  const response = page.getByRole('region', { name: 'example.com', exact: true });
+  await expect(response.locator('.status-badge')).toContainText('NOERROR');
   await expect(page.getByRole('alert')).toHaveCount(0);
 });
 
